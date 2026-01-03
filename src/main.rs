@@ -7,7 +7,8 @@ use ratatui::widgets::{Row, Table};
 use ratatui::Frame;
 
 fn main() {
-    let repo = Repository::open(".").expect("Not a git repository");
+    let path = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
+    let repo = Repository::open(&path).expect("Not a git repository");
     let commits = get_commits(&repo);
 
     let mut terminal = ratatui::init();
