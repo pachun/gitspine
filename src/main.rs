@@ -1,6 +1,8 @@
 use crossterm::event::{self, Event, KeyCode};
 use git2::Repository;
 use ratatui::layout::Constraint;
+use ratatui::style::{Color, Style};
+use ratatui::text::Span;
 use ratatui::widgets::{Row, Table};
 use ratatui::Frame;
 
@@ -56,10 +58,10 @@ fn render_ui(frame: &mut Frame, commits: &[Commit]) {
     let rows: Vec<Row> = commits
         .iter()
         .map(|c| Row::new(vec![
-            c.message.clone(),
-            c.author.clone(),
-            c.short_sha.clone(),
-            c.date.clone(),
+            Span::raw(c.message.clone()),
+            Span::styled(c.author.clone(), Style::default().fg(Color::Cyan)),
+            Span::styled(c.short_sha.clone(), Style::default().fg(Color::Yellow)),
+            Span::styled(c.date.clone(), Style::default().fg(Color::Magenta)),
         ]))
         .collect();
 
