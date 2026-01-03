@@ -34,7 +34,6 @@ fn get_commits(repo: &Repository) -> Vec<Commit> {
     revwalk.push_head().expect("Failed to push HEAD");
 
     revwalk
-        .take(50)
         .filter_map(|oid| oid.ok())
         .filter_map(|oid| repo.find_commit(oid).ok())
         .map(|commit| {
