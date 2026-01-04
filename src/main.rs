@@ -11,12 +11,23 @@ fn main() {
     let repo = Repository::open(&path).expect("Not a git repository");
     let commits = get_commits(&repo);
 
+    let mut selected: usize = 0;
+
     let mut terminal = ratatui::init();
     loop {
-        terminal.draw(|frame| render_ui(frame, &commits)).unwrap();
+        terminal.draw(|frame| render_ui(frame, &commits, selected)).unwrap();
         if let Event::Key(key) = event::read().unwrap() {
-            if key.code == KeyCode::Char('q') {
-                break;
+            match key.code {
+                KeyCode::Char('q') => break,
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if selected < commits.len().saturating_sub(1) {
+                        selected += 1;
+                    }
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    selected = selected.saturating_sub(1);
+                }
+                _ => {}
             }
         }
     }
@@ -117,19 +128,27 @@ fn build_graph(commits: &[Commit]) -> Vec<String> {
     graph_lines
 }
 
-fn render_ui(frame: &mut Frame, commits: &[Commit]) {
+fn render_ui(frame: &mut Frame, commits: &[Commit], selected: usize) {
     let graph = build_graph(commits);
 
     let rows: Vec<Row> = commits
         .iter()
         .zip(graph.iter())
-        .map(|(c, g)| Row::new(vec![
-            Span::styled(g.clone(), Style::default().fg(Color::Green)),
-            Span::raw(c.message.clone()),
-            Span::styled(c.author.clone(), Style::default().fg(Color::Cyan)),
-            Span::styled(c.short_sha.clone(), Style::default().fg(Color::Yellow)),
-            Span::styled(c.date.clone(), Style::default().fg(Color::Magenta)),
-        ]))
+        .enumerate()
+        .map(|(i, (c, g))| {
+            let row = Row::new(vec![
+                Span::styled(g.clone(), Style::default().fg(Color::Green)),
+                Span::raw(c.message.clone()),
+                Span::styled(c.author.clone(), Style::default().fg(Color::Cyan)),
+                Span::styled(c.short_sha.clone(), Style::default().fg(Color::Yellow)),
+                Span::styled(c.date.clone(), Style::default().fg(Color::Magenta)),
+            ]);
+            if i == selected {
+                row.style(Style::default().bg(Color::DarkGray))
+            } else {
+                row
+            }
+        })
         .collect();
 
     let widths = [
