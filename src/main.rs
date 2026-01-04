@@ -185,30 +185,85 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
                 .map(|(i, _)| i)
         });
 
+        // Find lanes that merge INTO this commit (their commit's parent is this commit)
+        let mut merging_in: Vec<usize> = Vec::new();
+        for (i, lane) in lanes.iter().enumerate() {
+            if i != commit_lane {
+                if let Some(lane_commit_id) = lane {
+                    // Find if this lane's commit has our commit as its first parent
+                    if let Some(lane_commit) = commits.iter().find(|c| c.id == *lane_commit_id) {
+                        if lane_commit.parent_ids.first() == Some(&commit.id) {
+                            merging_in.push(i);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pre-calculate where additional parents (merge branches) will be placed
+        let mut additional_parent_lanes: Vec<usize> = Vec::new();
+        let mut temp_lanes = lanes.clone();
+        for parent_id in commit.parent_ids.iter().skip(1) {
+            let already_tracked = temp_lanes.iter().any(|lane| *lane == Some(*parent_id));
+            if !already_tracked {
+                match temp_lanes.iter().position(|lane| lane.is_none()) {
+                    Some(pos) => {
+                        temp_lanes[pos] = Some(*parent_id);
+                        additional_parent_lanes.push(pos);
+                    }
+                    None => {
+                        temp_lanes.push(Some(*parent_id));
+                        additional_parent_lanes.push(temp_lanes.len() - 1);
+                    }
+                }
+            }
+        }
+
         // Build the graph line with merge indicators on same row
         let mut line = String::new();
-        let num_lanes = lanes.len();
+        let num_lanes = lanes.len().max(temp_lanes.len());
 
+        // Determine all merge ranges (merge_target, merging_in, and additional parents)
+        let mut merge_lanes: Vec<usize> = merging_in.clone();
+        merge_lanes.extend(&additional_parent_lanes);
         if let Some(target) = merge_target {
-            let min_lane = commit_lane.min(target);
-            let max_lane = commit_lane.max(target);
+            merge_lanes.push(target);
+        }
+        merge_lanes.push(commit_lane);
+        let min_merge = *merge_lanes.iter().min().unwrap_or(&commit_lane);
+        let max_merge = *merge_lanes.iter().max().unwrap_or(&commit_lane);
+        let has_merges = merge_target.is_some() || !merging_in.is_empty() || !additional_parent_lanes.is_empty();
 
+        if has_merges {
             for i in 0..num_lanes {
                 if i == commit_lane {
                     line.push('●');
-                } else if i == target {
-                    if commit_lane < target {
+                } else if Some(i) == merge_target {
+                    if commit_lane < i {
                         line.push('╯');
                     } else {
                         line.push('├');
                     }
-                } else if i > min_lane && i < max_lane {
-                    if lanes[i].is_some() {
+                } else if merging_in.contains(&i) {
+                    if i < commit_lane {
+                        line.push('╰');
+                    } else {
+                        line.push('╯');
+                    }
+                } else if additional_parent_lanes.contains(&i) {
+                    // Branch merging in from below, curving toward this commit
+                    if i < commit_lane {
+                        line.push('╭');
+                    } else {
+                        line.push('╮');
+                    }
+                } else if i > min_merge && i < max_merge {
+                    if lanes.get(i).map(|l| l.is_some()).unwrap_or(false) {
                         line.push('┼');
                     } else {
                         line.push('─');
                     }
-                } else if lanes[i].is_some() {
+                } else if lanes.get(i).map(|l| l.is_some()).unwrap_or(false) {
                     line.push('│');
                 } else {
                     line.push(' ');
