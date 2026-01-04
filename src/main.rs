@@ -43,6 +43,8 @@ fn main() {
     let mut search_history: Vec<String> = Vec::new();
     let mut history_index: Option<usize> = None; // None = new search, Some(i) = viewing history[i]
     let mut leader_pressed = false; // For space+key sequences
+    let mut viewing_commit: Option<usize> = None; // Some(index) when viewing commit details
+    let mut commit_detail: Option<CommitDetail> = None; // Loaded on-demand
 
     let mut terminal = ratatui::init();
     loop {
@@ -67,19 +69,42 @@ fn main() {
 
         terminal
             .draw(|frame| {
-                render_ui(
-                    frame,
-                    &commits,
-                    &main_line,
-                    &branch_info,
-                    selected,
-                    scroll_offset,
-                    searching,
-                    &search_query,
-                )
+                if let Some(ref detail) = commit_detail {
+                    render_commit_detail(frame, detail);
+                } else {
+                    render_ui(
+                        frame,
+                        &commits,
+                        &main_line,
+                        &branch_info,
+                        selected,
+                        scroll_offset,
+                        searching,
+                        &search_query,
+                    );
+                }
             })
             .unwrap();
         if let Event::Key(key) = event::read().unwrap() {
+            // Handle detail view mode - most keys go back to list
+            if commit_detail.is_some() {
+                match key.code {
+                    KeyCode::Char('h')
+                    | KeyCode::Char('q')
+                    | KeyCode::Esc
+                    | KeyCode::Left => {
+                        commit_detail = None;
+                        viewing_commit = None;
+                    }
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        commit_detail = None;
+                        viewing_commit = None;
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+
             if searching {
                 match key.code {
                     KeyCode::Esc => {
@@ -262,6 +287,10 @@ fn main() {
                     KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         selected = selected.saturating_sub(half_page);
                     }
+                    KeyCode::Char('l') | KeyCode::Right => {
+                        viewing_commit = Some(selected);
+                        commit_detail = load_commit_detail(&repo, commits[selected].id);
+                    }
                     _ => {}
                 }
             }
@@ -277,6 +306,38 @@ struct Commit {
     message: String,
     author: String,
     date: String,
+}
+
+// Loaded on-demand when viewing commit details
+struct CommitDetail {
+    subject: String,
+    body: Option<String>,
+    author: String,
+    timestamp: i64,
+}
+
+fn load_commit_detail(repo: &Repository, oid: git2::Oid) -> Option<CommitDetail> {
+    let commit = repo.find_commit(oid).ok()?;
+    let full_message = commit.message().unwrap_or("");
+
+    // Split into subject and body
+    let mut lines = full_message.lines();
+    let subject = lines.next().unwrap_or("").to_string();
+
+    // Skip empty line after subject if present, then collect body
+    let body_lines: Vec<&str> = lines.skip_while(|l| l.is_empty()).collect();
+    let body = if body_lines.is_empty() {
+        None
+    } else {
+        Some(body_lines.join("\n"))
+    };
+
+    Some(CommitDetail {
+        subject,
+        body,
+        author: commit.author().name().unwrap_or("").to_string(),
+        timestamp: commit.time().seconds(),
+    })
 }
 
 struct BranchInfo {
@@ -985,4 +1046,60 @@ fn render_ui(
         )]));
         frame.render_widget(search_hint, search_inner);
     }
+}
+
+fn render_commit_detail(frame: &mut Frame, detail: &CommitDetail) {
+    use ratatui::layout::{Constraint, Direction, Layout};
+    use ratatui::text::{Line, Text};
+    use ratatui::widgets::Paragraph;
+
+    let area = frame.area();
+
+    // Add padding
+    let padded = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(area)[1];
+
+    let padded = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(padded)[1];
+
+    // Format date with time in local timezone: "January 2, 2026 at 3:45 PM"
+    let formatted_date = chrono::DateTime::from_timestamp(detail.timestamp, 0)
+        .map(|dt| {
+            dt.with_timezone(&chrono::Local)
+                .format("%B %-d, %Y at %-I:%M %p")
+                .to_string()
+        })
+        .unwrap_or_else(|| "Unknown date".to_string());
+
+    // Build commit detail content
+    let mut lines = vec![
+        Line::styled(&detail.subject, Style::default()),
+        Line::raw(""),
+        Line::styled(&detail.author, Style::default().fg(Color::Cyan)),
+        Line::styled(formatted_date, Style::default().fg(Color::Magenta)),
+    ];
+
+    // Add body if present
+    if let Some(ref body) = detail.body {
+        lines.push(Line::raw(""));
+        for line in body.lines() {
+            lines.push(Line::raw(line));
+        }
+    }
+
+    let text = Text::from(lines);
+    let paragraph = Paragraph::new(text);
+    frame.render_widget(paragraph, padded);
 }
