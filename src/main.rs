@@ -82,7 +82,23 @@ fn main() {
             .unwrap();
         match event::read().unwrap() {
             Event::Mouse(mouse) => {
-                // Only handle mouse in list view, not detail view or search
+                // Handle scroll while typing search - treat as Enter then scroll
+                if searching && matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) {
+                    searching = false;
+                    history_index = None;
+                    let has_matches = commits
+                        .iter()
+                        .any(|c| commit_matches_query(c, &search_query, &branch_info));
+                    if has_matches {
+                        if search_history.last() != Some(&search_query) {
+                            search_history.push(search_query.clone());
+                        }
+                    } else {
+                        search_query.clear();
+                    }
+                }
+
+                // Only handle mouse in list view, not detail view
                 if commit_detail.is_none() && !searching {
                     match mouse.kind {
                         MouseEventKind::ScrollUp => {
