@@ -34,7 +34,7 @@ fn main() {
 
     let mut terminal = ratatui::init();
     loop {
-        let visible_height = terminal.size().unwrap().height.saturating_sub(3) as usize; // Reserve 2 for search bar + 1 for bottom padding
+        let visible_height = terminal.size().unwrap().height.saturating_sub(3) as usize; // Reserve 3 for search bar with borders
         let half_page = visible_height / 2;
 
         // Adjust scroll to keep selection visible
@@ -480,13 +480,13 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
     use ratatui::widgets::{Block, Borders, Paragraph};
     use ratatui::text::Line;
 
-    // Add padding around the UI (sides and bottom, not top since macOS has window chrome)
+    // Add horizontal padding (sides only, borders handle top/bottom)
     let area = frame.area();
     let padded_area = ratatui::layout::Rect {
         x: area.x + 1,
         y: area.y,
         width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(1),
+        height: area.height,
     };
 
     // Split into main area and search bar
@@ -494,7 +494,7 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),      // main table
-            Constraint::Length(2),   // search bar
+            Constraint::Length(3),   // search bar with top and bottom borders
         ])
         .split(padded_area);
 
@@ -521,7 +521,7 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
             message_spans.extend(highlight_matches(&c.message, search_query, Style::default(), highlight_style));
 
             let row = Row::new(vec![
-                Cell::from(Span::styled(g.clone(), Style::default().fg(Color::Green))),
+                Cell::from(Span::styled(g.clone(), Style::default().fg(Color::Gray))),
                 Cell::from(Line::from(message_spans)),
                 Cell::from(Line::from(highlight_matches(&c.author, search_query, Style::default().fg(Color::Cyan), highlight_style))),
                 Cell::from(Line::from(highlight_matches(&c.short_sha, search_query, Style::default().fg(Color::Yellow), highlight_style))),
@@ -547,11 +547,12 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
     frame.render_widget(table, chunks[0]);
 
     // Render search bar with right-aligned match counter
-    let search_block = Block::default().borders(Borders::TOP);
+    let browse_mode = !searching && !search_query.is_empty();
+    let search_active = searching || browse_mode;
+    let border_color = if search_active { Color::White } else { Color::DarkGray };
+    let search_block = Block::default().borders(Borders::TOP | Borders::BOTTOM).border_style(Style::default().fg(border_color));
     let search_inner = search_block.inner(chunks[1]);
     frame.render_widget(search_block, chunks[1]);
-
-    let browse_mode = !searching && !search_query.is_empty();
 
     if searching {
         // Typing mode: yellow input with cursor, grey counter
