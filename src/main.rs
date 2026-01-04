@@ -31,6 +31,7 @@ fn main() {
     let mut scroll_offset: usize = 0;
     let mut searching = false;
     let mut search_query = String::new();
+    let mut leader_pressed = false;  // For space+key sequences
 
     let mut terminal = ratatui::init();
     loop {
@@ -141,7 +142,24 @@ fn main() {
                     }
                 };
 
+                // Handle leader key sequences
+                if leader_pressed {
+                    leader_pressed = false;
+                    match key.code {
+                        KeyCode::Char('n') => {
+                            // Leader+n: clear search (no highlight)
+                            search_query.clear();
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 match key.code {
+                    KeyCode::Char(' ') => {
+                        leader_pressed = true;
+                        continue;
+                    }
                     KeyCode::Char('q') => break,
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         if search_query.is_empty() {
