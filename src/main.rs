@@ -250,7 +250,13 @@ fn main() {
                         leader_pressed = true;
                         continue;
                     }
-                    KeyCode::Char('q') => break,
+                    KeyCode::Char('q') => {
+                        if search_query.is_empty() {
+                            break;
+                        } else {
+                            search_query.clear();
+                        }
+                    }
                     KeyCode::Esc => {
                         if search_query.is_empty() {
                             break;
