@@ -56,6 +56,10 @@ fn main() {
                         searching = false;
                         search_query.clear();
                     }
+                    KeyCode::Enter => {
+                        // Exit typing mode but keep search active for n/N navigation
+                        searching = false;
+                    }
                     KeyCode::Backspace => {
                         if search_query.is_empty() {
                             // Backspace on empty query exits search mode
@@ -90,11 +94,74 @@ fn main() {
                     }
                 }
             } else {
+                // Helper to check if a commit matches the search
+                let commit_matches = |c: &Commit| -> bool {
+                    if search_query.is_empty() {
+                        return false;
+                    }
+                    let case_sensitive = has_mixed_case(&search_query);
+                    if case_sensitive {
+                        c.message.contains(&search_query)
+                            || c.short_sha.contains(&search_query)
+                            || c.author.contains(&search_query)
+                            || c.date.contains(&search_query)
+                    } else {
+                        let query_lower = search_query.to_lowercase();
+                        c.message.to_lowercase().contains(&query_lower)
+                            || c.short_sha.to_lowercase().contains(&query_lower)
+                            || c.author.to_lowercase().contains(&query_lower)
+                            || c.date.to_lowercase().contains(&query_lower)
+                    }
+                };
+
                 match key.code {
                     KeyCode::Char('q') => break,
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if search_query.is_empty() {
+                            break;
+                        } else {
+                            // Clear search and return to normal mode
+                            search_query.clear();
+                        }
+                    }
                     KeyCode::Char('/') => {
                         searching = true;
+                    }
+                    KeyCode::Char('n') if !search_query.is_empty() => {
+                        // Find next match after current selection
+                        if let Some(idx) = commits.iter().enumerate()
+                            .skip(selected + 1)
+                            .find(|(_, c)| commit_matches(c))
+                            .map(|(i, _)| i)
+                        {
+                            selected = idx;
+                        } else if let Some(idx) = commits.iter().enumerate()
+                            .take(selected)
+                            .find(|(_, c)| commit_matches(c))
+                            .map(|(i, _)| i)
+                        {
+                            // Wrap around to beginning
+                            selected = idx;
+                        }
+                    }
+                    KeyCode::Char('N') if !search_query.is_empty() => {
+                        // Find previous match before current selection
+                        if let Some(idx) = commits.iter().enumerate()
+                            .take(selected)
+                            .rev()
+                            .find(|(_, c)| commit_matches(c))
+                            .map(|(i, _)| i)
+                        {
+                            selected = idx;
+                        } else if let Some(idx) = commits.iter().enumerate()
+                            .skip(selected + 1)
+                            .rev()
+                            .find(|(_, c)| commit_matches(c))
+                            .map(|(i, _)| i)
+                        {
+                            // Wrap around to end
+                            selected = idx;
+                        }
                     }
                     KeyCode::Char('j') | KeyCode::Down => {
                         if selected < commits.len().saturating_sub(1) {
@@ -470,17 +537,96 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
     let table = Table::new(rows, widths);
     frame.render_widget(table, chunks[0]);
 
-    // Render search bar
-    let search_bar = if searching {
-        Paragraph::new(Line::from(vec![
-            Span::styled(format!("/{}█", search_query), Style::default().fg(Color::Yellow)),
-        ]))
-    } else {
-        Paragraph::new(Line::from(vec![
-            Span::styled("/", Style::default().fg(Color::DarkGray)),
-        ]))
-    };
+    // Render search bar with right-aligned match counter
+    let search_block = Block::default().borders(Borders::TOP);
+    let search_inner = search_block.inner(chunks[1]);
+    frame.render_widget(search_block, chunks[1]);
 
-    let search_bar = search_bar.block(Block::default().borders(Borders::TOP));
-    frame.render_widget(search_bar, chunks[1]);
+    let browse_mode = !searching && !search_query.is_empty();
+
+    if searching {
+        // Typing mode: yellow input with cursor, grey counter
+        let search_input = Paragraph::new(Line::from(vec![
+            Span::styled(format!("/{}█", search_query), Style::default().fg(Color::Yellow)),
+        ]));
+        frame.render_widget(search_input, search_inner);
+
+        // Right side: match counter
+        if !search_query.is_empty() {
+            let case_sensitive = has_mixed_case(search_query);
+            let matches: Vec<usize> = commits.iter().enumerate().filter_map(|(i, c)| {
+                let is_match = if case_sensitive {
+                    c.message.contains(search_query)
+                        || c.short_sha.contains(search_query)
+                        || c.author.contains(search_query)
+                        || c.date.contains(search_query)
+                } else {
+                    let query_lower = search_query.to_lowercase();
+                    c.message.to_lowercase().contains(&query_lower)
+                        || c.short_sha.to_lowercase().contains(&query_lower)
+                        || c.author.to_lowercase().contains(&query_lower)
+                        || c.date.to_lowercase().contains(&query_lower)
+                };
+                if is_match { Some(i) } else { None }
+            }).collect();
+
+            let total = matches.len();
+            let current = matches.iter().position(|&i| i == selected).map(|p| p + 1).unwrap_or(0);
+
+            let counter_text = if total > 0 {
+                format!("[ {} / {} ]", current, total)
+            } else {
+                "[ no matches ]".to_string()
+            };
+
+            let counter = Paragraph::new(Line::from(vec![
+                Span::styled(counter_text, Style::default().fg(Color::DarkGray)),
+            ])).alignment(ratatui::layout::Alignment::Right);
+            frame.render_widget(counter, search_inner);
+        }
+    } else if browse_mode {
+        // Browse mode: grey input (no cursor), yellow counter
+        let search_input = Paragraph::new(Line::from(vec![
+            Span::styled(format!("/{}", search_query), Style::default().fg(Color::DarkGray)),
+        ]));
+        frame.render_widget(search_input, search_inner);
+
+        // Right side: yellow match counter
+        let case_sensitive = has_mixed_case(search_query);
+        let matches: Vec<usize> = commits.iter().enumerate().filter_map(|(i, c)| {
+            let is_match = if case_sensitive {
+                c.message.contains(search_query)
+                    || c.short_sha.contains(search_query)
+                    || c.author.contains(search_query)
+                    || c.date.contains(search_query)
+            } else {
+                let query_lower = search_query.to_lowercase();
+                c.message.to_lowercase().contains(&query_lower)
+                    || c.short_sha.to_lowercase().contains(&query_lower)
+                    || c.author.to_lowercase().contains(&query_lower)
+                    || c.date.to_lowercase().contains(&query_lower)
+            };
+            if is_match { Some(i) } else { None }
+        }).collect();
+
+        let total = matches.len();
+        let current = matches.iter().position(|&i| i == selected).map(|p| p + 1).unwrap_or(0);
+
+        let counter_text = if total > 0 {
+            format!("[ {} / {} ]", current, total)
+        } else {
+            "[ no matches ]".to_string()
+        };
+
+        let counter = Paragraph::new(Line::from(vec![
+            Span::styled(counter_text, Style::default().fg(Color::Yellow)),
+        ])).alignment(ratatui::layout::Alignment::Right);
+        frame.render_widget(counter, search_inner);
+    } else {
+        // Normal mode: just show hint
+        let search_hint = Paragraph::new(Line::from(vec![
+            Span::styled("/", Style::default().fg(Color::DarkGray)),
+        ]));
+        frame.render_widget(search_hint, search_inner);
+    }
 }
