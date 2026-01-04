@@ -351,23 +351,36 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
         merging_in.extend(&converging_lanes);
 
         // Pre-calculate where additional parents (merge branches) will be placed
-        let mut additional_parent_lanes: Vec<usize> = Vec::new();
+        let mut additional_parent_lanes_new: Vec<usize> = Vec::new();  // New lanes (branch starting)
+        let mut additional_parent_lanes_existing: Vec<usize> = Vec::new();  // Existing lanes (merging in)
         let mut temp_lanes = lanes.clone();
         for parent_id in commit.parent_ids.iter().skip(1) {
-            let already_tracked = temp_lanes.iter().any(|lane| *lane == Some(*parent_id));
-            if !already_tracked {
+            // Check if this parent is already tracked in another lane
+            let existing_lane = temp_lanes.iter().enumerate()
+                .find(|(i, lane)| *i != commit_lane && **lane == Some(*parent_id))
+                .map(|(i, _)| i);
+
+            if let Some(lane_idx) = existing_lane {
+                // Parent already tracked - show merge from that lane
+                additional_parent_lanes_existing.push(lane_idx);
+            } else {
+                // Parent not tracked - create new lane
                 match temp_lanes.iter().position(|lane| lane.is_none()) {
                     Some(pos) => {
                         temp_lanes[pos] = Some(*parent_id);
-                        additional_parent_lanes.push(pos);
+                        additional_parent_lanes_new.push(pos);
                     }
                     None => {
                         temp_lanes.push(Some(*parent_id));
-                        additional_parent_lanes.push(temp_lanes.len() - 1);
+                        additional_parent_lanes_new.push(temp_lanes.len() - 1);
                     }
                 }
             }
         }
+        let additional_parent_lanes: Vec<usize> = additional_parent_lanes_new.iter()
+            .chain(additional_parent_lanes_existing.iter())
+            .copied()
+            .collect();
 
         // Build the graph line with merge indicators on same row
         let mut line = String::new();
@@ -391,12 +404,19 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
                     } else {
                         line.push('╯');
                     }
-                } else if additional_parent_lanes.contains(&i) {
-                    // Branch merging in from below, curving toward this commit
+                } else if additional_parent_lanes_new.contains(&i) {
+                    // New branch starting from this merge commit
                     if i < commit_lane {
                         line.push('╭');
                     } else {
                         line.push('╮');
+                    }
+                } else if additional_parent_lanes_existing.contains(&i) {
+                    // Existing lane continues but also connects to this merge commit
+                    if i < commit_lane {
+                        line.push('├');
+                    } else {
+                        line.push('┤');
                     }
                 } else if i > min_merge && i < max_merge {
                     if lanes.get(i).map(|l| l.is_some()).unwrap_or(false) {
