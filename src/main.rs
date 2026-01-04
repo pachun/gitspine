@@ -680,13 +680,6 @@ fn render_ui(
         .map(|(i, (c, g))| {
             use ratatui::widgets::Cell;
 
-            // Find the commit's lane (the one with ●) for separator coloring
-            let commit_lane = g.iter().find(|(ch, _)| *ch == '●').and_then(|(_, lane)| *lane);
-            let separator_color = match commit_lane {
-                Some(lane) => lane_colors[lane % lane_colors.len()],
-                None => Color::DarkGray,
-            };
-
             // Build colored graph spans
             let graph_spans: Vec<Span> = g
                 .iter()
@@ -700,7 +693,7 @@ fn render_ui(
                 .collect();
 
             // Build message cell with separator and highlighting
-            let mut message_spans = vec![Span::styled("│ ", Style::default().fg(separator_color))];
+            let mut message_spans = vec![Span::styled("│ ", Style::default().fg(Color::DarkGray))];
             message_spans.extend(highlight_matches(
                 &c.message,
                 search_query,
