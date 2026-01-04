@@ -57,8 +57,26 @@ fn main() {
                         search_query.clear();
                     }
                     KeyCode::Enter => {
-                        // Exit typing mode but keep search active for n/N navigation
+                        // Exit typing mode, but only keep search if there are matches
                         searching = false;
+                        let case_sensitive = has_mixed_case(&search_query);
+                        let has_matches = !search_query.is_empty() && commits.iter().any(|c| {
+                            if case_sensitive {
+                                c.message.contains(&search_query)
+                                    || c.short_sha.contains(&search_query)
+                                    || c.author.contains(&search_query)
+                                    || c.date.contains(&search_query)
+                            } else {
+                                let query_lower = search_query.to_lowercase();
+                                c.message.to_lowercase().contains(&query_lower)
+                                    || c.short_sha.to_lowercase().contains(&query_lower)
+                                    || c.author.to_lowercase().contains(&query_lower)
+                                    || c.date.to_lowercase().contains(&query_lower)
+                            }
+                        });
+                        if !has_matches {
+                            search_query.clear();
+                        }
                     }
                     KeyCode::Backspace => {
                         if search_query.is_empty() {
