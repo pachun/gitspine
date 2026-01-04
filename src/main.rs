@@ -72,7 +72,7 @@ struct Commit {
 
 fn get_commits(repo: &Repository) -> Vec<Commit> {
     let mut revwalk = repo.revwalk().expect("Failed to create revwalk");
-    revwalk.set_sorting(git2::Sort::TIME).expect("Failed to set sorting");
+    revwalk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL).expect("Failed to set sorting");
     revwalk.push_glob("refs/heads/*").expect("Failed to push branches");
     revwalk.push_glob("refs/remotes/*").expect("Failed to push remotes");
 
