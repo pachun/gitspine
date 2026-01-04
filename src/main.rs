@@ -274,12 +274,17 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
         .skip(scroll_offset)
         .take(visible_height)
         .map(|(i, (c, g))| {
+            use ratatui::widgets::Cell;
+            use ratatui::text::Line;
             let row = Row::new(vec![
-                Span::styled(g.clone(), Style::default().fg(Color::Green)),
-                Span::raw(c.message.clone()),
-                Span::styled(c.author.clone(), Style::default().fg(Color::Cyan)),
-                Span::styled(c.short_sha.clone(), Style::default().fg(Color::Yellow)),
-                Span::styled(c.date.clone(), Style::default().fg(Color::Magenta)),
+                Cell::from(Span::styled(g.clone(), Style::default().fg(Color::Green))),
+                Cell::from(Line::from(vec![
+                    Span::styled("│ ", Style::default().fg(Color::DarkGray)),
+                    Span::raw(c.message.clone()),
+                ])),
+                Cell::from(Span::styled(c.author.clone(), Style::default().fg(Color::Cyan))),
+                Cell::from(Span::styled(c.short_sha.clone(), Style::default().fg(Color::Yellow))),
+                Cell::from(Span::styled(c.date.clone(), Style::default().fg(Color::Magenta))),
             ]);
             if i == selected {
                 row.style(Style::default().bg(Color::DarkGray))
