@@ -1,4 +1,4 @@
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers, MouseEventKind};
 use git2::Repository;
 use ratatui::Frame;
 use ratatui::layout::Constraint;
@@ -46,16 +46,10 @@ fn main() {
     let mut commit_detail: Option<CommitDetail> = None; // Some = detail view, None = list view
 
     let mut terminal = ratatui::init();
+    crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture).unwrap();
     loop {
         let visible_height = terminal.size().unwrap().height.saturating_sub(3) as usize; // Reserve 3 for search bar with borders
         let half_page = visible_height / 2;
-
-        // Adjust scroll to keep selection visible
-        if selected < scroll_offset {
-            scroll_offset = selected;
-        } else if selected >= scroll_offset + visible_height {
-            scroll_offset = selected - visible_height + 1;
-        }
 
         // When terminal grows (e.g. maximizing a tmux pane), scroll_offset may leave
         // blank space at bottom. Pull the list down to fill available space.
@@ -84,7 +78,32 @@ fn main() {
                 }
             })
             .unwrap();
-        if let Event::Key(key) = event::read().unwrap() {
+        match event::read().unwrap() {
+            Event::Mouse(mouse) => {
+                // Only handle mouse in list view, not detail view or search
+                if commit_detail.is_none() && !searching {
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => {
+                            scroll_offset = scroll_offset.saturating_sub(3);
+                        }
+                        MouseEventKind::ScrollDown => {
+                            let max_offset = commits.len().saturating_sub(visible_height);
+                            scroll_offset = (scroll_offset + 3).min(max_offset);
+                        }
+                        MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                            let clicked_row = mouse.row as usize;
+                            let clicked_index = scroll_offset + clicked_row;
+                            if clicked_index < commits.len() {
+                                selected = clicked_index;
+                                commit_detail = load_commit_detail(&repo, commits[selected].id);
+                                ensure_selection_visible(selected, &mut scroll_offset, visible_height);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Event::Key(key) => {
             // Handle detail view mode - most keys go back to list
             if commit_detail.is_some() {
                 match key.code {
@@ -290,6 +309,9 @@ fn main() {
                     _ => {}
                 }
             }
+            ensure_selection_visible(selected, &mut scroll_offset, visible_height);
+            }
+            _ => {}
         }
     }
     ratatui::restore();
@@ -645,6 +667,15 @@ fn build_graph(
     }
 
     graph_lines
+}
+
+// Adjust scroll offset to keep selection visible
+fn ensure_selection_visible(selected: usize, scroll_offset: &mut usize, visible_height: usize) {
+    if selected < *scroll_offset {
+        *scroll_offset = selected;
+    } else if selected >= *scroll_offset + visible_height {
+        *scroll_offset = selected - visible_height + 1;
+    }
 }
 
 // Check if query has mixed case (both upper and lowercase letters)
