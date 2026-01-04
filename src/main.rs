@@ -135,14 +135,26 @@ fn build_graph(commits: &[Commit]) -> Vec<String> {
         }
         graph_lines.push(line);
 
-        // Update lanes: remove this commit, add parents
-        lanes[commit_lane] = commit.parent_ids.first().copied();
+        // Update lanes: remove this commit, add first parent (if not already tracked)
+        if let Some(first_parent) = commit.parent_ids.first() {
+            let already_tracked = lanes.iter().any(|lane| *lane == Some(*first_parent));
+            if already_tracked {
+                lanes[commit_lane] = None; // Terminate this lane, parent is elsewhere
+            } else {
+                lanes[commit_lane] = Some(*first_parent);
+            }
+        } else {
+            lanes[commit_lane] = None; // No parents (root commit)
+        }
 
-        // Handle merge commits (multiple parents)
+        // Handle merge commits (multiple parents) - only add if not already tracked
         for parent_id in commit.parent_ids.iter().skip(1) {
-            match lanes.iter().position(|lane| lane.is_none()) {
-                Some(pos) => lanes[pos] = Some(*parent_id),
-                None => lanes.push(Some(*parent_id)),
+            let already_tracked = lanes.iter().any(|lane| *lane == Some(*parent_id));
+            if !already_tracked {
+                match lanes.iter().position(|lane| lane.is_none()) {
+                    Some(pos) => lanes[pos] = Some(*parent_id),
+                    None => lanes.push(Some(*parent_id)),
+                }
             }
         }
 
@@ -182,7 +194,7 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], selected: usize, scroll_offs
         .collect();
 
     let widths = [
-        Constraint::Length(3),    // graph
+        Constraint::Length(15),   // graph
         Constraint::Fill(1),      // message takes remaining space
         Constraint::Length(20),   // author
         Constraint::Length(8),    // sha
