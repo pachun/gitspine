@@ -1168,7 +1168,7 @@ fn render_commit_detail(frame: &mut Frame, detail: &CommitDetail) {
     let padded = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
+            Constraint::Length(0),
             Constraint::Min(1),
             Constraint::Length(1),
         ])
