@@ -96,22 +96,9 @@ fn main() {
                         // Exit typing mode, but only keep search if there are matches
                         searching = false;
                         history_index = None;
-                        let case_sensitive = has_mixed_case(&search_query);
-                        let has_matches = !search_query.is_empty()
-                            && commits.iter().any(|c| {
-                                if case_sensitive {
-                                    c.message.contains(&search_query)
-                                        || c.short_sha.contains(&search_query)
-                                        || c.author.contains(&search_query)
-                                        || c.date.contains(&search_query)
-                                } else {
-                                    let query_lower = search_query.to_lowercase();
-                                    c.message.to_lowercase().contains(&query_lower)
-                                        || c.short_sha.to_lowercase().contains(&query_lower)
-                                        || c.author.to_lowercase().contains(&query_lower)
-                                        || c.date.to_lowercase().contains(&query_lower)
-                                }
-                            });
+                        let has_matches = commits
+                            .iter()
+                            .any(|c| commit_matches_query(c, &search_query, &branch_info));
                         if has_matches {
                             // Add to history only if there were matches (deduplicate consecutive)
                             if search_history.last() != Some(&search_query) {
@@ -162,44 +149,17 @@ fn main() {
                 }
                 // Live search: jump to first matching commit
                 if !search_query.is_empty() {
-                    let case_sensitive = has_mixed_case(&search_query);
-                    if let Some(idx) = commits.iter().position(|c| {
-                        if case_sensitive {
-                            c.message.contains(&search_query)
-                                || c.short_sha.contains(&search_query)
-                                || c.author.contains(&search_query)
-                                || c.date.contains(&search_query)
-                        } else {
-                            let query_lower = search_query.to_lowercase();
-                            c.message.to_lowercase().contains(&query_lower)
-                                || c.short_sha.to_lowercase().contains(&query_lower)
-                                || c.author.to_lowercase().contains(&query_lower)
-                                || c.date.to_lowercase().contains(&query_lower)
-                        }
-                    }) {
+                    if let Some(idx) = commits
+                        .iter()
+                        .position(|c| commit_matches_query(c, &search_query, &branch_info))
+                    {
                         selected = idx;
                     }
                 }
             } else {
                 // Helper to check if a commit matches the search
-                let commit_matches = |c: &Commit| -> bool {
-                    if search_query.is_empty() {
-                        return false;
-                    }
-                    let case_sensitive = has_mixed_case(&search_query);
-                    if case_sensitive {
-                        c.message.contains(&search_query)
-                            || c.short_sha.contains(&search_query)
-                            || c.author.contains(&search_query)
-                            || c.date.contains(&search_query)
-                    } else {
-                        let query_lower = search_query.to_lowercase();
-                        c.message.to_lowercase().contains(&query_lower)
-                            || c.short_sha.to_lowercase().contains(&query_lower)
-                            || c.author.to_lowercase().contains(&query_lower)
-                            || c.date.to_lowercase().contains(&query_lower)
-                    }
-                };
+                let commit_matches =
+                    |c: &Commit| -> bool { commit_matches_query(c, &search_query, &branch_info) };
 
                 // Handle leader key sequences
                 if leader_pressed {
@@ -637,6 +597,37 @@ fn has_mixed_case(s: &str) -> bool {
     has_upper && has_lower
 }
 
+// Check if a commit matches the search query (searches message, sha, author, date, and branch names)
+fn commit_matches_query(commit: &Commit, query: &str, branch_info: &BranchInfo) -> bool {
+    if query.is_empty() {
+        return false;
+    }
+
+    let case_sensitive = has_mixed_case(query);
+
+    // Get branch names for this commit
+    let branch_names: Vec<&str> = branch_info
+        .branches
+        .get(&commit.id)
+        .map(|branches| branches.iter().map(|(name, _)| name.as_str()).collect())
+        .unwrap_or_default();
+
+    if case_sensitive {
+        commit.message.contains(query)
+            || commit.short_sha.contains(query)
+            || commit.author.contains(query)
+            || commit.date.contains(query)
+            || branch_names.iter().any(|name| name.contains(query))
+    } else {
+        let query_lower = query.to_lowercase();
+        commit.message.to_lowercase().contains(&query_lower)
+            || commit.short_sha.to_lowercase().contains(&query_lower)
+            || commit.author.to_lowercase().contains(&query_lower)
+            || commit.date.to_lowercase().contains(&query_lower)
+            || branch_names.iter().any(|name| name.to_lowercase().contains(&query_lower))
+    }
+}
+
 // Helper to highlight search matches in text
 fn highlight_matches<'a>(
     text: &'a str,
@@ -771,24 +762,30 @@ fn render_ui(
                 if is_head_commit {
                     if let Some(ref head_branch) = branch_info.head_branch {
                         // HEAD points to a branch: "HEAD → branch_name"
-                        message_spans.push(Span::styled(
+                        message_spans.extend(highlight_matches(
                             "HEAD",
+                            search_query,
                             Style::default().fg(Color::Cyan).bold(),
+                            highlight_style,
                         ));
                         message_spans.push(Span::styled(
                             " → ",
                             Style::default().fg(Color::Yellow).bold(),
                         ));
                         let branch_color = lane_colors[commit_lane % lane_colors.len()];
-                        message_spans.push(Span::styled(
-                            head_branch.clone(),
+                        message_spans.extend(highlight_matches(
+                            head_branch,
+                            search_query,
                             Style::default().fg(branch_color).bold(),
+                            highlight_style,
                         ));
                     } else {
                         // Detached HEAD
-                        message_spans.push(Span::styled(
+                        message_spans.extend(highlight_matches(
                             "HEAD",
+                            search_query,
                             Style::default().fg(Color::Cyan).bold(),
+                            highlight_style,
                         ));
                     }
                     first = false;
@@ -808,9 +805,11 @@ fn render_ui(
                             ));
                         }
                         let branch_color = lane_colors[commit_lane % lane_colors.len()];
-                        message_spans.push(Span::styled(
-                            branch_name.clone(),
+                        message_spans.extend(highlight_matches(
+                            branch_name,
+                            search_query,
                             Style::default().fg(branch_color).bold(),
+                            highlight_style,
                         ));
                         first = false;
                     }
@@ -905,24 +904,15 @@ fn render_ui(
 
         // Right side: match counter
         if !search_query.is_empty() {
-            let case_sensitive = has_mixed_case(search_query);
             let matches: Vec<usize> = commits
                 .iter()
                 .enumerate()
                 .filter_map(|(i, c)| {
-                    let is_match = if case_sensitive {
-                        c.message.contains(search_query)
-                            || c.short_sha.contains(search_query)
-                            || c.author.contains(search_query)
-                            || c.date.contains(search_query)
+                    if commit_matches_query(c, search_query, branch_info) {
+                        Some(i)
                     } else {
-                        let query_lower = search_query.to_lowercase();
-                        c.message.to_lowercase().contains(&query_lower)
-                            || c.short_sha.to_lowercase().contains(&query_lower)
-                            || c.author.to_lowercase().contains(&query_lower)
-                            || c.date.to_lowercase().contains(&query_lower)
-                    };
-                    if is_match { Some(i) } else { None }
+                        None
+                    }
                 })
                 .collect();
 
@@ -955,24 +945,15 @@ fn render_ui(
         frame.render_widget(search_input, search_inner);
 
         // Right side: yellow match counter
-        let case_sensitive = has_mixed_case(search_query);
         let matches: Vec<usize> = commits
             .iter()
             .enumerate()
             .filter_map(|(i, c)| {
-                let is_match = if case_sensitive {
-                    c.message.contains(search_query)
-                        || c.short_sha.contains(search_query)
-                        || c.author.contains(search_query)
-                        || c.date.contains(search_query)
+                if commit_matches_query(c, search_query, branch_info) {
+                    Some(i)
                 } else {
-                    let query_lower = search_query.to_lowercase();
-                    c.message.to_lowercase().contains(&query_lower)
-                        || c.short_sha.to_lowercase().contains(&query_lower)
-                        || c.author.to_lowercase().contains(&query_lower)
-                        || c.date.to_lowercase().contains(&query_lower)
-                };
-                if is_match { Some(i) } else { None }
+                    None
+                }
             })
             .collect();
 
