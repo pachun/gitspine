@@ -639,10 +639,13 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
         }).collect();
 
         let total = matches.len();
-        let current = matches.iter().position(|&i| i == selected).map(|p| p + 1).unwrap_or(0);
+        let current = matches.iter().position(|&i| i == selected).map(|p| p + 1);
 
         let counter_text = if total > 0 {
-            format!("[ {} / {} ]", current, total)
+            match current {
+                Some(pos) => format!("[ {} / {} ]", pos, total),
+                None => format!("[ {} matches ]", total),
+            }
         } else {
             "[ no matches ]".to_string()
         };
