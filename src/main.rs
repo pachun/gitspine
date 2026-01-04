@@ -200,7 +200,7 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
 
             for i in 0..num_lanes {
                 if i == commit_lane {
-                    line.push('*');
+                    line.push('●');
                 } else if i == target {
                     if commit_lane < target {
                         line.push('╯');
@@ -218,7 +218,7 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
         } else {
             for i in 0..num_lanes {
                 if i == commit_lane {
-                    line.push('*');
+                    line.push('●');
                 } else if lanes[i].is_some() {
                     line.push('│');
                 } else {
