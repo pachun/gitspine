@@ -947,18 +947,18 @@ fn render_ui(
 
             let row = Row::new(vec![
                 Cell::from(""), // Left padding
-                Cell::from(Line::from(highlight_matches(
-                    &c.short_sha,
-                    search_query,
-                    Style::default().fg(Color::Yellow),
-                    highlight_style,
-                ))),
                 Cell::from(Line::from(graph_spans)),
                 Cell::from(Line::from(message_spans)),
                 Cell::from(Line::from(highlight_matches(
                     &c.author,
                     search_query,
                     Style::default().fg(Color::Cyan),
+                    highlight_style,
+                ))),
+                Cell::from(Line::from(highlight_matches(
+                    &c.short_sha,
+                    search_query,
+                    Style::default().fg(Color::Yellow),
                     highlight_style,
                 ))),
                 Cell::from(Line::from(highlight_matches(
@@ -979,10 +979,10 @@ fn render_ui(
 
     let widths = [
         Constraint::Length(0), // left padding (column_spacing provides the space)
-        Constraint::Length(7),  // sha (before graph)
         Constraint::Length(graph_width as u16),
         Constraint::Fill(1),    // message takes remaining space
         Constraint::Length(20), // author
+        Constraint::Length(8),  // sha
         Constraint::Length(10), // date
         Constraint::Length(0),  // right padding (column_spacing provides the space)
     ];
@@ -1168,7 +1168,7 @@ fn render_commit_detail(frame: &mut Frame, detail: &CommitDetail) {
     let padded = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(0),
+            Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(1),
         ])
