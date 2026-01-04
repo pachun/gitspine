@@ -208,7 +208,11 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
                         line.push('├');
                     }
                 } else if i > min_lane && i < max_lane {
-                    line.push('─');
+                    if lanes[i].is_some() {
+                        line.push('┼');
+                    } else {
+                        line.push('─');
+                    }
                 } else if lanes[i].is_some() {
                     line.push('│');
                 } else {
