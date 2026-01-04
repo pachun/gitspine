@@ -155,12 +155,11 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
             Some(pos) => pos,
             // New commit - assign to appropriate lane
             None => {
-                // Ensure lane 0 exists (reserved for main line)
+                // First commit always goes to lane 0
                 if lanes.is_empty() {
-                    lanes.push(None);
-                }
-
-                if is_main && lanes[0].is_none() {
+                    lanes.push(Some(commit.id));
+                    0
+                } else if is_main && lanes[0].is_none() {
                     lanes[0] = Some(commit.id);
                     0
                 } else {
