@@ -133,18 +133,35 @@ fn main() {
                 }
             }
             Event::Key(key) => {
-            // Handle detail view mode - most keys go back to list
-            if commit_detail.is_some() {
+            // Handle detail view mode
+            if let Some(ref mut detail) = commit_detail {
+                let file_count = detail.files.len();
                 match key.code {
-                    KeyCode::Char('h')
-                    | KeyCode::Char('q')
+                    KeyCode::Char('q')
                     | KeyCode::Esc
-                    | KeyCode::Backspace
-                    | KeyCode::Left => {
+                    | KeyCode::Backspace => {
                         commit_detail = None;
                     }
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         commit_detail = None;
+                    }
+                    KeyCode::Char('h') | KeyCode::Left => {
+                        if file_count > 0 {
+                            if detail.selected_file > 0 {
+                                detail.selected_file -= 1;
+                            } else {
+                                detail.selected_file = file_count - 1; // Wrap to end
+                            }
+                        }
+                    }
+                    KeyCode::Char('l') | KeyCode::Right => {
+                        if file_count > 0 {
+                            if detail.selected_file < file_count - 1 {
+                                detail.selected_file += 1;
+                            } else {
+                                detail.selected_file = 0; // Wrap to start
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -371,6 +388,8 @@ struct CommitDetail {
     body: Option<String>,
     author: String,
     timestamp: i64,
+    files: Vec<String>,
+    selected_file: usize,
 }
 
 fn load_commit_detail(repo: &Repository, oid: git2::Oid) -> Option<CommitDetail> {
@@ -389,11 +408,28 @@ fn load_commit_detail(repo: &Repository, oid: git2::Oid) -> Option<CommitDetail>
         Some(body_lines.join("\n"))
     };
 
+    // Get list of changed files
+    let mut files = Vec::new();
+    let commit_tree = commit.tree().ok();
+    let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+
+    if let Some(diff) = commit_tree.as_ref().and_then(|ct| {
+        repo.diff_tree_to_tree(parent_tree.as_ref(), Some(ct), None).ok()
+    }) {
+        for delta in diff.deltas() {
+            if let Some(path) = delta.new_file().path().or_else(|| delta.old_file().path()) {
+                files.push(path.to_string_lossy().to_string());
+            }
+        }
+    }
+
     Some(CommitDetail {
         subject,
         body,
         author: commit.author().name().unwrap_or("").to_string(),
         timestamp: commit.time().seconds(),
+        files,
+        selected_file: 0,
     })
 }
 
@@ -1215,6 +1251,62 @@ fn render_commit_detail(frame: &mut Frame, detail: &CommitDetail) {
         for line in body_lines {
             lines.push(Line::raw(format!("{}{}", pad_str, line)));
         }
+    }
+
+    // Add file browser if there are files
+    if !detail.files.is_empty() {
+        let file_count = detail.files.len();
+        let current_file = &detail.files[detail.selected_file];
+
+        // File counter: "1 / 26"
+        lines.push(Line::raw(""));
+        lines.push(
+            Line::styled(
+                format!("{} / {}", detail.selected_file + 1, file_count),
+                Style::default().bold(),
+            )
+            .alignment(Alignment::Center),
+        );
+
+        // Box with filename and arrows
+        let box_width = padded.width.saturating_sub(2) as usize; // Leave margin
+        let inner_width = box_width.saturating_sub(2); // Account for │ on each side
+
+        let border_style = Style::default().fg(Color::DarkGray);
+        let arrow_style = Style::default().fg(Color::Yellow);
+        let filename_style = Style::default().fg(Color::Yellow);
+
+        // Top border: ╭───────╮
+        let top_border = format!("╭{}╮", "─".repeat(inner_width));
+        lines.push(Line::styled(top_border, border_style).alignment(Alignment::Center));
+
+        // Middle: │  ← filepath →  │
+        let arrow_space = 6; // " ← " and " → " (space + arrow + space on each side)
+        let path_space = inner_width.saturating_sub(arrow_space);
+        let path_display = if current_file.len() > path_space {
+            format!("…{}", &current_file[current_file.len() - path_space + 1..])
+        } else {
+            current_file.clone()
+        };
+        let padding_total = path_space.saturating_sub(path_display.len());
+        let pad_left = padding_total / 2;
+        let pad_right = padding_total - pad_left;
+        lines.push(
+            Line::from(vec![
+                Span::styled("│ ", border_style),
+                Span::styled("← ", arrow_style),
+                Span::styled(" ".repeat(pad_left), Style::default()),
+                Span::styled(path_display, filename_style),
+                Span::styled(" ".repeat(pad_right), Style::default()),
+                Span::styled(" →", arrow_style),
+                Span::styled(" │", border_style),
+            ])
+            .alignment(Alignment::Center),
+        );
+
+        // Bottom border: ╰───────╯
+        let bottom_border = format!("╰{}╯", "─".repeat(inner_width));
+        lines.push(Line::styled(bottom_border, border_style).alignment(Alignment::Center));
     }
 
     let text = Text::from(lines);
