@@ -144,6 +144,7 @@ fn main() {
                     }
                     KeyCode::Char('/') => {
                         searching = true;
+                        search_query.clear();
                     }
                     KeyCode::Char('n') if !search_query.is_empty() => {
                         // Find next match after current selection
