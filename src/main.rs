@@ -24,6 +24,8 @@ fn main() {
 }
 
 struct Commit {
+    id: git2::Oid,
+    parent_ids: Vec<git2::Oid>,
     short_sha: String,
     message: String,
     author: String,
@@ -32,7 +34,9 @@ struct Commit {
 
 fn get_commits(repo: &Repository) -> Vec<Commit> {
     let mut revwalk = repo.revwalk().expect("Failed to create revwalk");
-    revwalk.push_head().expect("Failed to push HEAD");
+    revwalk.set_sorting(git2::Sort::TIME).expect("Failed to set sorting");
+    revwalk.push_glob("refs/heads/*").expect("Failed to push branches");
+    revwalk.push_glob("refs/remotes/*").expect("Failed to push remotes");
 
     revwalk
         .filter_map(|oid| oid.ok())
@@ -45,6 +49,8 @@ fn get_commits(repo: &Repository) -> Vec<Commit> {
                 .unwrap_or_default();
 
             Commit {
+                id: commit.id(),
+                parent_ids: commit.parent_ids().collect(),
                 short_sha: commit.id().to_string()[..7].to_string(),
                 message: commit.summary().unwrap_or("").to_string(),
                 author: commit.author().name().unwrap_or("").to_string(),
@@ -54,10 +60,71 @@ fn get_commits(repo: &Repository) -> Vec<Commit> {
         .collect()
 }
 
+fn build_graph(commits: &[Commit]) -> Vec<String> {
+    let mut lanes: Vec<Option<git2::Oid>> = Vec::new();
+    let mut graph_lines: Vec<String> = Vec::new();
+
+    for commit in commits {
+        // Find which lane this commit is in, or add a new lane
+        let commit_lane = lanes.iter().position(|lane| *lane == Some(commit.id));
+        let commit_lane = match commit_lane {
+            Some(pos) => pos,
+            None => {
+                // Add to first empty lane, or create new one
+                match lanes.iter().position(|lane| lane.is_none()) {
+                    Some(pos) => {
+                        lanes[pos] = Some(commit.id);
+                        pos
+                    }
+                    None => {
+                        lanes.push(Some(commit.id));
+                        lanes.len() - 1
+                    }
+                }
+            }
+        };
+
+        // Build the graph line
+        let mut line = String::new();
+        for (i, lane) in lanes.iter().enumerate() {
+            if i == commit_lane {
+                line.push('*');
+            } else if lane.is_some() {
+                line.push('│');
+            } else {
+                line.push(' ');
+            }
+        }
+        graph_lines.push(line);
+
+        // Update lanes: remove this commit, add parents
+        lanes[commit_lane] = commit.parent_ids.first().copied();
+
+        // Handle merge commits (multiple parents)
+        for parent_id in commit.parent_ids.iter().skip(1) {
+            match lanes.iter().position(|lane| lane.is_none()) {
+                Some(pos) => lanes[pos] = Some(*parent_id),
+                None => lanes.push(Some(*parent_id)),
+            }
+        }
+
+        // Clean up trailing empty lanes
+        while lanes.last() == Some(&None) {
+            lanes.pop();
+        }
+    }
+
+    graph_lines
+}
+
 fn render_ui(frame: &mut Frame, commits: &[Commit]) {
+    let graph = build_graph(commits);
+
     let rows: Vec<Row> = commits
         .iter()
-        .map(|c| Row::new(vec![
+        .zip(graph.iter())
+        .map(|(c, g)| Row::new(vec![
+            Span::styled(g.clone(), Style::default().fg(Color::Green)),
             Span::raw(c.message.clone()),
             Span::styled(c.author.clone(), Style::default().fg(Color::Cyan)),
             Span::styled(c.short_sha.clone(), Style::default().fg(Color::Yellow)),
@@ -66,6 +133,7 @@ fn render_ui(frame: &mut Frame, commits: &[Commit]) {
         .collect();
 
     let widths = [
+        Constraint::Length(3),    // graph
         Constraint::Fill(1),      // message takes remaining space
         Constraint::Length(20),   // author
         Constraint::Length(8),    // sha
