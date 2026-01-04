@@ -1,15 +1,16 @@
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use git2::Repository;
+use ratatui::Frame;
 use ratatui::layout::Constraint;
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Row, Table};
-use ratatui::Frame;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let dump_mode = args.iter().any(|a| a == "--dump");
-    let path = args.iter()
+    let path = args
+        .iter()
         .skip(1)
         .find(|a| !a.starts_with('-'))
         .cloned()
@@ -22,7 +23,14 @@ fn main() {
     if dump_mode {
         let graph_lines = build_graph(&commits, &main_line);
         for (i, (graph, commit)) in graph_lines.iter().zip(commits.iter()).enumerate() {
-            println!("{:3} {} {:7} {}", i, graph, &commit.id.to_string()[..7], &commit.message);
+            let graph_str: String = graph.iter().map(|(c, _)| c).collect();
+            println!(
+                "{:3} {} {:7} {}",
+                i,
+                graph_str,
+                &commit.id.to_string()[..7],
+                &commit.message
+            );
         }
         return;
     }
@@ -32,8 +40,8 @@ fn main() {
     let mut searching = false;
     let mut search_query = String::new();
     let mut search_history: Vec<String> = Vec::new();
-    let mut history_index: Option<usize> = None;  // None = new search, Some(i) = viewing history[i]
-    let mut leader_pressed = false;  // For space+key sequences
+    let mut history_index: Option<usize> = None; // None = new search, Some(i) = viewing history[i]
+    let mut leader_pressed = false; // For space+key sequences
 
     let mut terminal = ratatui::init();
     loop {
@@ -56,7 +64,19 @@ fn main() {
             }
         }
 
-        terminal.draw(|frame| render_ui(frame, &commits, &main_line, selected, scroll_offset, searching, &search_query)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_ui(
+                    frame,
+                    &commits,
+                    &main_line,
+                    selected,
+                    scroll_offset,
+                    searching,
+                    &search_query,
+                )
+            })
+            .unwrap();
         if let Event::Key(key) = event::read().unwrap() {
             if searching {
                 match key.code {
@@ -75,20 +95,21 @@ fn main() {
                         searching = false;
                         history_index = None;
                         let case_sensitive = has_mixed_case(&search_query);
-                        let has_matches = !search_query.is_empty() && commits.iter().any(|c| {
-                            if case_sensitive {
-                                c.message.contains(&search_query)
-                                    || c.short_sha.contains(&search_query)
-                                    || c.author.contains(&search_query)
-                                    || c.date.contains(&search_query)
-                            } else {
-                                let query_lower = search_query.to_lowercase();
-                                c.message.to_lowercase().contains(&query_lower)
-                                    || c.short_sha.to_lowercase().contains(&query_lower)
-                                    || c.author.to_lowercase().contains(&query_lower)
-                                    || c.date.to_lowercase().contains(&query_lower)
-                            }
-                        });
+                        let has_matches = !search_query.is_empty()
+                            && commits.iter().any(|c| {
+                                if case_sensitive {
+                                    c.message.contains(&search_query)
+                                        || c.short_sha.contains(&search_query)
+                                        || c.author.contains(&search_query)
+                                        || c.date.contains(&search_query)
+                                } else {
+                                    let query_lower = search_query.to_lowercase();
+                                    c.message.to_lowercase().contains(&query_lower)
+                                        || c.short_sha.to_lowercase().contains(&query_lower)
+                                        || c.author.to_lowercase().contains(&query_lower)
+                                        || c.date.to_lowercase().contains(&query_lower)
+                                }
+                            });
                         if has_matches {
                             // Add to history only if there were matches (deduplicate consecutive)
                             if search_history.last() != Some(&search_query) {
@@ -128,12 +149,12 @@ fn main() {
                             history_index = None;
                         } else {
                             search_query.pop();
-                            history_index = None;  // Editing breaks out of history navigation
+                            history_index = None; // Editing breaks out of history navigation
                         }
                     }
                     KeyCode::Char(c) => {
                         search_query.push(c);
-                        history_index = None;  // Editing breaks out of history navigation
+                        history_index = None; // Editing breaks out of history navigation
                     }
                     _ => {}
                 }
@@ -211,13 +232,17 @@ fn main() {
                     }
                     KeyCode::Char('n') if !search_query.is_empty() => {
                         // Find next match after current selection
-                        if let Some(idx) = commits.iter().enumerate()
+                        if let Some(idx) = commits
+                            .iter()
+                            .enumerate()
                             .skip(selected + 1)
                             .find(|(_, c)| commit_matches(c))
                             .map(|(i, _)| i)
                         {
                             selected = idx;
-                        } else if let Some(idx) = commits.iter().enumerate()
+                        } else if let Some(idx) = commits
+                            .iter()
+                            .enumerate()
                             .take(selected)
                             .find(|(_, c)| commit_matches(c))
                             .map(|(i, _)| i)
@@ -228,14 +253,18 @@ fn main() {
                     }
                     KeyCode::Char('N') if !search_query.is_empty() => {
                         // Find previous match before current selection
-                        if let Some(idx) = commits.iter().enumerate()
+                        if let Some(idx) = commits
+                            .iter()
+                            .enumerate()
                             .take(selected)
                             .rev()
                             .find(|(_, c)| commit_matches(c))
                             .map(|(i, _)| i)
                         {
                             selected = idx;
-                        } else if let Some(idx) = commits.iter().enumerate()
+                        } else if let Some(idx) = commits
+                            .iter()
+                            .enumerate()
                             .skip(selected + 1)
                             .rev()
                             .find(|(_, c)| commit_matches(c))
@@ -305,9 +334,15 @@ fn get_main_line(repo: &Repository) -> std::collections::HashSet<git2::Oid> {
 
 fn get_commits(repo: &Repository) -> Vec<Commit> {
     let mut revwalk = repo.revwalk().expect("Failed to create revwalk");
-    revwalk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL).expect("Failed to set sorting");
-    revwalk.push_glob("refs/heads/*").expect("Failed to push branches");
-    revwalk.push_glob("refs/remotes/*").expect("Failed to push remotes");
+    revwalk
+        .set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)
+        .expect("Failed to set sorting");
+    revwalk
+        .push_glob("refs/heads/*")
+        .expect("Failed to push branches");
+    revwalk
+        .push_glob("refs/remotes/*")
+        .expect("Failed to push remotes");
 
     revwalk
         .filter_map(|oid| oid.ok())
@@ -331,14 +366,20 @@ fn get_commits(repo: &Repository) -> Vec<Commit> {
         .collect()
 }
 
-fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::Oid>) -> Vec<String> {
-
+// Each character in the graph has an associated lane index for coloring
+// Returns Vec of rows, each row is Vec of (char, lane_index)
+fn build_graph(
+    commits: &[Commit],
+    main_line: &std::collections::HashSet<git2::Oid>,
+) -> Vec<Vec<(char, Option<usize>)>> {
     let mut lanes: Vec<Option<git2::Oid>> = Vec::new();
-    let mut graph_lines: Vec<String> = Vec::new();
+    let mut graph_lines: Vec<Vec<(char, Option<usize>)>> = Vec::new();
 
     for commit in commits {
         // Find ALL lanes that have this commit (multiple lanes can converge here)
-        let lanes_with_commit: Vec<usize> = lanes.iter().enumerate()
+        let lanes_with_commit: Vec<usize> = lanes
+            .iter()
+            .enumerate()
             .filter(|(_, lane)| **lane == Some(commit.id))
             .map(|(i, _)| i)
             .collect();
@@ -381,7 +422,8 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
         };
 
         // Other lanes with this commit are converging here
-        let converging_lanes: Vec<usize> = lanes_with_commit.iter()
+        let converging_lanes: Vec<usize> = lanes_with_commit
+            .iter()
             .filter(|&&i| i != commit_lane)
             .copied()
             .collect();
@@ -405,12 +447,14 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
         merging_in.extend(&converging_lanes);
 
         // Pre-calculate where additional parents (merge branches) will be placed
-        let mut additional_parent_lanes_new: Vec<usize> = Vec::new();  // New lanes (branch starting)
-        let mut additional_parent_lanes_existing: Vec<usize> = Vec::new();  // Existing lanes (merging in)
+        let mut additional_parent_lanes_new: Vec<usize> = Vec::new(); // New lanes (branch starting)
+        let mut additional_parent_lanes_existing: Vec<usize> = Vec::new(); // Existing lanes (merging in)
         let mut temp_lanes = lanes.clone();
         for parent_id in commit.parent_ids.iter().skip(1) {
             // Check if this parent is already tracked in another lane
-            let existing_lane = temp_lanes.iter().enumerate()
+            let existing_lane = temp_lanes
+                .iter()
+                .enumerate()
                 .find(|(i, lane)| *i != commit_lane && **lane == Some(*parent_id))
                 .map(|(i, _)| i);
 
@@ -431,13 +475,14 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
                 }
             }
         }
-        let additional_parent_lanes: Vec<usize> = additional_parent_lanes_new.iter()
+        let additional_parent_lanes: Vec<usize> = additional_parent_lanes_new
+            .iter()
             .chain(additional_parent_lanes_existing.iter())
             .copied()
             .collect();
 
         // Build the graph line with merge indicators on same row
-        let mut line = String::new();
+        let mut line: Vec<(char, Option<usize>)> = Vec::new();
         let num_lanes = lanes.len().max(temp_lanes.len());
 
         // Determine all merge ranges (merging_in and additional parents)
@@ -451,47 +496,47 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
         if has_merges {
             for i in 0..num_lanes {
                 if i == commit_lane {
-                    line.push('●');
+                    line.push(('●', Some(i)));
                 } else if merging_in.contains(&i) {
                     if i < commit_lane {
-                        line.push('╰');
+                        line.push(('╰', Some(i)));
                     } else {
-                        line.push('╯');
+                        line.push(('╯', Some(i)));
                     }
                 } else if additional_parent_lanes_new.contains(&i) {
                     // New branch starting from this merge commit
                     if i < commit_lane {
-                        line.push('╭');
+                        line.push(('╭', Some(i)));
                     } else {
-                        line.push('╮');
+                        line.push(('╮', Some(i)));
                     }
                 } else if additional_parent_lanes_existing.contains(&i) {
                     // Existing lane continues but also connects to this merge commit
                     if i < commit_lane {
-                        line.push('├');
+                        line.push(('├', Some(i)));
                     } else {
-                        line.push('┤');
+                        line.push(('┤', Some(i)));
                     }
                 } else if i > min_merge && i < max_merge {
                     if lanes.get(i).map(|l| l.is_some()).unwrap_or(false) {
-                        line.push('┼');
+                        line.push(('┼', Some(i)));
                     } else {
-                        line.push('─');
+                        line.push(('─', None)); // Horizontal connector, no specific lane
                     }
                 } else if lanes.get(i).map(|l| l.is_some()).unwrap_or(false) {
-                    line.push('│');
+                    line.push(('│', Some(i)));
                 } else {
-                    line.push(' ');
+                    line.push((' ', None));
                 }
             }
         } else {
             for i in 0..num_lanes {
                 if i == commit_lane {
-                    line.push('●');
+                    line.push(('●', Some(i)));
                 } else if lanes[i].is_some() {
-                    line.push('│');
+                    line.push(('│', Some(i)));
                 } else {
-                    line.push(' ');
+                    line.push((' ', None));
                 }
             }
         }
@@ -540,7 +585,12 @@ fn has_mixed_case(s: &str) -> bool {
 }
 
 // Helper to highlight search matches in text
-fn highlight_matches<'a>(text: &'a str, query: &str, base_style: Style, highlight_style: Style) -> Vec<Span<'a>> {
+fn highlight_matches<'a>(
+    text: &'a str,
+    query: &str,
+    base_style: Style,
+    highlight_style: Style,
+) -> Vec<Span<'a>> {
     if query.is_empty() {
         return vec![Span::styled(text.to_string(), base_style)];
     }
@@ -559,7 +609,10 @@ fn highlight_matches<'a>(text: &'a str, query: &str, base_style: Style, highligh
         if start > last_end {
             spans.push(Span::styled(text[last_end..start].to_string(), base_style));
         }
-        spans.push(Span::styled(text[start..start + query.len()].to_string(), highlight_style));
+        spans.push(Span::styled(
+            text[start..start + query.len()].to_string(),
+            highlight_style,
+        ));
         last_end = start + query.len();
     }
 
@@ -574,10 +627,18 @@ fn highlight_matches<'a>(text: &'a str, query: &str, base_style: Style, highligh
     spans
 }
 
-fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections::HashSet<git2::Oid>, selected: usize, scroll_offset: usize, searching: bool, search_query: &str) {
-    use ratatui::layout::{Layout, Direction};
-    use ratatui::widgets::{Block, Borders, Paragraph};
+fn render_ui(
+    frame: &mut Frame,
+    commits: &[Commit],
+    main_line: &std::collections::HashSet<git2::Oid>,
+    selected: usize,
+    scroll_offset: usize,
+    searching: bool,
+    search_query: &str,
+) {
+    use ratatui::layout::{Direction, Layout};
     use ratatui::text::Line;
+    use ratatui::widgets::{Block, Borders, Paragraph};
 
     // Use full width - padding is handled by table columns for proper row highlighting
     let padded_area = frame.area();
@@ -586,8 +647,8 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),      // main table
-            Constraint::Length(3),   // search bar with top and bottom borders
+            Constraint::Min(1),    // main table
+            Constraint::Length(3), // search bar with top and bottom borders
         ])
         .split(padded_area);
 
@@ -595,7 +656,17 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
     let visible_height = chunks[0].height as usize;
 
     // Calculate graph column width based on widest graph (table provides cell spacing)
-    let graph_width = graph.iter().map(|g| g.chars().count()).max().unwrap_or(1);
+    let graph_width = graph.iter().map(|g| g.len()).max().unwrap_or(1);
+
+    // Lane colors - lane 0 (main line) is red, others get rotating colors
+    let lane_colors = [
+        Color::Red,
+        Color::Yellow,
+        Color::Magenta,
+        Color::Cyan,
+        Color::Blue,
+        Color::Green,
+    ];
 
     // Highlight style for search matches
     let highlight_style = Style::default().bg(Color::Yellow).fg(Color::Black);
@@ -609,18 +680,50 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
         .map(|(i, (c, g))| {
             use ratatui::widgets::Cell;
 
+            // Build colored graph spans
+            let graph_spans: Vec<Span> = g
+                .iter()
+                .map(|(ch, lane_opt)| {
+                    let color = match lane_opt {
+                        Some(lane) => lane_colors[*lane % lane_colors.len()],
+                        None => Color::Gray, // Connectors without lane
+                    };
+                    Span::styled(ch.to_string(), Style::default().fg(color))
+                })
+                .collect();
+
             // Build message cell with separator and highlighting
             let mut message_spans = vec![Span::styled("│ ", Style::default().fg(Color::DarkGray))];
-            message_spans.extend(highlight_matches(&c.message, search_query, Style::default(), highlight_style));
+            message_spans.extend(highlight_matches(
+                &c.message,
+                search_query,
+                Style::default(),
+                highlight_style,
+            ));
 
             let row = Row::new(vec![
-                Cell::from(""),  // Left padding
-                Cell::from(Span::styled(g.clone(), Style::default().fg(Color::Gray))),
+                Cell::from(""), // Left padding
+                Cell::from(Line::from(graph_spans)),
                 Cell::from(Line::from(message_spans)),
-                Cell::from(Line::from(highlight_matches(&c.author, search_query, Style::default().fg(Color::Cyan), highlight_style))),
-                Cell::from(Line::from(highlight_matches(&c.short_sha, search_query, Style::default().fg(Color::Yellow), highlight_style))),
-                Cell::from(Line::from(highlight_matches(&c.date, search_query, Style::default().fg(Color::Magenta), highlight_style))),
-                Cell::from(""),  // Right padding
+                Cell::from(Line::from(highlight_matches(
+                    &c.author,
+                    search_query,
+                    Style::default().fg(Color::Cyan),
+                    highlight_style,
+                ))),
+                Cell::from(Line::from(highlight_matches(
+                    &c.short_sha,
+                    search_query,
+                    Style::default().fg(Color::Yellow),
+                    highlight_style,
+                ))),
+                Cell::from(Line::from(highlight_matches(
+                    &c.date,
+                    search_query,
+                    Style::default().fg(Color::Magenta),
+                    highlight_style,
+                ))),
+                Cell::from(""), // Right padding
             ]);
             if i == selected {
                 row.style(Style::default().bg(Color::DarkGray))
@@ -631,13 +734,13 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
         .collect();
 
     let widths = [
-        Constraint::Length(0),    // left padding (column_spacing provides the space)
+        Constraint::Length(0), // left padding (column_spacing provides the space)
         Constraint::Length(graph_width as u16),
-        Constraint::Fill(1),      // message takes remaining space
-        Constraint::Length(20),   // author
-        Constraint::Length(8),    // sha
-        Constraint::Length(10),   // date
-        Constraint::Length(0),    // right padding (column_spacing provides the space)
+        Constraint::Fill(1),    // message takes remaining space
+        Constraint::Length(20), // author
+        Constraint::Length(8),  // sha
+        Constraint::Length(10), // date
+        Constraint::Length(0),  // right padding (column_spacing provides the space)
     ];
 
     let table = Table::new(rows, widths).column_spacing(1);
@@ -646,8 +749,14 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
     // Render search bar with right-aligned match counter
     let browse_mode = !searching && !search_query.is_empty();
     let search_active = searching || browse_mode;
-    let border_color = if search_active { Color::White } else { Color::DarkGray };
-    let search_block = Block::default().borders(Borders::TOP | Borders::BOTTOM).border_style(Style::default().fg(border_color));
+    let border_color = if search_active {
+        Color::White
+    } else {
+        Color::DarkGray
+    };
+    let search_block = Block::default()
+        .borders(Borders::TOP | Borders::BOTTOM)
+        .border_style(Style::default().fg(border_color));
     let search_inner = search_block.inner(chunks[1]);
     // Add horizontal padding to match table
     let search_inner = ratatui::layout::Rect {
@@ -660,15 +769,69 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
 
     if searching {
         // Typing mode: yellow input with cursor, grey counter
-        let search_input = Paragraph::new(Line::from(vec![
-            Span::styled(format!("/{}█", search_query), Style::default().fg(Color::Yellow)),
-        ]));
+        let search_input = Paragraph::new(Line::from(vec![Span::styled(
+            format!("/{}█", search_query),
+            Style::default().fg(Color::Yellow),
+        )]));
         frame.render_widget(search_input, search_inner);
 
         // Right side: match counter
         if !search_query.is_empty() {
             let case_sensitive = has_mixed_case(search_query);
-            let matches: Vec<usize> = commits.iter().enumerate().filter_map(|(i, c)| {
+            let matches: Vec<usize> = commits
+                .iter()
+                .enumerate()
+                .filter_map(|(i, c)| {
+                    let is_match = if case_sensitive {
+                        c.message.contains(search_query)
+                            || c.short_sha.contains(search_query)
+                            || c.author.contains(search_query)
+                            || c.date.contains(search_query)
+                    } else {
+                        let query_lower = search_query.to_lowercase();
+                        c.message.to_lowercase().contains(&query_lower)
+                            || c.short_sha.to_lowercase().contains(&query_lower)
+                            || c.author.to_lowercase().contains(&query_lower)
+                            || c.date.to_lowercase().contains(&query_lower)
+                    };
+                    if is_match { Some(i) } else { None }
+                })
+                .collect();
+
+            let total = matches.len();
+            let current = matches
+                .iter()
+                .position(|&i| i == selected)
+                .map(|p| p + 1)
+                .unwrap_or(0);
+
+            let counter_text = if total > 0 {
+                format!("[ {} / {} ]", current, total)
+            } else {
+                "[ no matches ]".to_string()
+            };
+
+            let counter = Paragraph::new(Line::from(vec![Span::styled(
+                counter_text,
+                Style::default().fg(Color::DarkGray),
+            )]))
+            .alignment(ratatui::layout::Alignment::Right);
+            frame.render_widget(counter, search_inner);
+        }
+    } else if browse_mode {
+        // Browse mode: grey input (no cursor), yellow counter
+        let search_input = Paragraph::new(Line::from(vec![Span::styled(
+            format!("/{}", search_query),
+            Style::default().fg(Color::DarkGray),
+        )]));
+        frame.render_widget(search_input, search_inner);
+
+        // Right side: yellow match counter
+        let case_sensitive = has_mixed_case(search_query);
+        let matches: Vec<usize> = commits
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| {
                 let is_match = if case_sensitive {
                     c.message.contains(search_query)
                         || c.short_sha.contains(search_query)
@@ -682,46 +845,8 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
                         || c.date.to_lowercase().contains(&query_lower)
                 };
                 if is_match { Some(i) } else { None }
-            }).collect();
-
-            let total = matches.len();
-            let current = matches.iter().position(|&i| i == selected).map(|p| p + 1).unwrap_or(0);
-
-            let counter_text = if total > 0 {
-                format!("[ {} / {} ]", current, total)
-            } else {
-                "[ no matches ]".to_string()
-            };
-
-            let counter = Paragraph::new(Line::from(vec![
-                Span::styled(counter_text, Style::default().fg(Color::DarkGray)),
-            ])).alignment(ratatui::layout::Alignment::Right);
-            frame.render_widget(counter, search_inner);
-        }
-    } else if browse_mode {
-        // Browse mode: grey input (no cursor), yellow counter
-        let search_input = Paragraph::new(Line::from(vec![
-            Span::styled(format!("/{}", search_query), Style::default().fg(Color::DarkGray)),
-        ]));
-        frame.render_widget(search_input, search_inner);
-
-        // Right side: yellow match counter
-        let case_sensitive = has_mixed_case(search_query);
-        let matches: Vec<usize> = commits.iter().enumerate().filter_map(|(i, c)| {
-            let is_match = if case_sensitive {
-                c.message.contains(search_query)
-                    || c.short_sha.contains(search_query)
-                    || c.author.contains(search_query)
-                    || c.date.contains(search_query)
-            } else {
-                let query_lower = search_query.to_lowercase();
-                c.message.to_lowercase().contains(&query_lower)
-                    || c.short_sha.to_lowercase().contains(&query_lower)
-                    || c.author.to_lowercase().contains(&query_lower)
-                    || c.date.to_lowercase().contains(&query_lower)
-            };
-            if is_match { Some(i) } else { None }
-        }).collect();
+            })
+            .collect();
 
         let total = matches.len();
         let current = matches.iter().position(|&i| i == selected).map(|p| p + 1);
@@ -735,15 +860,18 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
             "[ no matches ]".to_string()
         };
 
-        let counter = Paragraph::new(Line::from(vec![
-            Span::styled(counter_text, Style::default().fg(Color::Yellow)),
-        ])).alignment(ratatui::layout::Alignment::Right);
+        let counter = Paragraph::new(Line::from(vec![Span::styled(
+            counter_text,
+            Style::default().fg(Color::Yellow),
+        )]))
+        .alignment(ratatui::layout::Alignment::Right);
         frame.render_widget(counter, search_inner);
     } else {
         // Normal mode: just show hint
-        let search_hint = Paragraph::new(Line::from(vec![
-            Span::styled("/", Style::default().fg(Color::DarkGray)),
-        ]));
+        let search_hint = Paragraph::new(Line::from(vec![Span::styled(
+            "/",
+            Style::default().fg(Color::DarkGray),
+        )]));
         frame.render_widget(search_hint, search_inner);
     }
 }
