@@ -12,10 +12,20 @@ fn main() {
     let commits = get_commits(&repo);
 
     let mut selected: usize = 0;
+    let mut scroll_offset: usize = 0;
 
     let mut terminal = ratatui::init();
     loop {
-        terminal.draw(|frame| render_ui(frame, &commits, selected)).unwrap();
+        let visible_height = terminal.size().unwrap().height as usize;
+
+        // Adjust scroll to keep selection visible
+        if selected < scroll_offset {
+            scroll_offset = selected;
+        } else if selected >= scroll_offset + visible_height {
+            scroll_offset = selected - visible_height + 1;
+        }
+
+        terminal.draw(|frame| render_ui(frame, &commits, selected, scroll_offset)).unwrap();
         if let Event::Key(key) = event::read().unwrap() {
             match key.code {
                 KeyCode::Char('q') => break,
@@ -128,13 +138,16 @@ fn build_graph(commits: &[Commit]) -> Vec<String> {
     graph_lines
 }
 
-fn render_ui(frame: &mut Frame, commits: &[Commit], selected: usize) {
+fn render_ui(frame: &mut Frame, commits: &[Commit], selected: usize, scroll_offset: usize) {
     let graph = build_graph(commits);
+    let visible_height = frame.area().height as usize;
 
     let rows: Vec<Row> = commits
         .iter()
         .zip(graph.iter())
         .enumerate()
+        .skip(scroll_offset)
+        .take(visible_height)
         .map(|(i, (c, g))| {
             let row = Row::new(vec![
                 Span::styled(g.clone(), Style::default().fg(Color::Green)),
