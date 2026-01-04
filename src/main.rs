@@ -31,6 +31,8 @@ fn main() {
     let mut scroll_offset: usize = 0;
     let mut searching = false;
     let mut search_query = String::new();
+    let mut search_history: Vec<String> = Vec::new();
+    let mut history_index: Option<usize> = None;  // None = new search, Some(i) = viewing history[i]
     let mut leader_pressed = false;  // For space+key sequences
 
     let mut terminal = ratatui::init();
@@ -61,14 +63,17 @@ fn main() {
                     KeyCode::Esc => {
                         searching = false;
                         search_query.clear();
+                        history_index = None;
                     }
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         searching = false;
                         search_query.clear();
+                        history_index = None;
                     }
                     KeyCode::Enter => {
                         // Exit typing mode, but only keep search if there are matches
                         searching = false;
+                        history_index = None;
                         let case_sensitive = has_mixed_case(&search_query);
                         let has_matches = !search_query.is_empty() && commits.iter().any(|c| {
                             if case_sensitive {
@@ -84,20 +89,51 @@ fn main() {
                                     || c.date.to_lowercase().contains(&query_lower)
                             }
                         });
-                        if !has_matches {
+                        if has_matches {
+                            // Add to history only if there were matches (deduplicate consecutive)
+                            if search_history.last() != Some(&search_query) {
+                                search_history.push(search_query.clone());
+                            }
+                        } else {
                             search_query.clear();
+                        }
+                    }
+                    KeyCode::Up => {
+                        // Navigate to previous history entry
+                        if !search_history.is_empty() {
+                            history_index = Some(match history_index {
+                                None => search_history.len() - 1,
+                                Some(0) => 0,
+                                Some(i) => i - 1,
+                            });
+                            search_query = search_history[history_index.unwrap()].clone();
+                        }
+                    }
+                    KeyCode::Down => {
+                        // Navigate to next history entry or back to empty
+                        if let Some(i) = history_index {
+                            if i + 1 < search_history.len() {
+                                history_index = Some(i + 1);
+                                search_query = search_history[i + 1].clone();
+                            } else {
+                                history_index = None;
+                                search_query.clear();
+                            }
                         }
                     }
                     KeyCode::Backspace => {
                         if search_query.is_empty() {
                             // Backspace on empty query exits search mode
                             searching = false;
+                            history_index = None;
                         } else {
                             search_query.pop();
+                            history_index = None;  // Editing breaks out of history navigation
                         }
                     }
                     KeyCode::Char(c) => {
                         search_query.push(c);
+                        history_index = None;  // Editing breaks out of history navigation
                     }
                     _ => {}
                 }
