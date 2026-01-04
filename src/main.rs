@@ -29,10 +29,12 @@ fn main() {
 
     let mut selected: usize = 0;
     let mut scroll_offset: usize = 0;
+    let mut searching = false;
+    let mut search_query = String::new();
 
     let mut terminal = ratatui::init();
     loop {
-        let visible_height = terminal.size().unwrap().height as usize;
+        let visible_height = terminal.size().unwrap().height.saturating_sub(2) as usize; // Reserve 2 rows for search bar
         let half_page = visible_height / 2;
 
         // Adjust scroll to keep selection visible
@@ -42,31 +44,71 @@ fn main() {
             scroll_offset = selected - visible_height + 1;
         }
 
-        terminal.draw(|frame| render_ui(frame, &commits, &main_line, selected, scroll_offset)).unwrap();
+        terminal.draw(|frame| render_ui(frame, &commits, &main_line, selected, scroll_offset, searching, &search_query)).unwrap();
         if let Event::Key(key) = event::read().unwrap() {
-            match key.code {
-                KeyCode::Char('q') => break,
-                KeyCode::Char('j') | KeyCode::Down => {
-                    if selected < commits.len().saturating_sub(1) {
-                        selected += 1;
+            if searching {
+                match key.code {
+                    KeyCode::Esc => {
+                        searching = false;
+                        search_query.clear();
+                    }
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        searching = false;
+                        search_query.clear();
+                    }
+                    KeyCode::Backspace => {
+                        if search_query.is_empty() {
+                            // Backspace on empty query exits search mode
+                            searching = false;
+                        } else {
+                            search_query.pop();
+                        }
+                    }
+                    KeyCode::Char(c) => {
+                        search_query.push(c);
+                    }
+                    _ => {}
+                }
+                // Live search: jump to first matching commit
+                if !search_query.is_empty() {
+                    let query_lower = search_query.to_lowercase();
+                    if let Some(idx) = commits.iter().position(|c| {
+                        c.message.to_lowercase().contains(&query_lower)
+                            || c.short_sha.to_lowercase().contains(&query_lower)
+                            || c.author.to_lowercase().contains(&query_lower)
+                            || c.date.contains(&search_query)
+                    }) {
+                        selected = idx;
                     }
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    selected = selected.saturating_sub(1);
+            } else {
+                match key.code {
+                    KeyCode::Char('q') => break,
+                    KeyCode::Char('/') => {
+                        searching = true;
+                    }
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        if selected < commits.len().saturating_sub(1) {
+                            selected += 1;
+                        }
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        selected = selected.saturating_sub(1);
+                    }
+                    KeyCode::Char('g') => {
+                        selected = 0;
+                    }
+                    KeyCode::Char('G') => {
+                        selected = commits.len().saturating_sub(1);
+                    }
+                    KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        selected = (selected + half_page).min(commits.len().saturating_sub(1));
+                    }
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        selected = selected.saturating_sub(half_page);
+                    }
+                    _ => {}
                 }
-                KeyCode::Char('g') => {
-                    selected = 0;
-                }
-                KeyCode::Char('G') => {
-                    selected = commits.len().saturating_sub(1);
-                }
-                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    selected = (selected + half_page).min(commits.len().saturating_sub(1));
-                }
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    selected = selected.saturating_sub(half_page);
-                }
-                _ => {}
             }
         }
     }
@@ -315,12 +357,59 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
     graph_lines
 }
 
-fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections::HashSet<git2::Oid>, selected: usize, scroll_offset: usize) {
+// Helper to highlight search matches in text
+fn highlight_matches<'a>(text: &'a str, query: &str, base_style: Style, highlight_style: Style) -> Vec<Span<'a>> {
+    if query.is_empty() {
+        return vec![Span::styled(text.to_string(), base_style)];
+    }
+
+    let text_lower = text.to_lowercase();
+    let query_lower = query.to_lowercase();
+
+    let mut spans = Vec::new();
+    let mut last_end = 0;
+
+    for (start, _) in text_lower.match_indices(&query_lower) {
+        if start > last_end {
+            spans.push(Span::styled(text[last_end..start].to_string(), base_style));
+        }
+        spans.push(Span::styled(text[start..start + query.len()].to_string(), highlight_style));
+        last_end = start + query.len();
+    }
+
+    if last_end < text.len() {
+        spans.push(Span::styled(text[last_end..].to_string(), base_style));
+    }
+
+    if spans.is_empty() {
+        spans.push(Span::styled(text.to_string(), base_style));
+    }
+
+    spans
+}
+
+fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections::HashSet<git2::Oid>, selected: usize, scroll_offset: usize, searching: bool, search_query: &str) {
+    use ratatui::layout::{Layout, Direction};
+    use ratatui::widgets::{Block, Borders, Paragraph};
+    use ratatui::text::Line;
+
+    // Split into main area and search bar
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(1),      // main table
+            Constraint::Length(2),   // search bar
+        ])
+        .split(frame.area());
+
     let graph = build_graph(commits, main_line);
-    let visible_height = frame.area().height as usize;
+    let visible_height = chunks[0].height as usize;
 
     // Calculate graph column width based on widest graph (table provides cell spacing)
     let graph_width = graph.iter().map(|g| g.chars().count()).max().unwrap_or(1);
+
+    // Highlight style for search matches
+    let highlight_style = Style::default().bg(Color::Yellow).fg(Color::Black);
 
     let rows: Vec<Row> = commits
         .iter()
@@ -330,16 +419,17 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
         .take(visible_height)
         .map(|(i, (c, g))| {
             use ratatui::widgets::Cell;
-            use ratatui::text::Line;
+
+            // Build message cell with separator and highlighting
+            let mut message_spans = vec![Span::styled("│ ", Style::default().fg(Color::DarkGray))];
+            message_spans.extend(highlight_matches(&c.message, search_query, Style::default(), highlight_style));
+
             let row = Row::new(vec![
                 Cell::from(Span::styled(g.clone(), Style::default().fg(Color::Green))),
-                Cell::from(Line::from(vec![
-                    Span::styled("│ ", Style::default().fg(Color::DarkGray)),
-                    Span::raw(c.message.clone()),
-                ])),
-                Cell::from(Span::styled(c.author.clone(), Style::default().fg(Color::Cyan))),
-                Cell::from(Span::styled(c.short_sha.clone(), Style::default().fg(Color::Yellow))),
-                Cell::from(Span::styled(c.date.clone(), Style::default().fg(Color::Magenta))),
+                Cell::from(Line::from(message_spans)),
+                Cell::from(Line::from(highlight_matches(&c.author, search_query, Style::default().fg(Color::Cyan), highlight_style))),
+                Cell::from(Line::from(highlight_matches(&c.short_sha, search_query, Style::default().fg(Color::Yellow), highlight_style))),
+                Cell::from(Line::from(highlight_matches(&c.date, search_query, Style::default().fg(Color::Magenta), highlight_style))),
             ]);
             if i == selected {
                 row.style(Style::default().bg(Color::DarkGray))
@@ -358,5 +448,19 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
     ];
 
     let table = Table::new(rows, widths);
-    frame.render_widget(table, frame.area());
+    frame.render_widget(table, chunks[0]);
+
+    // Render search bar
+    let search_bar = if searching {
+        Paragraph::new(Line::from(vec![
+            Span::styled(format!("/{}█", search_query), Style::default().fg(Color::Yellow)),
+        ]))
+    } else {
+        Paragraph::new(Line::from(vec![
+            Span::styled("/", Style::default().fg(Color::DarkGray)),
+        ]))
+    };
+
+    let search_bar = search_bar.block(Block::default().borders(Borders::TOP));
+    frame.render_widget(search_bar, chunks[1]);
 }
