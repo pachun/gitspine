@@ -1,4 +1,4 @@
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use git2::Repository;
 use ratatui::layout::Constraint;
 use ratatui::style::{Color, Style};
@@ -13,10 +13,12 @@ fn main() {
 
     let mut selected: usize = 0;
     let mut scroll_offset: usize = 0;
+    let mut last_key: Option<KeyCode> = None;
 
     let mut terminal = ratatui::init();
     loop {
         let visible_height = terminal.size().unwrap().height as usize;
+        let half_page = visible_height / 2;
 
         // Adjust scroll to keep selection visible
         if selected < scroll_offset {
@@ -37,8 +39,23 @@ fn main() {
                 KeyCode::Char('k') | KeyCode::Up => {
                     selected = selected.saturating_sub(1);
                 }
+                KeyCode::Char('g') => {
+                    if last_key == Some(KeyCode::Char('g')) {
+                        selected = 0;
+                    }
+                }
+                KeyCode::Char('G') => {
+                    selected = commits.len().saturating_sub(1);
+                }
+                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    selected = (selected + half_page).min(commits.len().saturating_sub(1));
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    selected = selected.saturating_sub(half_page);
+                }
                 _ => {}
             }
+            last_key = Some(key.code);
         }
     }
     ratatui::restore();
