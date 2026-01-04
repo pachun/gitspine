@@ -29,7 +29,6 @@ fn main() {
 
     let mut selected: usize = 0;
     let mut scroll_offset: usize = 0;
-    let mut last_key: Option<KeyCode> = None;
 
     let mut terminal = ratatui::init();
     loop {
@@ -56,9 +55,7 @@ fn main() {
                     selected = selected.saturating_sub(1);
                 }
                 KeyCode::Char('g') => {
-                    if last_key == Some(KeyCode::Char('g')) {
-                        selected = 0;
-                    }
+                    selected = 0;
                 }
                 KeyCode::Char('G') => {
                     selected = commits.len().saturating_sub(1);
@@ -71,7 +68,6 @@ fn main() {
                 }
                 _ => {}
             }
-            last_key = Some(key.code);
         }
     }
     ratatui::restore();
