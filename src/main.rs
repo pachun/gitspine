@@ -122,29 +122,62 @@ fn build_graph(commits: &[Commit]) -> Vec<String> {
             }
         };
 
-        // Build the graph line
+        // Check if this lane will merge into another (parent already tracked elsewhere)
+        let merge_target = commit.parent_ids.first().and_then(|parent_id| {
+            lanes.iter().enumerate()
+                .find(|(i, lane)| *i != commit_lane && **lane == Some(*parent_id))
+                .map(|(i, _)| i)
+        });
+
+        // Build the graph line with merge indicators on same row
         let mut line = String::new();
-        for (i, lane) in lanes.iter().enumerate() {
-            if i == commit_lane {
-                line.push('*');
-            } else if lane.is_some() {
-                line.push('│');
-            } else {
-                line.push(' ');
+        let num_lanes = lanes.len();
+
+        if let Some(target) = merge_target {
+            let min_lane = commit_lane.min(target);
+            let max_lane = commit_lane.max(target);
+
+            for i in 0..num_lanes {
+                if i == commit_lane {
+                    line.push('*');
+                } else if i == target {
+                    if commit_lane < target {
+                        line.push('┤');
+                    } else {
+                        line.push('├');
+                    }
+                } else if i > min_lane && i < max_lane {
+                    line.push('─');
+                } else if lanes[i].is_some() {
+                    line.push('│');
+                } else {
+                    line.push(' ');
+                }
+            }
+        } else {
+            for i in 0..num_lanes {
+                if i == commit_lane {
+                    line.push('*');
+                } else if lanes[i].is_some() {
+                    line.push('│');
+                } else {
+                    line.push(' ');
+                }
             }
         }
+
         graph_lines.push(line);
 
         // Update lanes: remove this commit, add first parent (if not already tracked)
         if let Some(first_parent) = commit.parent_ids.first() {
             let already_tracked = lanes.iter().any(|lane| *lane == Some(*first_parent));
             if already_tracked {
-                lanes[commit_lane] = None; // Terminate this lane, parent is elsewhere
+                lanes[commit_lane] = None;
             } else {
                 lanes[commit_lane] = Some(*first_parent);
             }
         } else {
-            lanes[commit_lane] = None; // No parents (root commit)
+            lanes[commit_lane] = None;
         }
 
         // Handle merge commits (multiple parents) - only add if not already tracked
