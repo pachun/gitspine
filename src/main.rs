@@ -7,10 +7,25 @@ use ratatui::widgets::{Row, Table};
 use ratatui::Frame;
 
 fn main() {
-    let path = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
+    let args: Vec<String> = std::env::args().collect();
+    let dump_mode = args.iter().any(|a| a == "--dump");
+    let path = args.iter()
+        .skip(1)
+        .find(|a| !a.starts_with('-'))
+        .cloned()
+        .unwrap_or_else(|| ".".to_string());
+
     let repo = Repository::open(&path).expect("Not a git repository");
     let commits = get_commits(&repo);
     let main_line = get_main_line(&repo);
+
+    if dump_mode {
+        let graph_lines = build_graph(&commits, &main_line);
+        for (i, (graph, commit)) in graph_lines.iter().zip(commits.iter()).enumerate() {
+            println!("{:3} {} {:7} {}", i, graph, &commit.id.to_string()[..7], &commit.message);
+        }
+        return;
+    }
 
     let mut selected: usize = 0;
     let mut scroll_offset: usize = 0;
