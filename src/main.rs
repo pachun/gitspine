@@ -71,12 +71,20 @@ fn main() {
                 }
                 // Live search: jump to first matching commit
                 if !search_query.is_empty() {
-                    let query_lower = search_query.to_lowercase();
+                    let case_sensitive = has_mixed_case(&search_query);
                     if let Some(idx) = commits.iter().position(|c| {
-                        c.message.to_lowercase().contains(&query_lower)
-                            || c.short_sha.to_lowercase().contains(&query_lower)
-                            || c.author.to_lowercase().contains(&query_lower)
-                            || c.date.contains(&search_query)
+                        if case_sensitive {
+                            c.message.contains(&search_query)
+                                || c.short_sha.contains(&search_query)
+                                || c.author.contains(&search_query)
+                                || c.date.contains(&search_query)
+                        } else {
+                            let query_lower = search_query.to_lowercase();
+                            c.message.to_lowercase().contains(&query_lower)
+                                || c.short_sha.to_lowercase().contains(&query_lower)
+                                || c.author.to_lowercase().contains(&query_lower)
+                                || c.date.to_lowercase().contains(&query_lower)
+                        }
                     }) {
                         selected = idx;
                     }
@@ -84,6 +92,7 @@ fn main() {
             } else {
                 match key.code {
                     KeyCode::Char('q') => break,
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
                     KeyCode::Char('/') => {
                         searching = true;
                     }
@@ -357,19 +366,30 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
     graph_lines
 }
 
+// Check if query has mixed case (both upper and lowercase letters)
+fn has_mixed_case(s: &str) -> bool {
+    let has_upper = s.chars().any(|c| c.is_uppercase());
+    let has_lower = s.chars().any(|c| c.is_lowercase());
+    has_upper && has_lower
+}
+
 // Helper to highlight search matches in text
 fn highlight_matches<'a>(text: &'a str, query: &str, base_style: Style, highlight_style: Style) -> Vec<Span<'a>> {
     if query.is_empty() {
         return vec![Span::styled(text.to_string(), base_style)];
     }
 
-    let text_lower = text.to_lowercase();
-    let query_lower = query.to_lowercase();
+    let case_sensitive = has_mixed_case(query);
+    let (search_text, search_query) = if case_sensitive {
+        (text.to_string(), query.to_string())
+    } else {
+        (text.to_lowercase(), query.to_lowercase())
+    };
 
     let mut spans = Vec::new();
     let mut last_end = 0;
 
-    for (start, _) in text_lower.match_indices(&query_lower) {
+    for (start, _) in search_text.match_indices(&search_query) {
         if start > last_end {
             spans.push(Span::styled(text[last_end..start].to_string(), base_style));
         }
