@@ -203,7 +203,7 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
                     line.push('*');
                 } else if i == target {
                     if commit_lane < target {
-                        line.push('┤');
+                        line.push('╯');
                     } else {
                         line.push('├');
                     }
