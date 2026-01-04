@@ -139,6 +139,7 @@ fn main() {
                     KeyCode::Char('h')
                     | KeyCode::Char('q')
                     | KeyCode::Esc
+                    | KeyCode::Backspace
                     | KeyCode::Left => {
                         commit_detail = None;
                     }
@@ -263,6 +264,9 @@ fn main() {
                         } else {
                             search_query.clear();
                         }
+                    }
+                    KeyCode::Backspace => {
+                        search_query.clear();
                     }
                     KeyCode::Char('/') => {
                         searching = true;
