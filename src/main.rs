@@ -1163,7 +1163,7 @@ fn render_ui(
 }
 
 fn render_commit_detail(frame: &mut Frame, detail: &CommitDetail) {
-    use ratatui::layout::{Constraint, Direction, Layout};
+    use ratatui::layout::{Alignment, Constraint, Direction, Layout};
     use ratatui::text::{Line, Text};
     use ratatui::widgets::Paragraph;
 
@@ -1199,17 +1199,21 @@ fn render_commit_detail(frame: &mut Frame, detail: &CommitDetail) {
 
     // Build commit detail content
     let mut lines = vec![
-        Line::styled(&detail.subject, Style::default()),
+        Line::styled(&detail.subject, Style::default()).alignment(Alignment::Center),
         Line::raw(""),
-        Line::styled(&detail.author, Style::default().fg(Color::Cyan)),
-        Line::styled(formatted_date, Style::default().fg(Color::Magenta)),
+        Line::styled(formatted_date, Style::default().fg(Color::Magenta)).alignment(Alignment::Center),
+        Line::styled(&detail.author, Style::default().fg(Color::Cyan)).alignment(Alignment::Center),
     ];
 
-    // Add body if present
+    // Add body if present, centered as a block but left-aligned within
     if let Some(ref body) = detail.body {
         lines.push(Line::raw(""));
-        for line in body.lines() {
-            lines.push(Line::raw(line));
+        let body_lines: Vec<&str> = body.lines().collect();
+        let max_width = body_lines.iter().map(|l| l.len()).max().unwrap_or(0);
+        let padding = padded.width.saturating_sub(max_width as u16) / 2;
+        let pad_str = " ".repeat(padding as usize);
+        for line in body_lines {
+            lines.push(Line::raw(format!("{}{}", pad_str, line)));
         }
     }
 
