@@ -320,7 +320,8 @@ struct BranchInfo {
 }
 
 fn get_branch_info(repo: &Repository) -> BranchInfo {
-    let mut branches: std::collections::HashMap<git2::Oid, Vec<(String, bool)>> = std::collections::HashMap::new();
+    let mut branches: std::collections::HashMap<git2::Oid, Vec<(String, bool)>> =
+        std::collections::HashMap::new();
     let mut head_commit = None;
     let mut head_branch = None;
 
@@ -350,7 +351,11 @@ fn get_branch_info(repo: &Repository) -> BranchInfo {
         }
     }
 
-    BranchInfo { branches, head_commit, head_branch }
+    BranchInfo {
+        branches,
+        head_commit,
+        head_branch,
+    }
 }
 
 fn get_main_line(repo: &Repository) -> std::collections::HashSet<git2::Oid> {
@@ -699,16 +704,18 @@ fn render_ui(
     let visible_height = chunks[0].height as usize;
 
     // Calculate graph column width based on widest graph (table provides cell spacing)
-    let graph_width = graph.iter().map(|g| g.len()).max().unwrap_or(1);
+    // Cap at 16 to prevent runaway graphs from taking over the screen
+    let max_graph_width = 16;
+    let graph_width = graph
+        .iter()
+        .map(|g| g.len())
+        .max()
+        .unwrap_or(1)
+        .min(max_graph_width);
 
     // Lane colors - lane 0 (main line) is red, others get rotating colors
     // Cyan is reserved for HEAD indicator, Yellow for branch parens/commas
-    let lane_colors = [
-        Color::Red,
-        Color::Magenta,
-        Color::Blue,
-        Color::Green,
-    ];
+    let lane_colors = [Color::Red, Color::Magenta, Color::Blue, Color::Green];
 
     // Highlight style for search matches
     let highlight_style = Style::default().bg(Color::Yellow).fg(Color::Black);
@@ -722,9 +729,10 @@ fn render_ui(
         .map(|(i, (c, g))| {
             use ratatui::widgets::Cell;
 
-            // Build colored graph spans
+            // Build colored graph spans (truncate to max width)
             let graph_spans: Vec<Span> = g
                 .iter()
+                .take(max_graph_width)
                 .map(|(ch, lane_opt)| {
                     let color = match lane_opt {
                         Some(lane) => lane_colors[*lane % lane_colors.len()],
@@ -743,7 +751,8 @@ fn render_ui(
 
             if is_head_commit || branches_at_commit.is_some() {
                 // Find this commit's lane color from the graph (where ● is)
-                let commit_lane = g.iter()
+                let commit_lane = g
+                    .iter()
                     .find(|(ch, _)| *ch == '●')
                     .and_then(|(_, lane)| *lane)
                     .unwrap_or(0);
@@ -756,13 +765,25 @@ fn render_ui(
                 if is_head_commit {
                     if let Some(ref head_branch) = branch_info.head_branch {
                         // HEAD points to a branch: "HEAD → branch_name"
-                        message_spans.push(Span::styled("HEAD", Style::default().fg(Color::Cyan).bold()));
-                        message_spans.push(Span::styled(" → ", Style::default().fg(Color::Yellow).bold()));
+                        message_spans.push(Span::styled(
+                            "HEAD",
+                            Style::default().fg(Color::Cyan).bold(),
+                        ));
+                        message_spans.push(Span::styled(
+                            " → ",
+                            Style::default().fg(Color::Yellow).bold(),
+                        ));
                         let branch_color = lane_colors[commit_lane % lane_colors.len()];
-                        message_spans.push(Span::styled(head_branch.clone(), Style::default().fg(branch_color).bold()));
+                        message_spans.push(Span::styled(
+                            head_branch.clone(),
+                            Style::default().fg(branch_color).bold(),
+                        ));
                     } else {
                         // Detached HEAD
-                        message_spans.push(Span::styled("HEAD", Style::default().fg(Color::Cyan).bold()));
+                        message_spans.push(Span::styled(
+                            "HEAD",
+                            Style::default().fg(Color::Cyan).bold(),
+                        ));
                     }
                     first = false;
                 }
@@ -775,15 +796,24 @@ fn render_ui(
                             continue;
                         }
                         if !first {
-                            message_spans.push(Span::styled(", ", Style::default().fg(Color::Yellow).bold()));
+                            message_spans.push(Span::styled(
+                                ", ",
+                                Style::default().fg(Color::Yellow).bold(),
+                            ));
                         }
                         let branch_color = lane_colors[commit_lane % lane_colors.len()];
-                        message_spans.push(Span::styled(branch_name.clone(), Style::default().fg(branch_color).bold()));
+                        message_spans.push(Span::styled(
+                            branch_name.clone(),
+                            Style::default().fg(branch_color).bold(),
+                        ));
                         first = false;
                     }
                 }
 
-                message_spans.push(Span::styled(") ", Style::default().fg(Color::Yellow).bold()));
+                message_spans.push(Span::styled(
+                    ") ",
+                    Style::default().fg(Color::Yellow).bold(),
+                ));
             }
 
             message_spans.extend(highlight_matches(
