@@ -1024,11 +1024,20 @@ fn render_ui(
             Some(i) => i < history_len - 1,  // Not at newest (don't count "new search")
         };
 
-        let hint = match (can_go_older, can_go_newer) {
-            (true, true) => " [ ↑↓ history | enter ]",
-            (true, false) => " [ ↑ history | enter ]",
-            (false, true) => " [ ↓ history | enter ]",
-            (false, false) => " [ enter ]",
+        let hint = if search_query.is_empty() {
+            match (can_go_older, can_go_newer) {
+                (true, true) => " [ type something | ↑↓ history ]",
+                (true, false) => " [ type something | ↑ history ]",
+                (false, true) => " [ type something | ↓ history ]",
+                (false, false) => " [ type something ]",
+            }
+        } else {
+            match (can_go_older, can_go_newer) {
+                (true, true) => " [ enter | ↑↓ history ]",
+                (true, false) => " [ enter | ↑ history ]",
+                (false, true) => " [ enter | ↓ history ]",
+                (false, false) => " [ enter ]",
+            }
         };
         let search_input = Paragraph::new(Line::from(vec![
             Span::styled(format!("{}█", search_query), Style::default().fg(Color::Yellow)),
@@ -1078,15 +1087,7 @@ fn render_ui(
         )]));
         frame.render_widget(search_input, search_inner);
 
-        // Center: navigation hint
-        let nav_hint = Paragraph::new(Line::from(vec![Span::styled(
-            "[ n: next, N: prev ]",
-            Style::default().fg(Color::DarkGray),
-        )]))
-        .alignment(ratatui::layout::Alignment::Center);
-        frame.render_widget(nav_hint, search_inner);
-
-        // Right side: yellow match counter
+        // Calculate matches first to determine if we show nav hint
         let matches: Vec<usize> = commits
             .iter()
             .enumerate()
@@ -1100,7 +1101,26 @@ fn render_ui(
             .collect();
 
         let total = matches.len();
+
         let current = matches.iter().position(|&i| i == selected).map(|p| p + 1);
+        let on_match = current.is_some();
+
+        // Center: navigation hint
+        let nav_hint_text = if total > 1 {
+            Some("[ n: next, N: prev ]")
+        } else if total == 1 && !on_match {
+            Some("[ n: go to result ]")
+        } else {
+            None
+        };
+        if let Some(hint) = nav_hint_text {
+            let nav_hint = Paragraph::new(Line::from(vec![Span::styled(
+                hint,
+                Style::default().fg(Color::DarkGray),
+            )]))
+            .alignment(ratatui::layout::Alignment::Center);
+            frame.render_widget(nav_hint, search_inner);
+        }
 
         let counter_text = if total > 0 {
             match current {
