@@ -19,6 +19,7 @@ fn main() {
     let repo = Repository::open(&path).expect("Not a git repository");
     let commits = get_commits(&repo);
     let main_line = get_main_line(&repo);
+    let branch_info = get_branch_info(&repo);
 
     if dump_mode {
         let graph_lines = build_graph(&commits, &main_line);
@@ -70,6 +71,7 @@ fn main() {
                     frame,
                     &commits,
                     &main_line,
+                    &branch_info,
                     selected,
                     scroll_offset,
                     searching,
@@ -309,6 +311,46 @@ struct Commit {
     message: String,
     author: String,
     date: String,
+}
+
+struct BranchInfo {
+    branches: std::collections::HashMap<git2::Oid, Vec<(String, bool)>>, // commit -> [(branch_name, is_head)]
+    head_commit: Option<git2::Oid>,
+    head_branch: Option<String>, // None if detached
+}
+
+fn get_branch_info(repo: &Repository) -> BranchInfo {
+    let mut branches: std::collections::HashMap<git2::Oid, Vec<(String, bool)>> = std::collections::HashMap::new();
+    let mut head_commit = None;
+    let mut head_branch = None;
+
+    // Get HEAD info
+    if let Ok(head) = repo.head() {
+        head_commit = head.target();
+        if head.is_branch() {
+            head_branch = head.shorthand().map(|s| s.to_string());
+        }
+    }
+
+    // Get all branches
+    if let Ok(branch_iter) = repo.branches(None) {
+        for branch_result in branch_iter {
+            if let Ok((branch, _branch_type)) = branch_result {
+                // Get name first before consuming branch
+                let name = branch.name().ok().flatten().map(|s| s.to_string());
+                if let Some(name) = name {
+                    if let Ok(reference) = branch.into_reference().resolve() {
+                        if let Some(oid) = reference.target() {
+                            let is_head = head_branch.as_ref() == Some(&name);
+                            branches.entry(oid).or_default().push((name, is_head));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    BranchInfo { branches, head_commit, head_branch }
 }
 
 fn get_main_line(repo: &Repository) -> std::collections::HashSet<git2::Oid> {
@@ -631,6 +673,7 @@ fn render_ui(
     frame: &mut Frame,
     commits: &[Commit],
     main_line: &std::collections::HashSet<git2::Oid>,
+    branch_info: &BranchInfo,
     selected: usize,
     scroll_offset: usize,
     searching: bool,
@@ -659,11 +702,10 @@ fn render_ui(
     let graph_width = graph.iter().map(|g| g.len()).max().unwrap_or(1);
 
     // Lane colors - lane 0 (main line) is red, others get rotating colors
+    // Cyan is reserved for HEAD indicator, Yellow for branch parens/commas
     let lane_colors = [
         Color::Red,
-        Color::Yellow,
         Color::Magenta,
-        Color::Cyan,
         Color::Blue,
         Color::Green,
     ];
@@ -692,8 +734,58 @@ fn render_ui(
                 })
                 .collect();
 
-            // Build message cell with separator and highlighting
+            // Build message cell with separator, branch indicators, and highlighting
             let mut message_spans = vec![Span::styled("│ ", Style::default().fg(Color::DarkGray))];
+
+            // Add branch indicators if any branches point to this commit
+            let is_head_commit = branch_info.head_commit == Some(c.id);
+            let branches_at_commit = branch_info.branches.get(&c.id);
+
+            if is_head_commit || branches_at_commit.is_some() {
+                // Find this commit's lane color from the graph (where ● is)
+                let commit_lane = g.iter()
+                    .find(|(ch, _)| *ch == '●')
+                    .and_then(|(_, lane)| *lane)
+                    .unwrap_or(0);
+
+                message_spans.push(Span::styled("(", Style::default().fg(Color::Yellow).bold()));
+
+                let mut first = true;
+
+                // Show HEAD first if this is the head commit
+                if is_head_commit {
+                    if let Some(ref head_branch) = branch_info.head_branch {
+                        // HEAD points to a branch: "HEAD → branch_name"
+                        message_spans.push(Span::styled("HEAD", Style::default().fg(Color::Cyan).bold()));
+                        message_spans.push(Span::styled(" → ", Style::default().fg(Color::Yellow).bold()));
+                        let branch_color = lane_colors[commit_lane % lane_colors.len()];
+                        message_spans.push(Span::styled(head_branch.clone(), Style::default().fg(branch_color).bold()));
+                    } else {
+                        // Detached HEAD
+                        message_spans.push(Span::styled("HEAD", Style::default().fg(Color::Cyan).bold()));
+                    }
+                    first = false;
+                }
+
+                // Show other branches (not the HEAD branch)
+                if let Some(branches) = branches_at_commit {
+                    for (branch_name, is_head) in branches {
+                        if *is_head {
+                            // Skip the HEAD branch, we already showed it above
+                            continue;
+                        }
+                        if !first {
+                            message_spans.push(Span::styled(", ", Style::default().fg(Color::Yellow).bold()));
+                        }
+                        let branch_color = lane_colors[commit_lane % lane_colors.len()];
+                        message_spans.push(Span::styled(branch_name.clone(), Style::default().fg(branch_color).bold()));
+                        first = false;
+                    }
+                }
+
+                message_spans.push(Span::styled(") ", Style::default().fg(Color::Yellow).bold()));
+            }
+
             message_spans.extend(highlight_matches(
                 &c.message,
                 search_query,
