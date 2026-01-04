@@ -10,6 +10,7 @@ fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
     let repo = Repository::open(&path).expect("Not a git repository");
     let commits = get_commits(&repo);
+    let main_line = get_main_line(&repo);
 
     let mut selected: usize = 0;
     let mut scroll_offset: usize = 0;
@@ -27,7 +28,7 @@ fn main() {
             scroll_offset = selected - visible_height + 1;
         }
 
-        terminal.draw(|frame| render_ui(frame, &commits, selected, scroll_offset)).unwrap();
+        terminal.draw(|frame| render_ui(frame, &commits, &main_line, selected, scroll_offset)).unwrap();
         if let Event::Key(key) = event::read().unwrap() {
             match key.code {
                 KeyCode::Char('q') => break,
@@ -70,6 +71,27 @@ struct Commit {
     date: String,
 }
 
+fn get_main_line(repo: &Repository) -> std::collections::HashSet<git2::Oid> {
+    let mut main_line = std::collections::HashSet::new();
+
+    // Start from HEAD and follow first-parent chain
+    if let Ok(head) = repo.head() {
+        if let Some(oid) = head.target() {
+            let mut current = Some(oid);
+            while let Some(commit_id) = current {
+                main_line.insert(commit_id);
+                if let Ok(commit) = repo.find_commit(commit_id) {
+                    current = commit.parent_id(0).ok();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    main_line
+}
+
 fn get_commits(repo: &Repository) -> Vec<Commit> {
     let mut revwalk = repo.revwalk().expect("Failed to create revwalk");
     revwalk.set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL).expect("Failed to set sorting");
@@ -98,25 +120,49 @@ fn get_commits(repo: &Repository) -> Vec<Commit> {
         .collect()
 }
 
-fn build_graph(commits: &[Commit]) -> Vec<String> {
+fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::Oid>) -> Vec<String> {
+
     let mut lanes: Vec<Option<git2::Oid>> = Vec::new();
     let mut graph_lines: Vec<String> = Vec::new();
 
     for commit in commits {
-        // Find which lane this commit is in, or add a new lane
-        let commit_lane = lanes.iter().position(|lane| *lane == Some(commit.id));
-        let commit_lane = match commit_lane {
+        // Find which lane this commit is in
+        let found_lane = lanes.iter().position(|lane| *lane == Some(commit.id));
+        let is_main = main_line.contains(&commit.id);
+
+        let commit_lane = match found_lane {
+            // Main line commit found in wrong lane - move to lane 0
+            Some(pos) if pos > 0 && is_main && (lanes.is_empty() || lanes[0].is_none()) => {
+                if lanes.is_empty() {
+                    lanes.push(None);
+                }
+                lanes[pos] = None;
+                lanes[0] = Some(commit.id);
+                0
+            }
+            // Commit found in expected lane
             Some(pos) => pos,
+            // New commit - assign to appropriate lane
             None => {
-                // Add to first empty lane, or create new one
-                match lanes.iter().position(|lane| lane.is_none()) {
-                    Some(pos) => {
-                        lanes[pos] = Some(commit.id);
-                        pos
-                    }
-                    None => {
-                        lanes.push(Some(commit.id));
-                        lanes.len() - 1
+                // Ensure lane 0 exists (reserved for main line)
+                if lanes.is_empty() {
+                    lanes.push(None);
+                }
+
+                if is_main && lanes[0].is_none() {
+                    lanes[0] = Some(commit.id);
+                    0
+                } else {
+                    // Find first empty lane after 0, or create new
+                    match lanes.iter().skip(1).position(|lane| lane.is_none()) {
+                        Some(pos) => {
+                            lanes[pos + 1] = Some(commit.id);
+                            pos + 1
+                        }
+                        None => {
+                            lanes.push(Some(commit.id));
+                            lanes.len() - 1
+                        }
                     }
                 }
             }
@@ -200,8 +246,8 @@ fn build_graph(commits: &[Commit]) -> Vec<String> {
     graph_lines
 }
 
-fn render_ui(frame: &mut Frame, commits: &[Commit], selected: usize, scroll_offset: usize) {
-    let graph = build_graph(commits);
+fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections::HashSet<git2::Oid>, selected: usize, scroll_offset: usize) {
+    let graph = build_graph(commits, main_line);
     let visible_height = frame.area().height as usize;
 
     let rows: Vec<Row> = commits
