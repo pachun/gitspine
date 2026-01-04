@@ -283,58 +283,59 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
     let mut graph_lines: Vec<String> = Vec::new();
 
     for commit in commits {
-        // Find which lane this commit is in
-        let found_lane = lanes.iter().position(|lane| *lane == Some(commit.id));
+        // Find ALL lanes that have this commit (multiple lanes can converge here)
+        let lanes_with_commit: Vec<usize> = lanes.iter().enumerate()
+            .filter(|(_, lane)| **lane == Some(commit.id))
+            .map(|(i, _)| i)
+            .collect();
+
         let is_main = main_line.contains(&commit.id);
 
-        let commit_lane = match found_lane {
-            // Main line commit found in wrong lane - move to lane 0
-            Some(pos) if pos > 0 && is_main && (lanes.is_empty() || lanes[0].is_none()) => {
-                if lanes.is_empty() {
-                    lanes.push(None);
-                }
-                lanes[pos] = None;
+        let commit_lane = if lanes_with_commit.is_empty() {
+            // New commit - assign to appropriate lane
+            if lanes.is_empty() {
+                lanes.push(Some(commit.id));
+                0
+            } else if is_main && lanes[0].is_none() {
                 lanes[0] = Some(commit.id);
                 0
-            }
-            // Commit found in expected lane
-            Some(pos) => pos,
-            // New commit - assign to appropriate lane
-            None => {
-                // First commit always goes to lane 0
-                if lanes.is_empty() {
-                    lanes.push(Some(commit.id));
-                    0
-                } else if is_main && lanes[0].is_none() {
-                    lanes[0] = Some(commit.id);
-                    0
-                } else {
-                    // Find first empty lane after 0, or create new
-                    match lanes.iter().skip(1).position(|lane| lane.is_none()) {
-                        Some(pos) => {
-                            lanes[pos + 1] = Some(commit.id);
-                            pos + 1
-                        }
-                        None => {
-                            lanes.push(Some(commit.id));
-                            lanes.len() - 1
-                        }
+            } else {
+                // Find first empty lane after 0, or create new
+                match lanes.iter().skip(1).position(|lane| lane.is_none()) {
+                    Some(pos) => {
+                        lanes[pos + 1] = Some(commit.id);
+                        pos + 1
+                    }
+                    None => {
+                        lanes.push(Some(commit.id));
+                        lanes.len() - 1
                     }
                 }
             }
+        } else if is_main && lanes_with_commit.contains(&0) {
+            // Main line commit in lane 0
+            0
+        } else if is_main && lanes[0].is_none() {
+            // Main line commit found in wrong lane - move to lane 0
+            let old_pos = lanes_with_commit[0];
+            lanes[old_pos] = None;
+            lanes[0] = Some(commit.id);
+            0
+        } else {
+            // Use the first (leftmost) lane
+            lanes_with_commit[0]
         };
 
-        // Check if this lane will merge into another (parent already tracked elsewhere)
-        let merge_target = commit.parent_ids.first().and_then(|parent_id| {
-            lanes.iter().enumerate()
-                .find(|(i, lane)| *i != commit_lane && **lane == Some(*parent_id))
-                .map(|(i, _)| i)
-        });
+        // Other lanes with this commit are converging here
+        let converging_lanes: Vec<usize> = lanes_with_commit.iter()
+            .filter(|&&i| i != commit_lane)
+            .copied()
+            .collect();
 
         // Find lanes that merge INTO this commit (their commit's parent is this commit)
         let mut merging_in: Vec<usize> = Vec::new();
         for (i, lane) in lanes.iter().enumerate() {
-            if i != commit_lane {
+            if i != commit_lane && !converging_lanes.contains(&i) {
                 if let Some(lane_commit_id) = lane {
                     // Find if this lane's commit has our commit as its first parent
                     if let Some(lane_commit) = commits.iter().find(|c| c.id == *lane_commit_id) {
@@ -345,6 +346,9 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
                 }
             }
         }
+
+        // Add converging lanes to merging_in for display
+        merging_in.extend(&converging_lanes);
 
         // Pre-calculate where additional parents (merge branches) will be placed
         let mut additional_parent_lanes: Vec<usize> = Vec::new();
@@ -369,27 +373,18 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
         let mut line = String::new();
         let num_lanes = lanes.len().max(temp_lanes.len());
 
-        // Determine all merge ranges (merge_target, merging_in, and additional parents)
+        // Determine all merge ranges (merging_in and additional parents)
         let mut merge_lanes: Vec<usize> = merging_in.clone();
         merge_lanes.extend(&additional_parent_lanes);
-        if let Some(target) = merge_target {
-            merge_lanes.push(target);
-        }
         merge_lanes.push(commit_lane);
         let min_merge = *merge_lanes.iter().min().unwrap_or(&commit_lane);
         let max_merge = *merge_lanes.iter().max().unwrap_or(&commit_lane);
-        let has_merges = merge_target.is_some() || !merging_in.is_empty() || !additional_parent_lanes.is_empty();
+        let has_merges = !merging_in.is_empty() || !additional_parent_lanes.is_empty();
 
         if has_merges {
             for i in 0..num_lanes {
                 if i == commit_lane {
                     line.push('●');
-                } else if Some(i) == merge_target {
-                    if commit_lane < i {
-                        line.push('╯');
-                    } else {
-                        line.push('├');
-                    }
                 } else if merging_in.contains(&i) {
                     if i < commit_lane {
                         line.push('╰');
@@ -429,14 +424,16 @@ fn build_graph(commits: &[Commit], main_line: &std::collections::HashSet<git2::O
 
         graph_lines.push(line);
 
-        // Update lanes: remove this commit, add first parent (if not already tracked)
+        // Clear converging lanes (they've merged into this commit)
+        for &lane_idx in &converging_lanes {
+            lanes[lane_idx] = None;
+        }
+
+        // Update lanes: this commit's lane now tracks its first parent
+        // Allow duplicate tracking - multiple lanes can track the same parent
+        // They will converge when we reach that parent commit
         if let Some(first_parent) = commit.parent_ids.first() {
-            let already_tracked = lanes.iter().any(|lane| *lane == Some(*first_parent));
-            if already_tracked {
-                lanes[commit_lane] = None;
-            } else {
-                lanes[commit_lane] = Some(*first_parent);
-            }
+            lanes[commit_lane] = Some(*first_parent);
         } else {
             lanes[commit_lane] = None;
         }
