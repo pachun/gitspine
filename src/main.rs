@@ -265,6 +265,9 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
     let graph = build_graph(commits, main_line);
     let visible_height = frame.area().height as usize;
 
+    // Calculate graph column width based on widest graph (table provides cell spacing)
+    let graph_width = graph.iter().map(|g| g.chars().count()).max().unwrap_or(1);
+
     let rows: Vec<Row> = commits
         .iter()
         .zip(graph.iter())
@@ -288,7 +291,7 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
         .collect();
 
     let widths = [
-        Constraint::Length(15),   // graph
+        Constraint::Length(graph_width as u16),
         Constraint::Fill(1),      // message takes remaining space
         Constraint::Length(20),   // author
         Constraint::Length(8),    // sha
