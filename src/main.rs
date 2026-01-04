@@ -405,13 +405,27 @@ struct Commit {
     date: String,
 }
 
+// A line in a side-by-side diff
+struct DiffLine {
+    left: Option<String>,  // None = empty (addition on right)
+    right: Option<String>, // None = empty (deletion on left)
+    left_num: Option<u32>,
+    right_num: Option<u32>,
+}
+
+// Diff data for a single file
+struct FileDiff {
+    path: String,
+    lines: Vec<DiffLine>,
+}
+
 // Loaded on-demand when viewing commit details
 struct CommitDetail {
     subject: String,
     body: Option<String>,
     author: String,
     timestamp: i64,
-    files: Vec<String>,
+    files: Vec<FileDiff>,
     selected_file: usize,
     scroll_offset: u16,
 }
@@ -432,7 +446,7 @@ fn load_commit_detail(repo: &Repository, oid: git2::Oid) -> Option<CommitDetail>
         Some(body_lines.join("\n"))
     };
 
-    // Get list of changed files
+    // Get diffs for changed files
     let mut files = Vec::new();
     let commit_tree = commit.tree().ok();
     let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
@@ -440,9 +454,64 @@ fn load_commit_detail(repo: &Repository, oid: git2::Oid) -> Option<CommitDetail>
     if let Some(diff) = commit_tree.as_ref().and_then(|ct| {
         repo.diff_tree_to_tree(parent_tree.as_ref(), Some(ct), None).ok()
     }) {
-        for delta in diff.deltas() {
-            if let Some(path) = delta.new_file().path().or_else(|| delta.old_file().path()) {
-                files.push(path.to_string_lossy().to_string());
+        let num_deltas = diff.deltas().len();
+        for delta_idx in 0..num_deltas {
+            if let Ok(patch) = git2::Patch::from_diff(&diff, delta_idx) {
+                if let Some(patch) = patch {
+                    let path = patch.delta().new_file().path()
+                        .or_else(|| patch.delta().old_file().path())
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
+
+                    let mut diff_lines = Vec::new();
+                    let num_hunks = patch.num_hunks();
+
+                    for hunk_idx in 0..num_hunks {
+                        if let Ok((hunk, num_lines)) = patch.hunk(hunk_idx) {
+                            let mut old_line_num = hunk.old_start();
+                            let mut new_line_num = hunk.new_start();
+
+                            // Collect deletions and additions to pair them
+                            let mut pending_deletions: Vec<(u32, String)> = Vec::new();
+                            let mut pending_additions: Vec<(u32, String)> = Vec::new();
+
+                            for line_idx in 0..num_lines {
+                                if let Ok(line) = patch.line_in_hunk(hunk_idx, line_idx) {
+                                    let content = String::from_utf8_lossy(line.content()).to_string();
+                                    let content = content.trim_end_matches('\n').to_string();
+
+                                    match line.origin() {
+                                        ' ' => {
+                                            // Flush pending changes before context
+                                            flush_pending(&mut diff_lines, &mut pending_deletions, &mut pending_additions);
+                                            diff_lines.push(DiffLine {
+                                                left: Some(content.clone()),
+                                                right: Some(content),
+                                                left_num: Some(old_line_num),
+                                                right_num: Some(new_line_num),
+                                            });
+                                            old_line_num += 1;
+                                            new_line_num += 1;
+                                        }
+                                        '-' => {
+                                            pending_deletions.push((old_line_num, content));
+                                            old_line_num += 1;
+                                        }
+                                        '+' => {
+                                            pending_additions.push((new_line_num, content));
+                                            new_line_num += 1;
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            // Flush any remaining pending changes
+                            flush_pending(&mut diff_lines, &mut pending_deletions, &mut pending_additions);
+                        }
+                    }
+
+                    files.push(FileDiff { path, lines: diff_lines });
+                }
             }
         }
     }
@@ -456,6 +525,27 @@ fn load_commit_detail(repo: &Repository, oid: git2::Oid) -> Option<CommitDetail>
         selected_file: 0,
         scroll_offset: 0,
     })
+}
+
+// Helper to pair up deletions and additions for side-by-side display
+fn flush_pending(
+    diff_lines: &mut Vec<DiffLine>,
+    deletions: &mut Vec<(u32, String)>,
+    additions: &mut Vec<(u32, String)>,
+) {
+    let max_len = deletions.len().max(additions.len());
+    for i in 0..max_len {
+        let left = deletions.get(i).map(|(num, s)| (Some(*num), Some(s.clone())));
+        let right = additions.get(i).map(|(num, s)| (Some(*num), Some(s.clone())));
+        diff_lines.push(DiffLine {
+            left: left.as_ref().and_then(|(_, s)| s.clone()),
+            right: right.as_ref().and_then(|(_, s)| s.clone()),
+            left_num: left.and_then(|(n, _)| n),
+            right_num: right.and_then(|(n, _)| n),
+        });
+    }
+    deletions.clear();
+    additions.clear();
 }
 
 struct BranchInfo {
@@ -1308,10 +1398,10 @@ fn render_commit_detail(frame: &mut Frame, detail: &CommitDetail) {
         // Middle: │  ← filepath →  │
         let arrow_space = 6; // " ← " and " → " (space + arrow + space on each side)
         let path_space = inner_width.saturating_sub(arrow_space);
-        let path_display = if current_file.len() > path_space {
-            format!("…{}", &current_file[current_file.len() - path_space + 1..])
+        let path_display = if current_file.path.len() > path_space {
+            format!("…{}", &current_file.path[current_file.path.len() - path_space + 1..])
         } else {
-            current_file.clone()
+            current_file.path.clone()
         };
         let padding_total = path_space.saturating_sub(path_display.len());
         let pad_left = padding_total / 2;
@@ -1332,6 +1422,44 @@ fn render_commit_detail(frame: &mut Frame, detail: &CommitDetail) {
         // Bottom border: ╰───────╯
         let bottom_border = format!("╰{}╯", "─".repeat(inner_width));
         lines.push(Line::styled(bottom_border, border_style).alignment(Alignment::Center));
+
+        // Side-by-side diff
+        lines.push(Line::raw(""));
+        let half_width = (padded.width as usize).saturating_sub(3) / 2; // -3 for │ separators
+
+        for diff_line in &current_file.lines {
+            let left_content = diff_line.left.as_deref().unwrap_or("");
+            let right_content = diff_line.right.as_deref().unwrap_or("");
+
+            // Determine colors based on change type
+            let (left_style, right_style) = match (&diff_line.left, &diff_line.right) {
+                (Some(_), None) => (Style::default().fg(Color::Red), Style::default()),
+                (None, Some(_)) => (Style::default(), Style::default().fg(Color::Green)),
+                (Some(l), Some(r)) if l != r => {
+                    (Style::default().fg(Color::Red), Style::default().fg(Color::Green))
+                }
+                _ => (Style::default().fg(Color::DarkGray), Style::default().fg(Color::DarkGray)),
+            };
+
+            // Truncate or pad to fit half width
+            let left_display: String = if left_content.len() > half_width {
+                format!("{}…", &left_content[..half_width.saturating_sub(1)])
+            } else {
+                format!("{:<width$}", left_content, width = half_width)
+            };
+
+            let right_display: String = if right_content.len() > half_width {
+                format!("{}…", &right_content[..half_width.saturating_sub(1)])
+            } else {
+                format!("{:<width$}", right_content, width = half_width)
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(left_display, left_style),
+                Span::styled(" │ ", border_style),
+                Span::styled(right_display, right_style),
+            ]));
+        }
     }
 
     let text = Text::from(lines);
