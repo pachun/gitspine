@@ -43,8 +43,7 @@ fn main() {
     let mut search_history: Vec<String> = Vec::new();
     let mut history_index: Option<usize> = None; // None = new search, Some(i) = viewing history[i]
     let mut leader_pressed = false; // For space+key sequences
-    let mut viewing_commit: Option<usize> = None; // Some(index) when viewing commit details
-    let mut commit_detail: Option<CommitDetail> = None; // Loaded on-demand
+    let mut commit_detail: Option<CommitDetail> = None; // Some = detail view, None = list view
 
     let mut terminal = ratatui::init();
     loop {
@@ -94,11 +93,9 @@ fn main() {
                     | KeyCode::Esc
                     | KeyCode::Left => {
                         commit_detail = None;
-                        viewing_commit = None;
                     }
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         commit_detail = None;
-                        viewing_commit = None;
                     }
                     _ => {}
                 }
@@ -288,7 +285,6 @@ fn main() {
                         selected = selected.saturating_sub(half_page);
                     }
                     KeyCode::Char('l') | KeyCode::Right => {
-                        viewing_commit = Some(selected);
                         commit_detail = load_commit_detail(&repo, commits[selected].id);
                     }
                     _ => {}
