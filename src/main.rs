@@ -74,6 +74,8 @@ fn main() {
                         scroll_offset,
                         searching,
                         &search_query,
+                        history_index,
+                        search_history.len(),
                     );
                 }
             })
@@ -92,11 +94,18 @@ fn main() {
                         }
                         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
                             let clicked_row = mouse.row as usize;
-                            let clicked_index = scroll_offset + clicked_row;
-                            if clicked_index < commits.len() {
-                                selected = clicked_index;
-                                commit_detail = load_commit_detail(&repo, commits[selected].id);
-                                ensure_selection_visible(selected, &mut scroll_offset, visible_height);
+                            if clicked_row < visible_height {
+                                // Clicked in commit list
+                                let clicked_index = scroll_offset + clicked_row;
+                                if clicked_index < commits.len() {
+                                    selected = clicked_index;
+                                    commit_detail = load_commit_detail(&repo, commits[selected].id);
+                                    ensure_selection_visible(selected, &mut scroll_offset, visible_height);
+                                }
+                            } else {
+                                // Clicked in search bar area
+                                searching = true;
+                                search_query.clear();
                             }
                         }
                         _ => {}
@@ -770,6 +779,8 @@ fn render_ui(
     scroll_offset: usize,
     searching: bool,
     search_query: &str,
+    history_index: Option<usize>,
+    history_len: usize,
 ) {
     use ratatui::layout::{Direction, Layout};
     use ratatui::text::Line;
@@ -985,11 +996,28 @@ fn render_ui(
     frame.render_widget(search_block, chunks[1]);
 
     if searching {
-        // Typing mode: yellow input with cursor, grey counter
-        let search_input = Paragraph::new(Line::from(vec![Span::styled(
-            format!("/{}█", search_query),
-            Style::default().fg(Color::Yellow),
-        )]));
+        // Typing mode: yellow input with cursor, grey hint
+        // Show arrow hints only when there's history to navigate to
+        let can_go_older = match history_index {
+            None => history_len > 0,         // Not browsing yet, can start if history exists
+            Some(0) => false,                // At oldest
+            Some(_) => true,                 // Can go older
+        };
+        let can_go_newer = match history_index {
+            None => false,
+            Some(i) => i < history_len - 1,  // Not at newest (don't count "new search")
+        };
+
+        let hint = match (can_go_older, can_go_newer) {
+            (true, true) => " [ ↑↓ history | enter ]",
+            (true, false) => " [ ↑ history | enter ]",
+            (false, true) => " [ ↓ history | enter ]",
+            (false, false) => " [ enter ]",
+        };
+        let search_input = Paragraph::new(Line::from(vec![
+            Span::styled(format!("{}█", search_query), Style::default().fg(Color::Yellow)),
+            Span::styled(hint, Style::default().fg(Color::DarkGray)),
+        ]));
         frame.render_widget(search_input, search_inner);
 
         // Right side: match counter
@@ -1029,10 +1057,18 @@ fn render_ui(
     } else if browse_mode {
         // Browse mode: grey input (no cursor), yellow counter
         let search_input = Paragraph::new(Line::from(vec![Span::styled(
-            format!("/{}", search_query),
+            search_query,
             Style::default().fg(Color::DarkGray),
         )]));
         frame.render_widget(search_input, search_inner);
+
+        // Center: navigation hint
+        let nav_hint = Paragraph::new(Line::from(vec![Span::styled(
+            "[ n: next, N: prev ]",
+            Style::default().fg(Color::DarkGray),
+        )]))
+        .alignment(ratatui::layout::Alignment::Center);
+        frame.render_widget(nav_hint, search_inner);
 
         // Right side: yellow match counter
         let matches: Vec<usize> = commits
@@ -1066,11 +1102,12 @@ fn render_ui(
         .alignment(ratatui::layout::Alignment::Right);
         frame.render_widget(counter, search_inner);
     } else {
-        // Normal mode: just show hint
+        // Normal mode: centered hint for search
         let search_hint = Paragraph::new(Line::from(vec![Span::styled(
-            "/",
+            "[ /: search ]",
             Style::default().fg(Color::DarkGray),
-        )]));
+        )]))
+        .alignment(ratatui::layout::Alignment::Center);
         frame.render_widget(search_hint, search_inner);
     }
 }
