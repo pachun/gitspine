@@ -34,7 +34,7 @@ fn main() {
 
     let mut terminal = ratatui::init();
     loop {
-        let visible_height = terminal.size().unwrap().height.saturating_sub(2) as usize; // Reserve 2 rows for search bar
+        let visible_height = terminal.size().unwrap().height.saturating_sub(3) as usize; // Reserve 2 for search bar + 1 for bottom padding
         let half_page = visible_height / 2;
 
         // Adjust scroll to keep selection visible
@@ -480,6 +480,15 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
     use ratatui::widgets::{Block, Borders, Paragraph};
     use ratatui::text::Line;
 
+    // Add padding around the UI (sides and bottom, not top since macOS has window chrome)
+    let area = frame.area();
+    let padded_area = ratatui::layout::Rect {
+        x: area.x + 1,
+        y: area.y,
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(1),
+    };
+
     // Split into main area and search bar
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -487,7 +496,7 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
             Constraint::Min(1),      // main table
             Constraint::Length(2),   // search bar
         ])
-        .split(frame.area());
+        .split(padded_area);
 
     let graph = build_graph(commits, main_line);
     let visible_height = chunks[0].height as usize;
