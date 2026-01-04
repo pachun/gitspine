@@ -579,14 +579,8 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
     use ratatui::widgets::{Block, Borders, Paragraph};
     use ratatui::text::Line;
 
-    // Add horizontal padding (sides only, borders handle top/bottom)
-    let area = frame.area();
-    let padded_area = ratatui::layout::Rect {
-        x: area.x + 1,
-        y: area.y,
-        width: area.width.saturating_sub(2),
-        height: area.height,
-    };
+    // Use full width - padding is handled by table columns for proper row highlighting
+    let padded_area = frame.area();
 
     // Split into main area and search bar
     let chunks = Layout::default()
@@ -620,11 +614,13 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
             message_spans.extend(highlight_matches(&c.message, search_query, Style::default(), highlight_style));
 
             let row = Row::new(vec![
+                Cell::from(""),  // Left padding
                 Cell::from(Span::styled(g.clone(), Style::default().fg(Color::Gray))),
                 Cell::from(Line::from(message_spans)),
                 Cell::from(Line::from(highlight_matches(&c.author, search_query, Style::default().fg(Color::Cyan), highlight_style))),
                 Cell::from(Line::from(highlight_matches(&c.short_sha, search_query, Style::default().fg(Color::Yellow), highlight_style))),
                 Cell::from(Line::from(highlight_matches(&c.date, search_query, Style::default().fg(Color::Magenta), highlight_style))),
+                Cell::from(""),  // Right padding
             ]);
             if i == selected {
                 row.style(Style::default().bg(Color::DarkGray))
@@ -635,14 +631,16 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
         .collect();
 
     let widths = [
+        Constraint::Length(0),    // left padding (column_spacing provides the space)
         Constraint::Length(graph_width as u16),
         Constraint::Fill(1),      // message takes remaining space
         Constraint::Length(20),   // author
         Constraint::Length(8),    // sha
         Constraint::Length(10),   // date
+        Constraint::Length(0),    // right padding (column_spacing provides the space)
     ];
 
-    let table = Table::new(rows, widths);
+    let table = Table::new(rows, widths).column_spacing(1);
     frame.render_widget(table, chunks[0]);
 
     // Render search bar with right-aligned match counter
@@ -651,6 +649,13 @@ fn render_ui(frame: &mut Frame, commits: &[Commit], main_line: &std::collections
     let border_color = if search_active { Color::White } else { Color::DarkGray };
     let search_block = Block::default().borders(Borders::TOP | Borders::BOTTOM).border_style(Style::default().fg(border_color));
     let search_inner = search_block.inner(chunks[1]);
+    // Add horizontal padding to match table
+    let search_inner = ratatui::layout::Rect {
+        x: search_inner.x + 1,
+        y: search_inner.y,
+        width: search_inner.width.saturating_sub(2),
+        height: search_inner.height,
+    };
     frame.render_widget(search_block, chunks[1]);
 
     if searching {
