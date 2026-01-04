@@ -1111,9 +1111,9 @@ fn render_ui(
 
         // Center: navigation hint
         let nav_hint_text = if total > 1 {
-            Some("[ n: next, N: prev ]")
+            Some("[ n → next | N → prev ]")
         } else if total == 1 && !on_match {
-            Some("[ n: go to result ]")
+            Some("[ n → show result ]")
         } else {
             None
         };
@@ -1144,7 +1144,7 @@ fn render_ui(
     } else {
         // Normal mode: centered hint for search
         let search_hint = Paragraph::new(Line::from(vec![Span::styled(
-            "[ /: search ]",
+            "[ / → search ]",
             Style::default().fg(Color::DarkGray),
         )]))
         .alignment(ratatui::layout::Alignment::Center);
