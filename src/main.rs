@@ -36,7 +36,11 @@ fn main() {
         return;
     }
 
-    let mut selected: usize = 0;
+    // Start with HEAD selected
+    let mut selected: usize = branch_info
+        .head_commit
+        .and_then(|head_oid| commits.iter().position(|c| c.id == head_oid))
+        .unwrap_or(0);
     let mut scroll_offset: usize = 0;
     let mut searching = false;
     let mut search_query = String::new();
