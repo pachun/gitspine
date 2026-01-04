@@ -44,6 +44,15 @@ fn main() {
             scroll_offset = selected - visible_height + 1;
         }
 
+        // When terminal grows (e.g. maximizing a tmux pane), scroll_offset may leave
+        // blank space at bottom. Pull the list down to fill available space.
+        if commits.len() >= visible_height {
+            let max_offset = commits.len() - visible_height;
+            if scroll_offset > max_offset {
+                scroll_offset = max_offset;
+            }
+        }
+
         terminal.draw(|frame| render_ui(frame, &commits, &main_line, selected, scroll_offset, searching, &search_query)).unwrap();
         if let Event::Key(key) = event::read().unwrap() {
             if searching {
