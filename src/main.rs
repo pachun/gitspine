@@ -102,8 +102,19 @@ fn main() {
                     }
                 }
 
-                // Only handle mouse in list view, not detail view
-                if commit_detail.is_none() && !searching {
+                // Handle mouse scroll in detail view
+                if let Some(ref mut detail) = commit_detail {
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => {
+                            detail.scroll_offset = detail.scroll_offset.saturating_sub(3);
+                        }
+                        MouseEventKind::ScrollDown => {
+                            detail.scroll_offset = detail.scroll_offset.saturating_add(3);
+                        }
+                        _ => {}
+                    }
+                } else if !searching {
+                    // Handle mouse in list view
                     match mouse.kind {
                         MouseEventKind::ScrollUp => {
                             scroll_offset = scroll_offset.saturating_sub(3);
@@ -144,6 +155,18 @@ fn main() {
                     }
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         commit_detail = None;
+                    }
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        detail.scroll_offset = detail.scroll_offset.saturating_add(1);
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        detail.scroll_offset = detail.scroll_offset.saturating_sub(1);
+                    }
+                    KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        detail.scroll_offset = detail.scroll_offset.saturating_add(half_page as u16);
+                    }
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        detail.scroll_offset = detail.scroll_offset.saturating_sub(half_page as u16);
                     }
                     KeyCode::Char('h') | KeyCode::Left => {
                         if file_count > 0 {
@@ -390,6 +413,7 @@ struct CommitDetail {
     timestamp: i64,
     files: Vec<String>,
     selected_file: usize,
+    scroll_offset: u16,
 }
 
 fn load_commit_detail(repo: &Repository, oid: git2::Oid) -> Option<CommitDetail> {
@@ -430,6 +454,7 @@ fn load_commit_detail(repo: &Repository, oid: git2::Oid) -> Option<CommitDetail>
         timestamp: commit.time().seconds(),
         files,
         selected_file: 0,
+        scroll_offset: 0,
     })
 }
 
@@ -1310,6 +1335,6 @@ fn render_commit_detail(frame: &mut Frame, detail: &CommitDetail) {
     }
 
     let text = Text::from(lines);
-    let paragraph = Paragraph::new(text);
+    let paragraph = Paragraph::new(text).scroll((detail.scroll_offset, 0));
     frame.render_widget(paragraph, padded);
 }
