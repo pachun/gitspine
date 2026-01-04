@@ -624,7 +624,9 @@ fn commit_matches_query(commit: &Commit, query: &str, branch_info: &BranchInfo) 
             || commit.short_sha.to_lowercase().contains(&query_lower)
             || commit.author.to_lowercase().contains(&query_lower)
             || commit.date.to_lowercase().contains(&query_lower)
-            || branch_names.iter().any(|name| name.to_lowercase().contains(&query_lower))
+            || branch_names
+                .iter()
+                .any(|name| name.to_lowercase().contains(&query_lower))
     }
 }
 
@@ -712,7 +714,7 @@ fn render_ui(
 
     // Lane colors - lane 0 (main line) is red, others get rotating colors
     // Cyan is reserved for HEAD indicator, Yellow for branch parens/commas
-    let lane_colors = [Color::Red, Color::Magenta, Color::Blue, Color::Green];
+    let lane_colors = [Color::Red, Color::Blue, Color::Magenta, Color::Green];
 
     // Highlight style for search matches
     let highlight_style = Style::default().bg(Color::Yellow).fg(Color::Black);
