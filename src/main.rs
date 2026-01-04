@@ -312,7 +312,7 @@ fn main() {
                     KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         selected = selected.saturating_sub(half_page);
                     }
-                    KeyCode::Char('l') | KeyCode::Right => {
+                    KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => {
                         commit_detail = load_commit_detail(&repo, commits[selected].id);
                     }
                     _ => {}
