@@ -741,8 +741,8 @@ fn render_ui(
                 })
                 .collect();
 
-            // Build message cell with separator, branch indicators, and highlighting
-            let mut message_spans = vec![Span::styled("│ ", Style::default().fg(Color::DarkGray))];
+            // Build message cell with branch indicators and highlighting
+            let mut message_spans: Vec<Span> = Vec::new();
 
             // Add branch indicators if any branches point to this commit
             let is_head_commit = branch_info.head_commit == Some(c.id);
