@@ -220,11 +220,17 @@ fn main() {
                         continue;
                     }
                     KeyCode::Char('q') => break,
+                    KeyCode::Esc => {
+                        if search_query.is_empty() {
+                            break;
+                        } else {
+                            search_query.clear();
+                        }
+                    }
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         if search_query.is_empty() {
                             break;
                         } else {
-                            // Clear search and return to normal mode
                             search_query.clear();
                         }
                     }
