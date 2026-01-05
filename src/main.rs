@@ -49,6 +49,7 @@ fn main() {
     let mut leader_pressed = false; // For space+key sequences
     let mut count_prefix = String::new(); // Vim-style count prefix for movements
     let mut first_render = true; // Center view on first render
+    let mut pre_search_selected: Option<usize> = None; // Position before search started
 
     // Set up panic hook to restore terminal on crash
     let original_hook = std::panic::take_hook();
@@ -64,7 +65,7 @@ fn main() {
 
         // Center view on selected commit on first render
         if first_render {
-            scroll_offset = selected.saturating_sub(visible_height / 2);
+            center_view_on_selection(selected, &mut scroll_offset, visible_height);
             first_render = false;
         }
 
@@ -102,11 +103,23 @@ fn main() {
                         searching = false;
                         search_query.clear();
                         history_index = None;
+                        // Return to pre-search position on cancel
+                        if let Some(pre) = pre_search_selected {
+                            selected = pre;
+                            center_view_on_selection(selected, &mut scroll_offset, visible_height);
+                        }
+                        pre_search_selected = None;
                     }
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         searching = false;
                         search_query.clear();
                         history_index = None;
+                        // Return to pre-search position on cancel
+                        if let Some(pre) = pre_search_selected {
+                            selected = pre;
+                            center_view_on_selection(selected, &mut scroll_offset, visible_height);
+                        }
+                        pre_search_selected = None;
                     }
                     KeyCode::Enter => {
                         // Exit typing mode, but only keep search if there are matches
@@ -123,6 +136,7 @@ fn main() {
                         } else {
                             search_query.clear();
                         }
+                        pre_search_selected = None;
                     }
                     KeyCode::Up => {
                         // Navigate to previous history entry
@@ -163,14 +177,22 @@ fn main() {
                     }
                     _ => {}
                 }
-                // Live search: jump to first matching commit
+                // Live search: jump to first matching commit, or back to pre-search position
                 if !search_query.is_empty() {
                     if let Some(idx) = commits
                         .iter()
                         .position(|c| commit_matches_query(c, &search_query, &branch_info))
                     {
                         selected = idx;
+                    } else if let Some(pre) = pre_search_selected {
+                        // No matches - return to where we were before searching
+                        selected = pre;
+                        center_view_on_selection(selected, &mut scroll_offset, visible_height);
                     }
+                } else if let Some(pre) = pre_search_selected {
+                    // Empty query - return to where we were
+                    selected = pre;
+                    center_view_on_selection(selected, &mut scroll_offset, visible_height);
                 }
             } else {
                 // Helper to check if a commit matches the search
@@ -233,6 +255,7 @@ fn main() {
                         count_prefix.clear();
                         searching = true;
                         search_query.clear();
+                        pre_search_selected = Some(selected);
                     }
                     KeyCode::Char('n') if !search_query.is_empty() => {
                         // Find next match after current selection
@@ -660,6 +683,11 @@ fn ensure_selection_visible(selected: usize, scroll_offset: &mut usize, visible_
     } else if selected >= *scroll_offset + visible_height {
         *scroll_offset = selected - visible_height + 1;
     }
+}
+
+// Center the view on the selected commit
+fn center_view_on_selection(selected: usize, scroll_offset: &mut usize, visible_height: usize) {
+    *scroll_offset = selected.saturating_sub(visible_height / 2);
 }
 
 // Check if query has mixed case (both upper and lowercase letters)
@@ -1141,7 +1169,7 @@ fn render_ui(
         }
 
         let search_hint = Paragraph::new(Line::from(vec![Span::styled(
-            "[ / → search ]",
+            "q:quit  /:search  j/k:nav  g/G:top/end",
             Style::default().fg(Color::DarkGray),
         )]))
         .alignment(ratatui::layout::Alignment::Center);
