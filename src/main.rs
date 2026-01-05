@@ -4,11 +4,11 @@ use std::time::Instant;
 
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use git2::Repository;
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
-use ratatui::Frame;
 
 type Sha = git2::Oid;
 
@@ -22,7 +22,7 @@ impl std::fmt::Display for BranchName {
 }
 
 struct FlashMessage {
-    text: String,
+    message: String,
     shown_at: Instant,
 }
 
@@ -373,7 +373,7 @@ fn main() {
                                 }
                                 let _ = child.wait();
                                 flash_message = Some(FlashMessage {
-                                    text: format!("copied {}", short_sha),
+                                    message: format!("copied {}", short_sha),
                                     shown_at: Instant::now(),
                                 });
                             }
@@ -432,11 +432,8 @@ impl Head {
 }
 
 /// Build reverse index: commit sha -> list of branch names pointing to it
-fn branches_at_commit(
-    branches: &HashMap<BranchName, Sha>,
-) -> HashMap<Sha, Vec<&BranchName>> {
-    let mut result: HashMap<Sha, Vec<&BranchName>> =
-        HashMap::new();
+fn branches_at_commit(branches: &HashMap<BranchName, Sha>) -> HashMap<Sha, Vec<&BranchName>> {
+    let mut result: HashMap<Sha, Vec<&BranchName>> = HashMap::new();
     for (name, sha) in branches {
         result.entry(*sha).or_default().push(name);
     }
@@ -729,11 +726,7 @@ fn has_mixed_case(s: &str) -> bool {
 }
 
 // Check if a commit matches the search query (searches message, sha, author, date, and branch names)
-fn commit_matches_query(
-    commit: &Commit,
-    query: &str,
-    branches: &HashMap<BranchName, Sha>,
-) -> bool {
+fn commit_matches_query(commit: &Commit, query: &str, branches: &HashMap<BranchName, Sha>) -> bool {
     if query.is_empty() {
         return false;
     }
@@ -904,7 +897,6 @@ fn render_ui(
         .skip(index_of_topmost_visible_row)
         .take(visible_height)
         .map(|(i, (c, g))| {
-
             // Line number display: marker for selected, relative for others
             let (line_num, line_num_style) = if i == index_of_selected_row {
                 // Selection marker, left-aligned
@@ -1260,7 +1252,7 @@ fn render_ui(
         if let Some(msg) = flash_message {
             if msg.shown_at.elapsed().as_secs() < 2 {
                 let feedback = Paragraph::new(Line::from(vec![Span::styled(
-                    msg.text.clone(),
+                    msg.message.clone(),
                     Style::default().fg(Color::Yellow),
                 )]))
                 .alignment(ratatui::layout::Alignment::Right);
