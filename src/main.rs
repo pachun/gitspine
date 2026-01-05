@@ -1,10 +1,14 @@
+use std::collections::HashMap;
+use std::io::Write;
+use std::time::Instant;
+
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use git2::Repository;
-use ratatui::Frame;
-use ratatui::layout::Constraint;
+use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
-use ratatui::text::Span;
-use ratatui::widgets::{Row, Table};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
+use ratatui::Frame;
 
 type Sha = git2::Oid;
 
@@ -19,7 +23,7 @@ impl std::fmt::Display for BranchName {
 
 struct FlashMessage {
     text: String,
-    shown_at: std::time::Instant,
+    shown_at: Instant,
 }
 
 fn main() {
@@ -363,14 +367,13 @@ fn main() {
                                 .stdin(std::process::Stdio::piped())
                                 .spawn()
                             {
-                                use std::io::Write;
                                 if let Some(stdin) = child.stdin.as_mut() {
                                     let _ = stdin.write_all(full_sha.as_bytes());
                                 }
                                 let _ = child.wait();
                                 flash_message = Some(FlashMessage {
                                     text: format!("copied {}", short_sha),
-                                    shown_at: std::time::Instant::now(),
+                                    shown_at: Instant::now(),
                                 });
                             }
                         }
@@ -412,7 +415,7 @@ enum Head {
 }
 
 impl Head {
-    fn sha(&self, branches: &std::collections::HashMap<BranchName, Sha>) -> Sha {
+    fn sha(&self, branches: &HashMap<BranchName, Sha>) -> Sha {
         match self {
             Head::Attached { branch_name } => branches[branch_name],
             Head::Detached { sha } => *sha,
@@ -429,18 +432,18 @@ impl Head {
 
 /// Build reverse index: commit sha -> list of branch names pointing to it
 fn branches_at_commit(
-    branches: &std::collections::HashMap<BranchName, Sha>,
-) -> std::collections::HashMap<Sha, Vec<&BranchName>> {
-    let mut result: std::collections::HashMap<Sha, Vec<&BranchName>> =
-        std::collections::HashMap::new();
+    branches: &HashMap<BranchName, Sha>,
+) -> HashMap<Sha, Vec<&BranchName>> {
+    let mut result: HashMap<Sha, Vec<&BranchName>> =
+        HashMap::new();
     for (name, sha) in branches {
         result.entry(*sha).or_default().push(name);
     }
     result
 }
 
-fn get_branches_and_head(repo: &Repository) -> (std::collections::HashMap<BranchName, Sha>, Head) {
-    let mut branches: std::collections::HashMap<BranchName, Sha> = std::collections::HashMap::new();
+fn get_branches_and_head(repo: &Repository) -> (HashMap<BranchName, Sha>, Head) {
+    let mut branches: HashMap<BranchName, Sha> = HashMap::new();
 
     // Get HEAD info
     let head = if let Ok(head_ref) = repo.head() {
@@ -733,7 +736,7 @@ fn has_mixed_case(s: &str) -> bool {
 fn commit_matches_query(
     commit: &Commit,
     query: &str,
-    branches: &std::collections::HashMap<BranchName, Sha>,
+    branches: &HashMap<BranchName, Sha>,
 ) -> bool {
     if query.is_empty() {
         return false;
@@ -830,7 +833,7 @@ fn highlight_matches(
 fn render_ui(
     frame: &mut Frame,
     commits: &[Commit],
-    branches: &std::collections::HashMap<BranchName, Sha>,
+    branches: &HashMap<BranchName, Sha>,
     head: &Head,
     index_of_selected_row: usize,
     index_of_topmost_visible_row: usize,
@@ -841,10 +844,6 @@ fn render_ui(
     jump_distance_string: &str,
     flash_message: &Option<FlashMessage>,
 ) {
-    use ratatui::layout::{Direction, Layout};
-    use ratatui::text::Line;
-    use ratatui::widgets::{Block, Borders, Paragraph};
-
     // Compute derived values once for this render
     let head_sha = head.sha(branches);
     let branches_at_commit_map = branches_at_commit(branches);
@@ -909,7 +908,6 @@ fn render_ui(
         .skip(index_of_topmost_visible_row)
         .take(visible_height)
         .map(|(i, (c, g))| {
-            use ratatui::widgets::Cell;
 
             // Line number display: marker for selected, relative for others
             let (line_num, line_num_style) = if i == index_of_selected_row {
