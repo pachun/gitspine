@@ -326,6 +326,7 @@ struct Commit {
     message: String,
     author: String,
     date: String,
+    time: String,
 }
 
 struct BranchInfo {
@@ -412,8 +413,13 @@ fn get_commits(repo: &Repository) -> Vec<Commit> {
         .map(|commit| {
             let time = commit.time();
             let timestamp = time.seconds();
-            let naive = chrono::DateTime::from_timestamp(timestamp, 0)
+            let local_dt = chrono::DateTime::from_timestamp(timestamp, 0)
+                .map(|dt| dt.with_timezone(&chrono::Local));
+            let date_str = local_dt
                 .map(|dt| dt.format("%Y-%m-%d").to_string())
+                .unwrap_or_default();
+            let time_str = local_dt
+                .map(|dt| dt.format("%-I:%M %p").to_string())
                 .unwrap_or_default();
 
             Commit {
@@ -422,7 +428,8 @@ fn get_commits(repo: &Repository) -> Vec<Commit> {
                 short_sha: commit.id().to_string()[..7].to_string(),
                 message: commit.summary().unwrap_or("").to_string(),
                 author: commit.author().name().unwrap_or("").to_string(),
-                date: naive,
+                date: date_str,
+                time: time_str,
             }
         })
         .collect()
@@ -780,6 +787,14 @@ fn render_ui(
     // Highlight style for search matches
     let highlight_style = Style::default().bg(Color::Yellow).fg(Color::Black);
 
+    // Calculate author column width (max author length, capped at 20)
+    let author_width = commits
+        .iter()
+        .map(|c| c.author.len())
+        .max()
+        .unwrap_or(0)
+        .min(20);
+
     // Calculate width needed for line numbers (based on total commits for absolute numbers)
     let max_line_num = commits.len();
     let gutter_width = if max_line_num >= 1000 { 4 } else if max_line_num >= 100 { 3 } else if max_line_num >= 10 { 2 } else { 1 };
@@ -930,6 +945,12 @@ fn render_ui(
                     Style::default().fg(Color::Magenta),
                     highlight_style,
                 ))),
+                Cell::from(Line::from(highlight_matches(
+                    &c.time,
+                    search_query,
+                    Style::default().fg(if i == selected { Color::Gray } else { Color::DarkGray }),
+                    highlight_style,
+                )).alignment(ratatui::layout::Alignment::Right)),
                 Cell::from(""), // Right padding
             ]);
             if i == selected {
@@ -946,8 +967,9 @@ fn render_ui(
         Constraint::Length(8),  // sha
         Constraint::Length(graph_width as u16),
         Constraint::Fill(1),    // message takes remaining space
-        Constraint::Length(20), // author
+        Constraint::Length(author_width as u16), // author
         Constraint::Length(10), // date
+        Constraint::Length(8),  // time
         Constraint::Length(0),  // right padding (column_spacing provides the space)
     ];
 
