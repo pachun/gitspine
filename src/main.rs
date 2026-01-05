@@ -50,6 +50,7 @@ fn main() {
     let mut count_prefix = String::new(); // Vim-style count prefix for movements
     let mut first_render = true; // Center view on first render
     let mut pre_search_selected: Option<usize> = None; // Position before search started
+    let mut copied_feedback: Option<(String, std::time::Instant)> = None; // (sha, when copied)
 
     // Set up panic hook to restore terminal on crash
     let original_hook = std::panic::take_hook();
@@ -92,6 +93,7 @@ fn main() {
                     history_index,
                     search_history.len(),
                     &count_prefix,
+                    &copied_feedback,
                 );
             })
             .unwrap();
@@ -345,6 +347,23 @@ fn main() {
                         {
                             selected = head_idx;
                             center_view_on_selection(selected, &mut scroll_offset, visible_height);
+                        }
+                    }
+                    KeyCode::Char('c') => {
+                        // Copy full SHA to clipboard
+                        count_prefix.clear();
+                        let full_sha = commits[selected].id.to_string();
+                        let short_sha = &commits[selected].short_sha;
+                        if let Ok(mut child) = std::process::Command::new("pbcopy")
+                            .stdin(std::process::Stdio::piped())
+                            .spawn()
+                        {
+                            use std::io::Write;
+                            if let Some(stdin) = child.stdin.as_mut() {
+                                let _ = stdin.write_all(full_sha.as_bytes());
+                            }
+                            let _ = child.wait();
+                            copied_feedback = Some((short_sha.clone(), std::time::Instant::now()));
                         }
                     }
                     KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -802,6 +821,7 @@ fn render_ui(
     history_index: Option<usize>,
     history_len: usize,
     count_prefix: &str,
+    copied_feedback: &Option<(String, std::time::Instant)>,
 ) {
     use ratatui::layout::{Direction, Layout};
     use ratatui::text::Line;
@@ -1124,9 +1144,9 @@ fn render_ui(
             .unwrap_or(true);
 
         let hint_text = if on_head {
-            "q:clear  /:search  n/N:match"
+            "q:clear  /:search  n/N:match  c:copy"
         } else {
-            "q:clear  /:search  n/N:match  h:head"
+            "q:clear  /:search  n/N:match  c:copy  h:head"
         };
 
         let nav_hint = Paragraph::new(Line::from(vec![Span::styled(
@@ -1169,9 +1189,9 @@ fn render_ui(
             .unwrap_or(true); // If no HEAD, don't show hint
 
         let hint_text = if on_head {
-            "q:quit  /:search".to_string()
+            "q:quit  /:search  c:copy".to_string()
         } else {
-            "q:quit  /:search  h:head".to_string()
+            "q:quit  /:search  c:copy  h:head".to_string()
         };
 
         let search_hint = Paragraph::new(Line::from(vec![Span::styled(
@@ -1180,6 +1200,20 @@ fn render_ui(
         )]))
         .alignment(ratatui::layout::Alignment::Center);
         frame.render_widget(search_hint, search_inner);
+    }
+
+    // Show copy feedback in bottom right if recent (works in browse and normal modes)
+    if !searching {
+        if let Some((sha, when)) = copied_feedback {
+            if when.elapsed().as_secs() < 2 {
+                let feedback = Paragraph::new(Line::from(vec![Span::styled(
+                    format!("copied {}", sha),
+                    Style::default().fg(Color::Yellow),
+                )]))
+                .alignment(ratatui::layout::Alignment::Right);
+                frame.render_widget(feedback, search_inner);
+            }
+        }
     }
 }
 
