@@ -749,6 +749,11 @@ fn render_ui(
     // Highlight style for search matches
     let highlight_style = Style::default().bg(Color::Yellow).fg(Color::Black);
 
+    // Calculate width needed for line numbers (based on total commits for absolute numbers)
+    let max_line_num = commits.len();
+    let num_digits = if max_line_num >= 1000 { 4 } else if max_line_num >= 100 { 3 } else if max_line_num >= 10 { 2 } else { 1 };
+    let gutter_width = num_digits + 1; // +1 for visual padding
+
     let rows: Vec<Row> = commits
         .iter()
         .zip(graph.iter())
@@ -757,6 +762,20 @@ fn render_ui(
         .take(visible_height)
         .map(|(i, (c, g))| {
             use ratatui::widgets::Cell;
+
+            // Line number display: absolute for selected, relative for others
+            let (line_num, line_num_style) = if i == selected {
+                // Absolute line number, left-aligned, visible on DarkGray background
+                let num = format!("{:<width$}", i + 1, width = gutter_width);
+                let style = Style::default().fg(Color::Gray); // Lighter gray visible on DarkGray
+                (num, style)
+            } else {
+                // Relative line number, right-aligned
+                let distance = (i as isize - selected as isize).unsigned_abs();
+                let num = format!("{:>width$}", distance, width = gutter_width);
+                let style = Style::default().fg(Color::DarkGray);
+                (num, style)
+            };
 
             // Build colored graph spans (truncate to max width)
             let graph_spans: Vec<Span> = g
@@ -862,6 +881,7 @@ fn render_ui(
 
             let row = Row::new(vec![
                 Cell::from(""), // Left padding
+                Cell::from(Span::styled(line_num, line_num_style)), // Line number gutter
                 Cell::from(Line::from(graph_spans)),
                 Cell::from(Line::from(message_spans)),
                 Cell::from(Line::from(highlight_matches(
@@ -894,6 +914,7 @@ fn render_ui(
 
     let widths = [
         Constraint::Length(0), // left padding (column_spacing provides the space)
+        Constraint::Length(gutter_width as u16), // line number gutter
         Constraint::Length(graph_width as u16),
         Constraint::Fill(1),    // message takes remaining space
         Constraint::Length(20), // author
