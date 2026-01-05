@@ -48,6 +48,7 @@ fn main() {
     let mut history_index: Option<usize> = None; // None = new search, Some(i) = viewing history[i]
     let mut leader_pressed = false; // For space+key sequences
     let mut count_prefix = String::new(); // Vim-style count prefix for movements
+    let mut first_render = true; // Center view on first render
 
     // Set up panic hook to restore terminal on crash
     let original_hook = std::panic::take_hook();
@@ -60,6 +61,12 @@ fn main() {
     loop {
         let visible_height = terminal.size().unwrap().height.saturating_sub(3) as usize; // Reserve 3 for search bar with borders
         let half_page = visible_height / 2;
+
+        // Center view on selected commit on first render
+        if first_render {
+            scroll_offset = selected.saturating_sub(visible_height / 2);
+            first_render = false;
+        }
 
         // When terminal grows (e.g. maximizing a tmux pane), scroll_offset may leave
         // blank space at bottom. Pull the list down to fill available space.
