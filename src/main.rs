@@ -51,9 +51,10 @@ fn main() {
     }
 
     // Start with HEAD selected
-    let mut selected: usize = branch_info
-        .head_commit
-        .and_then(|head_oid| commits.iter().position(|c| c.sha == head_oid))
+    let head_sha = branch_info.head_sha();
+    let mut selected: usize = commits
+        .iter()
+        .position(|c| c.sha == head_sha)
         .unwrap_or(0);
     let mut scroll_offset: usize = 0;
     let mut searching = false;
@@ -336,10 +337,8 @@ fn main() {
                     KeyCode::Char('h') => {
                         // Jump to HEAD commit and center on it
                         count_prefix.clear();
-                        if let Some(head_idx) = branch_info
-                            .head_commit
-                            .and_then(|head_oid| commits.iter().position(|c| c.sha == head_oid))
-                        {
+                        let head_sha = branch_info.head_sha();
+                        if let Some(head_idx) = commits.iter().position(|c| c.sha == head_sha) {
                             selected = head_idx;
                             center_view_on_selection(selected, &mut scroll_offset, visible_height);
                         }
@@ -388,37 +387,76 @@ struct Commit {
     timestamp: i64,
 }
 
-struct BranchInfo {
-    branches: std::collections::HashMap<git2::Oid, Vec<(String, bool)>>, // commit -> [(branch_name, is_head)]
-    head_commit: Option<git2::Oid>,
-    head_branch: Option<String>, // None if detached
+enum Head {
+    Attached { branch_name: BranchName },
+    Detached { sha: Sha },
 }
 
-fn get_branch_info(repo: &Repository) -> BranchInfo {
-    let mut branches: std::collections::HashMap<git2::Oid, Vec<(String, bool)>> =
-        std::collections::HashMap::new();
-    let mut head_commit = None;
-    let mut head_branch = None;
-
-    // Get HEAD info
-    if let Ok(head) = repo.head() {
-        head_commit = head.target();
-        if head.is_branch() {
-            head_branch = head.shorthand().map(|s| s.to_string());
+impl Head {
+    fn sha(&self, branches: &std::collections::HashMap<String, Sha>) -> Sha {
+        match self {
+            Head::Attached { branch_name } => branches[&branch_name.0],
+            Head::Detached { sha } => *sha,
         }
     }
 
-    // Get all branches
+    fn branch_name(&self) -> Option<&BranchName> {
+        match self {
+            Head::Attached { branch_name } => Some(branch_name),
+            Head::Detached { .. } => None,
+        }
+    }
+}
+
+struct BranchInfo {
+    branches: std::collections::HashMap<String, Sha>, // branch_name -> commit sha
+    head: Head,
+}
+
+impl BranchInfo {
+    fn head_sha(&self) -> Sha {
+        self.head.sha(&self.branches)
+    }
+
+    /// Build reverse index: commit sha -> list of branch names pointing to it
+    fn branches_at_commit(&self) -> std::collections::HashMap<Sha, Vec<&str>> {
+        let mut result: std::collections::HashMap<Sha, Vec<&str>> = std::collections::HashMap::new();
+        for (name, sha) in &self.branches {
+            result.entry(*sha).or_default().push(name.as_str());
+        }
+        result
+    }
+}
+
+fn get_branch_info(repo: &Repository) -> BranchInfo {
+    let mut branches: std::collections::HashMap<String, Sha> =
+        std::collections::HashMap::new();
+
+    // Get HEAD info
+    let head = if let Ok(head_ref) = repo.head() {
+        if head_ref.is_branch() {
+            // Attached HEAD - points to a branch
+            let branch_name = head_ref.shorthand().unwrap_or("").to_string();
+            Head::Attached { branch_name: BranchName(branch_name) }
+        } else {
+            // Detached HEAD - points directly to a commit
+            let sha = head_ref.target().expect("HEAD should have a target");
+            Head::Detached { sha }
+        }
+    } else {
+        // No HEAD (empty repo?) - treat as detached at zero commit
+        Head::Detached { sha: git2::Oid::zero() }
+    };
+
+    // Get all branches (branch name -> commit sha)
     if let Ok(branch_iter) = repo.branches(None) {
         for branch_result in branch_iter {
             if let Ok((branch, _branch_type)) = branch_result {
-                // Get name first before consuming branch
                 let name = branch.name().ok().flatten().map(|s| s.to_string());
                 if let Some(name) = name {
                     if let Ok(reference) = branch.into_reference().resolve() {
                         if let Some(oid) = reference.target() {
-                            let is_head = head_branch.as_ref() == Some(&name);
-                            branches.entry(oid).or_default().push((name, is_head));
+                            branches.insert(name, oid);
                         }
                     }
                 }
@@ -426,11 +464,7 @@ fn get_branch_info(repo: &Repository) -> BranchInfo {
         }
     }
 
-    BranchInfo {
-        branches,
-        head_commit,
-        head_branch,
-    }
+    BranchInfo { branches, head }
 }
 
 fn get_commits(repo: &Repository) -> Vec<Commit> {
@@ -681,12 +715,13 @@ fn commit_matches_query(commit: &Commit, query: &str, branch_info: &BranchInfo) 
 
     let case_sensitive = has_mixed_case(query);
 
-    // Get branch names for this commit
+    // Get branch names for this commit (branches that point to this commit's sha)
     let branch_names: Vec<&str> = branch_info
         .branches
-        .get(&commit.sha)
-        .map(|branches| branches.iter().map(|(name, _)| name.as_str()).collect())
-        .unwrap_or_default();
+        .iter()
+        .filter(|(_, sha)| **sha == commit.sha)
+        .map(|(name, _)| name.as_str())
+        .collect();
 
     // Derive display values from raw data
     let short_sha = &commit.sha.to_string()[..7];
@@ -784,6 +819,11 @@ fn render_ui(
     use ratatui::text::Line;
     use ratatui::widgets::{Block, Borders, Paragraph};
 
+    // Compute derived values once for this render
+    let head_sha = branch_info.head_sha();
+    let branches_at_commit = branch_info.branches_at_commit();
+    let head_branch_name = branch_info.head.branch_name();
+
     // Use full width - padding is handled by table columns for proper row highlighting
     let padded_area = frame.area();
 
@@ -866,10 +906,10 @@ fn render_ui(
             let mut message_spans: Vec<Span> = Vec::new();
 
             // Add branch indicators if any branches point to this commit
-            let is_head_commit = branch_info.head_commit == Some(c.sha);
-            let branches_at_commit = branch_info.branches.get(&c.sha);
+            let is_head_commit = c.sha == head_sha;
+            let commit_branches = branches_at_commit.get(&c.sha);
 
-            if is_head_commit || branches_at_commit.is_some() {
+            if is_head_commit || commit_branches.is_some() {
                 // Find this commit's lane color from the graph (where ● is)
                 let commit_lane = g
                     .iter()
@@ -883,7 +923,7 @@ fn render_ui(
 
                 // Show HEAD first if this is the head commit
                 if is_head_commit {
-                    if let Some(ref head_branch) = branch_info.head_branch {
+                    if let Some(head_branch) = head_branch_name {
                         // HEAD points to a branch: "HEAD → branch_name"
                         message_spans.extend(highlight_matches(
                             "HEAD",
@@ -897,7 +937,7 @@ fn render_ui(
                         ));
                         let branch_color = lane_colors[commit_lane % lane_colors.len()];
                         message_spans.extend(highlight_matches(
-                            head_branch,
+                            &head_branch.0,
                             search_query,
                             Style::default().fg(branch_color).bold(),
                             highlight_style,
@@ -915,10 +955,10 @@ fn render_ui(
                 }
 
                 // Show other branches (not the HEAD branch)
-                if let Some(branches) = branches_at_commit {
-                    for (branch_name, is_head) in branches {
-                        if *is_head {
-                            // Skip the HEAD branch, we already showed it above
+                if let Some(branches) = commit_branches {
+                    for branch_name in branches {
+                        // Skip the HEAD branch, we already showed it above
+                        if head_branch_name.map(|h| h.0.as_str()) == Some(*branch_name) {
                             continue;
                         }
                         if !first {
@@ -1099,11 +1139,8 @@ fn render_ui(
 
         // Center: same hints as normal mode but with q:clear and n/N for search navigation
         // Check if we're on HEAD to conditionally show h:head hint
-        let on_head = branch_info
-            .head_commit
-            .and_then(|head_oid| commits.iter().position(|c| c.sha == head_oid))
-            .map(|head_idx| head_idx == selected)
-            .unwrap_or(true);
+        let head_idx = commits.iter().position(|c| c.sha == head_sha);
+        let on_head = head_idx.map(|idx| idx == selected).unwrap_or(true);
 
         let hint_text = if on_head {
             "q:clear  /:search  n/N:match  c:copy"
@@ -1144,11 +1181,8 @@ fn render_ui(
         }
 
         // Check if we're on HEAD to conditionally show h:head hint
-        let on_head = branch_info
-            .head_commit
-            .and_then(|head_oid| commits.iter().position(|c| c.sha == head_oid))
-            .map(|head_idx| head_idx == selected)
-            .unwrap_or(true); // If no HEAD, don't show hint
+        let head_idx = commits.iter().position(|c| c.sha == head_sha);
+        let on_head = head_idx.map(|idx| idx == selected).unwrap_or(true); // If no HEAD, don't show hint
 
         let hint_text = if on_head {
             "q:quit  /:search  c:copy".to_string()
