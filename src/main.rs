@@ -8,6 +8,7 @@ use ratatui::widgets::{Row, Table};
 
 type Sha = git2::Oid;
 
+#[derive(Hash, Eq, PartialEq)]
 struct BranchName(String);
 
 impl std::fmt::Display for BranchName {
@@ -26,14 +27,12 @@ fn main() {
 
     let repo = Repository::open(&path).expect("Not a git repository");
     let commits = get_commits(&repo);
-    let branch_info = get_branch_info(&repo);
+    let (branches, head) = get_branches_and_head(&repo);
 
     // Start with HEAD selected
-    let head_sha = branch_info.head_sha();
-    let mut index_of_selected_row: usize = commits
-        .iter()
-        .position(|c| c.sha == head_sha)
-        .unwrap_or(0);
+    let head_sha = head.sha(&branches);
+    let mut index_of_selected_row: usize =
+        commits.iter().position(|c| c.sha == head_sha).unwrap_or(0);
     let mut index_of_topmost_visible_row: usize = 0;
     let mut is_typing_search_term = false;
     let mut search_term = String::new();
@@ -58,7 +57,11 @@ fn main() {
 
         // Center view on selected commit on first render
         if is_first_render {
-            center_view_on_selected_row(index_of_selected_row, &mut index_of_topmost_visible_row, visible_height);
+            center_view_on_selected_row(
+                index_of_selected_row,
+                &mut index_of_topmost_visible_row,
+                visible_height,
+            );
             is_first_render = false;
         }
 
@@ -76,7 +79,8 @@ fn main() {
                 render_ui(
                     frame,
                     &commits,
-                    &branch_info,
+                    &branches,
+                    &head,
                     index_of_selected_row,
                     index_of_topmost_visible_row,
                     is_typing_search_term,
@@ -90,269 +94,303 @@ fn main() {
             .unwrap();
         match event::read().unwrap() {
             Event::Key(key) => {
-            if is_typing_search_term {
-                match key.code {
-                    KeyCode::Esc => {
-                        is_typing_search_term = false;
-                        search_term.clear();
-                        index_of_search_term_history_being_viewed = None;
-                        // Return to pre-search position on cancel
-                        if let Some(pre) = index_of_selected_row_when_search_began {
-                            index_of_selected_row = pre;
-                            center_view_on_selected_row(index_of_selected_row, &mut index_of_topmost_visible_row, visible_height);
-                        }
-                        index_of_selected_row_when_search_began = None;
-                    }
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        is_typing_search_term = false;
-                        search_term.clear();
-                        index_of_search_term_history_being_viewed = None;
-                        // Return to pre-search position on cancel
-                        if let Some(pre) = index_of_selected_row_when_search_began {
-                            index_of_selected_row = pre;
-                            center_view_on_selected_row(index_of_selected_row, &mut index_of_topmost_visible_row, visible_height);
-                        }
-                        index_of_selected_row_when_search_began = None;
-                    }
-                    KeyCode::Enter => {
-                        // Exit typing mode, but only keep search if there are matches
-                        is_typing_search_term = false;
-                        index_of_search_term_history_being_viewed = None;
-                        let has_matches = commits
-                            .iter()
-                            .any(|c| commit_matches_query(c, &search_term, &branch_info));
-                        if has_matches {
-                            // Add to history only if there were matches (deduplicate consecutive)
-                            if search_term_history.last() != Some(&search_term) {
-                                search_term_history.push(search_term.clone());
-                            }
-                        } else {
+                if is_typing_search_term {
+                    match key.code {
+                        KeyCode::Esc => {
+                            is_typing_search_term = false;
                             search_term.clear();
+                            index_of_search_term_history_being_viewed = None;
+                            // Return to pre-search position on cancel
+                            if let Some(pre) = index_of_selected_row_when_search_began {
+                                index_of_selected_row = pre;
+                                center_view_on_selected_row(
+                                    index_of_selected_row,
+                                    &mut index_of_topmost_visible_row,
+                                    visible_height,
+                                );
+                            }
+                            index_of_selected_row_when_search_began = None;
                         }
-                        index_of_selected_row_when_search_began = None;
-                    }
-                    KeyCode::Up => {
-                        // Navigate to previous history entry
-                        if !search_term_history.is_empty() {
-                            index_of_search_term_history_being_viewed = Some(match index_of_search_term_history_being_viewed {
-                                None => search_term_history.len() - 1,
-                                Some(0) => 0,
-                                Some(i) => i - 1,
-                            });
-                            search_term = search_term_history[index_of_search_term_history_being_viewed.unwrap()].clone();
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            is_typing_search_term = false;
+                            search_term.clear();
+                            index_of_search_term_history_being_viewed = None;
+                            // Return to pre-search position on cancel
+                            if let Some(pre) = index_of_selected_row_when_search_began {
+                                index_of_selected_row = pre;
+                                center_view_on_selected_row(
+                                    index_of_selected_row,
+                                    &mut index_of_topmost_visible_row,
+                                    visible_height,
+                                );
+                            }
+                            index_of_selected_row_when_search_began = None;
                         }
-                    }
-                    KeyCode::Down => {
-                        // Navigate to next history entry or back to empty
-                        if let Some(i) = index_of_search_term_history_being_viewed {
-                            if i + 1 < search_term_history.len() {
-                                index_of_search_term_history_being_viewed = Some(i + 1);
-                                search_term = search_term_history[i + 1].clone();
+                        KeyCode::Enter => {
+                            // Exit typing mode, but only keep search if there are matches
+                            is_typing_search_term = false;
+                            index_of_search_term_history_being_viewed = None;
+                            let has_matches = commits
+                                .iter()
+                                .any(|c| commit_matches_query(c, &search_term, &branches));
+                            if has_matches {
+                                // Add to history only if there were matches (deduplicate consecutive)
+                                if search_term_history.last() != Some(&search_term) {
+                                    search_term_history.push(search_term.clone());
+                                }
                             } else {
+                                search_term.clear();
+                            }
+                            index_of_selected_row_when_search_began = None;
+                        }
+                        KeyCode::Up => {
+                            // Navigate to previous history entry
+                            if !search_term_history.is_empty() {
+                                index_of_search_term_history_being_viewed =
+                                    Some(match index_of_search_term_history_being_viewed {
+                                        None => search_term_history.len() - 1,
+                                        Some(0) => 0,
+                                        Some(i) => i - 1,
+                                    });
+                                search_term = search_term_history
+                                    [index_of_search_term_history_being_viewed.unwrap()]
+                                .clone();
+                            }
+                        }
+                        KeyCode::Down => {
+                            // Navigate to next history entry or back to empty
+                            if let Some(i) = index_of_search_term_history_being_viewed {
+                                if i + 1 < search_term_history.len() {
+                                    index_of_search_term_history_being_viewed = Some(i + 1);
+                                    search_term = search_term_history[i + 1].clone();
+                                } else {
+                                    index_of_search_term_history_being_viewed = None;
+                                    search_term.clear();
+                                }
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            if search_term.is_empty() {
+                                // Backspace on empty query exits search mode
+                                is_typing_search_term = false;
                                 index_of_search_term_history_being_viewed = None;
+                                // Return to pre-search position
+                                if let Some(pre) = index_of_selected_row_when_search_began {
+                                    index_of_selected_row = pre;
+                                    center_view_on_selected_row(
+                                        index_of_selected_row,
+                                        &mut index_of_topmost_visible_row,
+                                        visible_height,
+                                    );
+                                }
+                                index_of_selected_row_when_search_began = None;
+                            } else {
+                                search_term.pop();
+                                index_of_search_term_history_being_viewed = None; // Editing breaks out of history navigation
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            search_term.push(c);
+                            index_of_search_term_history_being_viewed = None; // Editing breaks out of history navigation
+                        }
+                        _ => {}
+                    }
+                    // Live search: jump to first matching commit, or back to pre-search position
+                    if !search_term.is_empty() {
+                        if let Some(idx) = commits
+                            .iter()
+                            .position(|c| commit_matches_query(c, &search_term, &branches))
+                        {
+                            index_of_selected_row = idx;
+                        } else if let Some(pre) = index_of_selected_row_when_search_began {
+                            // No matches - return to where we were before searching
+                            index_of_selected_row = pre;
+                            center_view_on_selected_row(
+                                index_of_selected_row,
+                                &mut index_of_topmost_visible_row,
+                                visible_height,
+                            );
+                        }
+                    } else if let Some(pre) = index_of_selected_row_when_search_began {
+                        // Empty query - return to where we were
+                        index_of_selected_row = pre;
+                        center_view_on_selected_row(
+                            index_of_selected_row,
+                            &mut index_of_topmost_visible_row,
+                            visible_height,
+                        );
+                    }
+                } else {
+                    // Helper to check if a commit matches the search
+                    let commit_matches =
+                        |c: &Commit| -> bool { commit_matches_query(c, &search_term, &branches) };
+
+                    match key.code {
+                        KeyCode::Char('q') => {
+                            if !jump_distance_string.is_empty() {
+                                jump_distance_string.clear();
+                            } else if search_term.is_empty() {
+                                break;
+                            } else {
                                 search_term.clear();
                             }
                         }
-                    }
-                    KeyCode::Backspace => {
-                        if search_term.is_empty() {
-                            // Backspace on empty query exits search mode
-                            is_typing_search_term = false;
-                            index_of_search_term_history_being_viewed = None;
-                            // Return to pre-search position
-                            if let Some(pre) = index_of_selected_row_when_search_began {
-                                index_of_selected_row = pre;
-                                center_view_on_selected_row(index_of_selected_row, &mut index_of_topmost_visible_row, visible_height);
+                        KeyCode::Esc => {
+                            if !jump_distance_string.is_empty() {
+                                jump_distance_string.clear();
+                            } else if search_term.is_empty() {
+                                break;
+                            } else {
+                                search_term.clear();
                             }
-                            index_of_selected_row_when_search_began = None;
-                        } else {
-                            search_term.pop();
-                            index_of_search_term_history_being_viewed = None; // Editing breaks out of history navigation
                         }
-                    }
-                    KeyCode::Char(c) => {
-                        search_term.push(c);
-                        index_of_search_term_history_being_viewed = None; // Editing breaks out of history navigation
-                    }
-                    _ => {}
-                }
-                // Live search: jump to first matching commit, or back to pre-search position
-                if !search_term.is_empty() {
-                    if let Some(idx) = commits
-                        .iter()
-                        .position(|c| commit_matches_query(c, &search_term, &branch_info))
-                    {
-                        index_of_selected_row = idx;
-                    } else if let Some(pre) = index_of_selected_row_when_search_began {
-                        // No matches - return to where we were before searching
-                        index_of_selected_row = pre;
-                        center_view_on_selected_row(index_of_selected_row, &mut index_of_topmost_visible_row, visible_height);
-                    }
-                } else if let Some(pre) = index_of_selected_row_when_search_began {
-                    // Empty query - return to where we were
-                    index_of_selected_row = pre;
-                    center_view_on_selected_row(index_of_selected_row, &mut index_of_topmost_visible_row, visible_height);
-                }
-            } else {
-                // Helper to check if a commit matches the search
-                let commit_matches =
-                    |c: &Commit| -> bool { commit_matches_query(c, &search_term, &branch_info) };
-
-                match key.code {
-                    KeyCode::Char('q') => {
-                        if !jump_distance_string.is_empty() {
-                            jump_distance_string.clear();
-                        } else if search_term.is_empty() {
-                            break;
-                        } else {
-                            search_term.clear();
-                        }
-                    }
-                    KeyCode::Esc => {
-                        if !jump_distance_string.is_empty() {
-                            jump_distance_string.clear();
-                        } else if search_term.is_empty() {
-                            break;
-                        } else {
-                            search_term.clear();
-                        }
-                    }
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        if !jump_distance_string.is_empty() {
-                            jump_distance_string.clear();
-                        } else if search_term.is_empty() {
-                            break;
-                        } else {
-                            search_term.clear();
-                        }
-                    }
-                    KeyCode::Backspace => {
-                        if !jump_distance_string.is_empty() {
-                            jump_distance_string.pop();
-                        } else {
-                            search_term.clear();
-                        }
-                    }
-                    KeyCode::Char('/') => {
-                        jump_distance_string.clear();
-                        is_typing_search_term = true;
-                        search_term.clear();
-                        index_of_selected_row_when_search_began = Some(index_of_selected_row);
-                    }
-                    KeyCode::Char('n') if !search_term.is_empty() => {
-                        // Find next match after current selection
-                        if let Some(idx) = commits
-                            .iter()
-                            .enumerate()
-                            .skip(index_of_selected_row + 1)
-                            .find(|(_, c)| commit_matches(c))
-                            .map(|(i, _)| i)
-                        {
-                            index_of_selected_row = idx;
-                        } else if let Some(idx) = commits
-                            .iter()
-                            .enumerate()
-                            .take(index_of_selected_row)
-                            .find(|(_, c)| commit_matches(c))
-                            .map(|(i, _)| i)
-                        {
-                            // Wrap around to beginning
-                            index_of_selected_row = idx;
-                        }
-                    }
-                    KeyCode::Char('N') if !search_term.is_empty() => {
-                        // Find previous match before current selection
-                        if let Some(idx) = commits
-                            .iter()
-                            .enumerate()
-                            .take(index_of_selected_row)
-                            .rev()
-                            .find(|(_, c)| commit_matches(c))
-                            .map(|(i, _)| i)
-                        {
-                            index_of_selected_row = idx;
-                        } else if let Some(idx) = commits
-                            .iter()
-                            .enumerate()
-                            .skip(index_of_selected_row + 1)
-                            .rev()
-                            .find(|(_, c)| commit_matches(c))
-                            .map(|(i, _)| i)
-                        {
-                            // Wrap around to end
-                            index_of_selected_row = idx;
-                        }
-                    }
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        let count = jump_distance_string.parse::<usize>().unwrap_or(1);
-                        jump_distance_string.clear();
-                        index_of_selected_row = (index_of_selected_row + count).min(commits.len().saturating_sub(1));
-                    }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        let count = jump_distance_string.parse::<usize>().unwrap_or(1);
-                        jump_distance_string.clear();
-                        index_of_selected_row = index_of_selected_row.saturating_sub(count);
-                    }
-                    KeyCode::Char(c) if c.is_ascii_digit() => {
-                        // Ignore leading zeros
-                        if !(c == '0' && jump_distance_string.is_empty()) {
-                            jump_distance_string.push(c);
-                        }
-                    }
-                    KeyCode::Char('g') => {
-                        jump_distance_string.clear();
-                        index_of_selected_row = 0;
-                    }
-                    KeyCode::Char('G') => {
-                        // G with count goes to that line number, G alone goes to end
-                        if let Ok(line) = jump_distance_string.parse::<usize>() {
-                            index_of_selected_row = (line.saturating_sub(1)).min(commits.len().saturating_sub(1));
-                        } else {
-                            index_of_selected_row = commits.len().saturating_sub(1);
-                        }
-                        jump_distance_string.clear();
-                    }
-                    KeyCode::Char('h') => {
-                        // Jump to HEAD commit and center on it
-                        jump_distance_string.clear();
-                        let head_sha = branch_info.head_sha();
-                        if let Some(head_idx) = commits.iter().position(|c| c.sha == head_sha) {
-                            index_of_selected_row = head_idx;
-                            center_view_on_selected_row(index_of_selected_row, &mut index_of_topmost_visible_row, visible_height);
-                        }
-                    }
-                    KeyCode::Char('c') => {
-                        // Copy full SHA to clipboard
-                        jump_distance_string.clear();
-                        let full_sha = commits[index_of_selected_row].sha.to_string();
-                        let short_sha = &full_sha[..7];
-                        if let Ok(mut child) = std::process::Command::new("pbcopy")
-                            .stdin(std::process::Stdio::piped())
-                            .spawn()
-                        {
-                            use std::io::Write;
-                            if let Some(stdin) = child.stdin.as_mut() {
-                                let _ = stdin.write_all(full_sha.as_bytes());
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            if !jump_distance_string.is_empty() {
+                                jump_distance_string.clear();
+                            } else if search_term.is_empty() {
+                                break;
+                            } else {
+                                search_term.clear();
                             }
-                            let _ = child.wait();
-                            flash_message = Some(FlashMessage {
-                                text: format!("copied {}", short_sha),
-                                shown_at: std::time::Instant::now(),
-                            });
                         }
+                        KeyCode::Backspace => {
+                            if !jump_distance_string.is_empty() {
+                                jump_distance_string.pop();
+                            } else {
+                                search_term.clear();
+                            }
+                        }
+                        KeyCode::Char('/') => {
+                            jump_distance_string.clear();
+                            is_typing_search_term = true;
+                            search_term.clear();
+                            index_of_selected_row_when_search_began = Some(index_of_selected_row);
+                        }
+                        KeyCode::Char('n') if !search_term.is_empty() => {
+                            // Find next match after current selection
+                            if let Some(idx) = commits
+                                .iter()
+                                .enumerate()
+                                .skip(index_of_selected_row + 1)
+                                .find(|(_, c)| commit_matches(c))
+                                .map(|(i, _)| i)
+                            {
+                                index_of_selected_row = idx;
+                            } else if let Some(idx) = commits
+                                .iter()
+                                .enumerate()
+                                .take(index_of_selected_row)
+                                .find(|(_, c)| commit_matches(c))
+                                .map(|(i, _)| i)
+                            {
+                                // Wrap around to beginning
+                                index_of_selected_row = idx;
+                            }
+                        }
+                        KeyCode::Char('N') if !search_term.is_empty() => {
+                            // Find previous match before current selection
+                            if let Some(idx) = commits
+                                .iter()
+                                .enumerate()
+                                .take(index_of_selected_row)
+                                .rev()
+                                .find(|(_, c)| commit_matches(c))
+                                .map(|(i, _)| i)
+                            {
+                                index_of_selected_row = idx;
+                            } else if let Some(idx) = commits
+                                .iter()
+                                .enumerate()
+                                .skip(index_of_selected_row + 1)
+                                .rev()
+                                .find(|(_, c)| commit_matches(c))
+                                .map(|(i, _)| i)
+                            {
+                                // Wrap around to end
+                                index_of_selected_row = idx;
+                            }
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            let count = jump_distance_string.parse::<usize>().unwrap_or(1);
+                            jump_distance_string.clear();
+                            index_of_selected_row = (index_of_selected_row + count)
+                                .min(commits.len().saturating_sub(1));
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            let count = jump_distance_string.parse::<usize>().unwrap_or(1);
+                            jump_distance_string.clear();
+                            index_of_selected_row = index_of_selected_row.saturating_sub(count);
+                        }
+                        KeyCode::Char(c) if c.is_ascii_digit() => {
+                            // Ignore leading zeros
+                            if !(c == '0' && jump_distance_string.is_empty()) {
+                                jump_distance_string.push(c);
+                            }
+                        }
+                        KeyCode::Char('g') => {
+                            jump_distance_string.clear();
+                            index_of_selected_row = 0;
+                        }
+                        KeyCode::Char('G') => {
+                            // G with count goes to that line number, G alone goes to end
+                            if let Ok(line) = jump_distance_string.parse::<usize>() {
+                                index_of_selected_row =
+                                    (line.saturating_sub(1)).min(commits.len().saturating_sub(1));
+                            } else {
+                                index_of_selected_row = commits.len().saturating_sub(1);
+                            }
+                            jump_distance_string.clear();
+                        }
+                        KeyCode::Char('h') => {
+                            // Jump to HEAD commit and center on it
+                            jump_distance_string.clear();
+                            let head_sha = head.sha(&branches);
+                            if let Some(head_idx) = commits.iter().position(|c| c.sha == head_sha) {
+                                index_of_selected_row = head_idx;
+                                center_view_on_selected_row(
+                                    index_of_selected_row,
+                                    &mut index_of_topmost_visible_row,
+                                    visible_height,
+                                );
+                            }
+                        }
+                        KeyCode::Char('c') => {
+                            // Copy full SHA to clipboard
+                            jump_distance_string.clear();
+                            let full_sha = commits[index_of_selected_row].sha.to_string();
+                            let short_sha = &full_sha[..7];
+                            if let Ok(mut child) = std::process::Command::new("pbcopy")
+                                .stdin(std::process::Stdio::piped())
+                                .spawn()
+                            {
+                                use std::io::Write;
+                                if let Some(stdin) = child.stdin.as_mut() {
+                                    let _ = stdin.write_all(full_sha.as_bytes());
+                                }
+                                let _ = child.wait();
+                                flash_message = Some(FlashMessage {
+                                    text: format!("copied {}", short_sha),
+                                    shown_at: std::time::Instant::now(),
+                                });
+                            }
+                        }
+                        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            jump_distance_string.clear();
+                            index_of_selected_row = (index_of_selected_row + half_page)
+                                .min(commits.len().saturating_sub(1));
+                        }
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            jump_distance_string.clear();
+                            index_of_selected_row = index_of_selected_row.saturating_sub(half_page);
+                        }
+                        _ => {}
                     }
-                    KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        jump_distance_string.clear();
-                        index_of_selected_row = (index_of_selected_row + half_page).min(commits.len().saturating_sub(1));
-                    }
-                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        jump_distance_string.clear();
-                        index_of_selected_row = index_of_selected_row.saturating_sub(half_page);
-                    }
-                    _ => {}
                 }
-            }
-            ensure_selected_row_is_visible(index_of_selected_row, &mut index_of_topmost_visible_row, visible_height);
+                ensure_selected_row_is_visible(
+                    index_of_selected_row,
+                    &mut index_of_topmost_visible_row,
+                    visible_height,
+                );
             }
             _ => {}
         }
@@ -374,9 +412,9 @@ enum Head {
 }
 
 impl Head {
-    fn sha(&self, branches: &std::collections::HashMap<String, Sha>) -> Sha {
+    fn sha(&self, branches: &std::collections::HashMap<BranchName, Sha>) -> Sha {
         match self {
-            Head::Attached { branch_name } => branches[&branch_name.0],
+            Head::Attached { branch_name } => branches[branch_name],
             Head::Detached { sha } => *sha,
         }
     }
@@ -389,36 +427,29 @@ impl Head {
     }
 }
 
-struct BranchInfo {
-    branches: std::collections::HashMap<String, Sha>, // branch_name -> commit sha
-    head: Head,
-}
-
-impl BranchInfo {
-    fn head_sha(&self) -> Sha {
-        self.head.sha(&self.branches)
-    }
-
-    /// Build reverse index: commit sha -> list of branch names pointing to it
-    fn branches_at_commit(&self) -> std::collections::HashMap<Sha, Vec<&str>> {
-        let mut result: std::collections::HashMap<Sha, Vec<&str>> = std::collections::HashMap::new();
-        for (name, sha) in &self.branches {
-            result.entry(*sha).or_default().push(name.as_str());
-        }
-        result
-    }
-}
-
-fn get_branch_info(repo: &Repository) -> BranchInfo {
-    let mut branches: std::collections::HashMap<String, Sha> =
+/// Build reverse index: commit sha -> list of branch names pointing to it
+fn branches_at_commit(
+    branches: &std::collections::HashMap<BranchName, Sha>,
+) -> std::collections::HashMap<Sha, Vec<&BranchName>> {
+    let mut result: std::collections::HashMap<Sha, Vec<&BranchName>> =
         std::collections::HashMap::new();
+    for (name, sha) in branches {
+        result.entry(*sha).or_default().push(name);
+    }
+    result
+}
+
+fn get_branches_and_head(repo: &Repository) -> (std::collections::HashMap<BranchName, Sha>, Head) {
+    let mut branches: std::collections::HashMap<BranchName, Sha> = std::collections::HashMap::new();
 
     // Get HEAD info
     let head = if let Ok(head_ref) = repo.head() {
         if head_ref.is_branch() {
             // Attached HEAD - points to a branch
             let branch_name = head_ref.shorthand().unwrap_or("").to_string();
-            Head::Attached { branch_name: BranchName(branch_name) }
+            Head::Attached {
+                branch_name: BranchName(branch_name),
+            }
         } else {
             // Detached HEAD - points directly to a commit
             let sha = head_ref.target().expect("HEAD should have a target");
@@ -426,7 +457,9 @@ fn get_branch_info(repo: &Repository) -> BranchInfo {
         }
     } else {
         // No HEAD (empty repo?) - treat as detached at zero commit
-        Head::Detached { sha: git2::Oid::zero() }
+        Head::Detached {
+            sha: git2::Oid::zero(),
+        }
     };
 
     // Get all branches (branch name -> commit sha)
@@ -437,7 +470,7 @@ fn get_branch_info(repo: &Repository) -> BranchInfo {
                 if let Some(name) = name {
                     if let Ok(reference) = branch.into_reference().resolve() {
                         if let Some(oid) = reference.target() {
-                            branches.insert(name, oid);
+                            branches.insert(BranchName(name), oid);
                         }
                     }
                 }
@@ -445,7 +478,7 @@ fn get_branch_info(repo: &Repository) -> BranchInfo {
         }
     }
 
-    BranchInfo { branches, head }
+    (branches, head)
 }
 
 fn get_commits(repo: &Repository) -> Vec<Commit> {
@@ -668,7 +701,11 @@ fn build_graph(commits: &[Commit]) -> Vec<Vec<(char, Option<usize>)>> {
 }
 
 // Adjust scroll offset to keep selection visible
-fn ensure_selected_row_is_visible(index_of_selected_row: usize, index_of_topmost_visible_row: &mut usize, visible_height: usize) {
+fn ensure_selected_row_is_visible(
+    index_of_selected_row: usize,
+    index_of_topmost_visible_row: &mut usize,
+    visible_height: usize,
+) {
     if index_of_selected_row < *index_of_topmost_visible_row {
         *index_of_topmost_visible_row = index_of_selected_row;
     } else if index_of_selected_row >= *index_of_topmost_visible_row + visible_height {
@@ -677,7 +714,11 @@ fn ensure_selected_row_is_visible(index_of_selected_row: usize, index_of_topmost
 }
 
 // Center the view on the selected row
-fn center_view_on_selected_row(index_of_selected_row: usize, index_of_topmost_visible_row: &mut usize, visible_height: usize) {
+fn center_view_on_selected_row(
+    index_of_selected_row: usize,
+    index_of_topmost_visible_row: &mut usize,
+    visible_height: usize,
+) {
     *index_of_topmost_visible_row = index_of_selected_row.saturating_sub(visible_height / 2);
 }
 
@@ -689,7 +730,11 @@ fn has_mixed_case(s: &str) -> bool {
 }
 
 // Check if a commit matches the search query (searches message, sha, author, date, and branch names)
-fn commit_matches_query(commit: &Commit, query: &str, branch_info: &BranchInfo) -> bool {
+fn commit_matches_query(
+    commit: &Commit,
+    query: &str,
+    branches: &std::collections::HashMap<BranchName, Sha>,
+) -> bool {
     if query.is_empty() {
         return false;
     }
@@ -697,11 +742,10 @@ fn commit_matches_query(commit: &Commit, query: &str, branch_info: &BranchInfo) 
     let case_sensitive = has_mixed_case(query);
 
     // Get branch names for this commit (branches that point to this commit's sha)
-    let branch_names: Vec<&str> = branch_info
-        .branches
+    let branch_names: Vec<&str> = branches
         .iter()
         .filter(|(_, sha)| **sha == commit.sha)
-        .map(|(name, _)| name.as_str())
+        .map(|(name, _)| name.0.as_str())
         .collect();
 
     // Derive display values from raw data
@@ -786,7 +830,8 @@ fn highlight_matches(
 fn render_ui(
     frame: &mut Frame,
     commits: &[Commit],
-    branch_info: &BranchInfo,
+    branches: &std::collections::HashMap<BranchName, Sha>,
+    head: &Head,
     index_of_selected_row: usize,
     index_of_topmost_visible_row: usize,
     is_typing_search_term: bool,
@@ -801,9 +846,9 @@ fn render_ui(
     use ratatui::widgets::{Block, Borders, Paragraph};
 
     // Compute derived values once for this render
-    let head_sha = branch_info.head_sha();
-    let branches_at_commit = branch_info.branches_at_commit();
-    let head_branch_name = branch_info.head.branch_name();
+    let head_sha = head.sha(branches);
+    let branches_at_commit_map = branches_at_commit(branches);
+    let head_branch_name = head.branch_name();
 
     // Use full width - padding is handled by table columns for proper row highlighting
     let padded_area = frame.area();
@@ -847,7 +892,15 @@ fn render_ui(
 
     // Calculate width needed for line numbers
     let max_line_num = commits.len();
-    let gutter_width = if max_line_num >= 1000 { 4 } else if max_line_num >= 100 { 3 } else if max_line_num >= 10 { 2 } else { 1 };
+    let gutter_width = if max_line_num >= 1000 {
+        4
+    } else if max_line_num >= 100 {
+        3
+    } else if max_line_num >= 10 {
+        2
+    } else {
+        1
+    };
 
     let rows: Vec<Row> = commits
         .iter()
@@ -888,7 +941,7 @@ fn render_ui(
 
             // Add branch indicators if any branches point to this commit
             let is_head_commit = c.sha == head_sha;
-            let commit_branches = branches_at_commit.get(&c.sha);
+            let commit_branches = branches_at_commit_map.get(&c.sha);
 
             if is_head_commit || commit_branches.is_some() {
                 // Find this commit's lane color from the graph (where ● is)
@@ -936,10 +989,10 @@ fn render_ui(
                 }
 
                 // Show other branches (not the HEAD branch)
-                if let Some(branches) = commit_branches {
-                    for branch_name in branches {
+                if let Some(branch_list) = commit_branches {
+                    for branch_name in branch_list {
                         // Skip the HEAD branch, we already showed it above
-                        if head_branch_name.map(|h| h.0.as_str()) == Some(*branch_name) {
+                        if head_branch_name == Some(branch_name) {
                             continue;
                         }
                         if !first {
@@ -950,7 +1003,7 @@ fn render_ui(
                         }
                         let branch_color = lane_colors[commit_lane % lane_colors.len()];
                         message_spans.extend(highlight_matches(
-                            branch_name,
+                            &branch_name.0,
                             search_term,
                             Style::default().fg(branch_color).bold(),
                             highlight_style,
@@ -978,32 +1031,51 @@ fn render_ui(
             let short_sha = c.sha.to_string()[..7].to_string();
 
             let row = Row::new(vec![
-                Cell::from(""), // Left padding
+                Cell::from(""),                                     // Left padding
                 Cell::from(Span::styled(line_num, line_num_style)), // Line number gutter
                 Cell::from(Line::from(graph_spans)),
                 Cell::from(Line::from(message_spans)),
                 Cell::from(Line::from(highlight_matches(
                     &date,
                     search_term,
-                    if i == index_of_selected_row { Style::default().bold() } else { Style::default().fg(Color::Gray) },
+                    if i == index_of_selected_row {
+                        Style::default().bold()
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    },
                     highlight_style,
                 ))),
-                Cell::from(Line::from(highlight_matches(
-                    &time,
-                    search_term,
-                    if i == index_of_selected_row { Style::default().fg(Color::Gray) } else { Style::default().fg(Color::DarkGray) },
-                    highlight_style,
-                )).alignment(ratatui::layout::Alignment::Right)),
+                Cell::from(
+                    Line::from(highlight_matches(
+                        &time,
+                        search_term,
+                        if i == index_of_selected_row {
+                            Style::default().fg(Color::Gray)
+                        } else {
+                            Style::default().fg(Color::DarkGray)
+                        },
+                        highlight_style,
+                    ))
+                    .alignment(ratatui::layout::Alignment::Right),
+                ),
                 Cell::from(Line::from(highlight_matches(
                     &c.author,
                     search_term,
-                    if i == index_of_selected_row { Style::default().bold() } else { Style::default().fg(Color::Gray) },
+                    if i == index_of_selected_row {
+                        Style::default().bold()
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    },
                     highlight_style,
                 ))),
                 Cell::from(Line::from(highlight_matches(
                     &short_sha,
                     search_term,
-                    if i == index_of_selected_row { Style::default().fg(Color::Gray) } else { Style::default().fg(Color::DarkGray) },
+                    if i == index_of_selected_row {
+                        Style::default().fg(Color::Gray)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    },
                     highlight_style,
                 ))),
                 Cell::from(""), // Right padding
@@ -1020,12 +1092,12 @@ fn render_ui(
         Constraint::Length(0), // left padding (column_spacing provides the space)
         Constraint::Length(gutter_width as u16), // line number gutter
         Constraint::Length(graph_width as u16),
-        Constraint::Fill(1),    // message takes remaining space
-        Constraint::Length(12), // date
-        Constraint::Length(8),  // time
+        Constraint::Fill(1),                     // message takes remaining space
+        Constraint::Length(12),                  // date
+        Constraint::Length(8),                   // time
         Constraint::Length(author_width as u16), // author
-        Constraint::Length(7),  // sha
-        Constraint::Length(0),  // right padding (column_spacing provides the space)
+        Constraint::Length(7),                   // sha
+        Constraint::Length(0), // right padding (column_spacing provides the space)
     ];
 
     let table = Table::new(rows, widths).column_spacing(1);
@@ -1059,7 +1131,7 @@ fn render_ui(
         } else {
             commits
                 .iter()
-                .filter(|c| commit_matches_query(c, search_term, branch_info))
+                .filter(|c| commit_matches_query(c, search_term, branches))
                 .count()
         };
 
@@ -1089,7 +1161,10 @@ fn render_ui(
         };
 
         let search_input = Paragraph::new(Line::from(vec![
-            Span::styled(format!("{}█", search_term), Style::default().fg(Color::Yellow)),
+            Span::styled(
+                format!("{}█", search_term),
+                Style::default().fg(Color::Yellow),
+            ),
             Span::styled(hint, Style::default().fg(Color::DarkGray)),
         ]));
         frame.render_widget(search_input, search_inner);
@@ -1106,7 +1181,7 @@ fn render_ui(
             .iter()
             .enumerate()
             .filter_map(|(i, c)| {
-                if commit_matches_query(c, search_term, branch_info) {
+                if commit_matches_query(c, search_term, branches) {
                     Some(i)
                 } else {
                     None
@@ -1116,12 +1191,17 @@ fn render_ui(
 
         let total = matches.len();
 
-        let current = matches.iter().position(|&i| i == index_of_selected_row).map(|p| p + 1);
+        let current = matches
+            .iter()
+            .position(|&i| i == index_of_selected_row)
+            .map(|p| p + 1);
 
         // Center: same hints as normal mode but with q:clear and n/N for search navigation
         // Check if we're on HEAD to conditionally show h:head hint
         let head_idx = commits.iter().position(|c| c.sha == head_sha);
-        let on_head = head_idx.map(|idx| idx == index_of_selected_row).unwrap_or(true);
+        let on_head = head_idx
+            .map(|idx| idx == index_of_selected_row)
+            .unwrap_or(true);
 
         let hint_text = if on_head {
             "q:clear  /:search  n/N:match  c:copy"
@@ -1163,7 +1243,9 @@ fn render_ui(
 
         // Check if we're on HEAD to conditionally show h:head hint
         let head_idx = commits.iter().position(|c| c.sha == head_sha);
-        let on_head = head_idx.map(|idx| idx == index_of_selected_row).unwrap_or(true); // If no HEAD, don't show hint
+        let on_head = head_idx
+            .map(|idx| idx == index_of_selected_row)
+            .unwrap_or(true); // If no HEAD, don't show hint
 
         let hint_text = if on_head {
             "q:quit  /:search  c:copy".to_string()
@@ -1193,4 +1275,3 @@ fn render_ui(
         }
     }
 }
-

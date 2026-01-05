@@ -9,6 +9,7 @@ type Sha = git2::Oid;
 ## Newtype (branded type for compiler enforcement)
 
 ```rust
+#[derive(Hash, Eq, PartialEq)]
 struct BranchName(String);
 
 impl std::fmt::Display for BranchName {
@@ -36,22 +37,23 @@ struct Commit {
 
 - `commits: Vec<Commit>` - the full list, loaded once (will become reactive later for staging view)
 
-### Branches
+### branches
 
-Normalized: a branch is a pointer to a commit.
+Normalized: a branch is a pointer to a commit. This is a standalone variable in main(), not wrapped in a struct.
 
 ```rust
-branches: HashMap<BranchName, Sha>
+let (branches, head) = get_branches_and_head(&repo);
+// branches: HashMap<BranchName, Sha>
 ```
 
 At render time, derive reverse index for O(1) lookup:
 ```rust
-let branches_at_commit: HashMap<Sha, Vec<&BranchName>> = /* flip the map */
+let branches_at_commit_map: HashMap<Sha, Vec<&BranchName>> = branches_at_commit(&branches);
 ```
 
-### Head
+### head
 
-Either attached to a branch or detached pointing directly to a commit.
+Either attached to a branch or detached pointing directly to a commit. This is a standalone variable in main(), not wrapped in a struct.
 
 ```rust
 enum Head {
@@ -60,7 +62,7 @@ enum Head {
 }
 ```
 
-No denormalization - `Attached` doesn't store the SHA redundantly. Look it up via `branches[branch_name]`.
+No denormalization - `Attached` doesn't store the SHA redundantly. Look it up via `branches[&branch_name]`.
 
 Helper to get current commit:
 ```rust
