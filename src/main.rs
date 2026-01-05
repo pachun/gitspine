@@ -36,8 +36,10 @@ fn main() {
 
     // Start with HEAD selected
     let head_sha = head.sha(&branches);
-    let mut index_of_selected_row: usize =
-        commits.iter().position(|c| c.sha == head_sha).unwrap_or(0);
+    let mut index_of_selected_row: usize = commits
+        .iter()
+        .position(|commit| commit.sha == head_sha)
+        .unwrap_or(0);
     let mut index_of_topmost_visible_row: usize = 0;
     let mut is_typing_search_term = false;
     let mut search_term = String::new();
