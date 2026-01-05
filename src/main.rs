@@ -166,6 +166,12 @@ fn main() {
                             // Backspace on empty query exits search mode
                             searching = false;
                             history_index = None;
+                            // Return to pre-search position
+                            if let Some(pre) = pre_search_selected {
+                                selected = pre;
+                                center_view_on_selection(selected, &mut scroll_offset, visible_height);
+                            }
+                            pre_search_selected = None;
                         } else {
                             search_query.pop();
                             history_index = None; // Editing breaks out of history navigation
@@ -329,6 +335,17 @@ fn main() {
                             selected = commits.len().saturating_sub(1);
                         }
                         count_prefix.clear();
+                    }
+                    KeyCode::Char('h') => {
+                        // Jump to HEAD commit and center on it
+                        count_prefix.clear();
+                        if let Some(head_idx) = branch_info
+                            .head_commit
+                            .and_then(|head_oid| commits.iter().position(|c| c.id == head_oid))
+                        {
+                            selected = head_idx;
+                            center_view_on_selection(selected, &mut scroll_offset, visible_height);
+                        }
                     }
                     KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         count_prefix.clear();
@@ -1033,73 +1050,46 @@ fn render_ui(
     frame.render_widget(search_block, chunks[1]);
 
     if searching {
-        // Typing mode: yellow input with cursor, grey hint
-        // Show arrow hints only when there's history to navigate to
-        let can_go_older = match history_index {
-            None => history_len > 0,         // Not browsing yet, can start if history exists
-            Some(0) => false,                // At oldest
-            Some(_) => true,                 // Can go older
-        };
-        let can_go_newer = match history_index {
-            None => false,
-            Some(i) => i < history_len - 1,  // Not at newest (don't count "new search")
+        // Typing mode: yellow input with cursor, match count hint
+        let match_count = if search_query.is_empty() {
+            0
+        } else {
+            commits
+                .iter()
+                .filter(|c| commit_matches_query(c, search_query, branch_info))
+                .count()
         };
 
         let hint = if search_query.is_empty() {
+            // Show history hints when query is empty
+            let can_go_older = match history_index {
+                None => history_len > 0,
+                Some(0) => false,
+                Some(_) => true,
+            };
+            let can_go_newer = match history_index {
+                None => false,
+                Some(i) => i < history_len - 1,
+            };
             match (can_go_older, can_go_newer) {
-                (true, true) => " [ type something | ↑↓ history ]",
-                (true, false) => " [ type something | ↑ history ]",
-                (false, true) => " [ type something | ↓ history ]",
-                (false, false) => " [ type something ]",
+                (true, true) => " [ ↑↓ history ]".to_string(),
+                (true, false) => " [ ↑ history ]".to_string(),
+                (false, true) => " [ ↓ history ]".to_string(),
+                (false, false) => "".to_string(),
             }
+        } else if match_count == 0 {
+            " [ no matches ]".to_string()
+        } else if match_count == 1 {
+            " [ 1 commit ]".to_string()
         } else {
-            match (can_go_older, can_go_newer) {
-                (true, true) => " [ enter | ↑↓ history ]",
-                (true, false) => " [ enter | ↑ history ]",
-                (false, true) => " [ enter | ↓ history ]",
-                (false, false) => " [ enter ]",
-            }
+            format!(" [ {} commits ]", match_count)
         };
+
         let search_input = Paragraph::new(Line::from(vec![
             Span::styled(format!("{}█", search_query), Style::default().fg(Color::Yellow)),
             Span::styled(hint, Style::default().fg(Color::DarkGray)),
         ]));
         frame.render_widget(search_input, search_inner);
-
-        // Right side: match counter
-        if !search_query.is_empty() {
-            let matches: Vec<usize> = commits
-                .iter()
-                .enumerate()
-                .filter_map(|(i, c)| {
-                    if commit_matches_query(c, search_query, branch_info) {
-                        Some(i)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            let total = matches.len();
-            let current = matches
-                .iter()
-                .position(|&i| i == selected)
-                .map(|p| p + 1)
-                .unwrap_or(0);
-
-            let counter_text = if total > 0 {
-                format!("[ {} / {} ]", current, total)
-            } else {
-                "[ no matches ]".to_string()
-            };
-
-            let counter = Paragraph::new(Line::from(vec![Span::styled(
-                counter_text,
-                Style::default().fg(Color::DarkGray),
-            )]))
-            .alignment(ratatui::layout::Alignment::Right);
-            frame.render_widget(counter, search_inner);
-        }
     } else if browse_mode {
         // Browse mode: grey input (no cursor), yellow counter
         let search_input = Paragraph::new(Line::from(vec![Span::styled(
@@ -1124,24 +1114,27 @@ fn render_ui(
         let total = matches.len();
 
         let current = matches.iter().position(|&i| i == selected).map(|p| p + 1);
-        let on_match = current.is_some();
 
-        // Center: navigation hint
-        let nav_hint_text = if total > 1 {
-            Some("[ n → next | N → prev ]")
-        } else if total == 1 && !on_match {
-            Some("[ n → show result ]")
+        // Center: same hints as normal mode but with q:clear and n/N for search navigation
+        // Check if we're on HEAD to conditionally show h:head hint
+        let on_head = branch_info
+            .head_commit
+            .and_then(|head_oid| commits.iter().position(|c| c.id == head_oid))
+            .map(|head_idx| head_idx == selected)
+            .unwrap_or(true);
+
+        let hint_text = if on_head {
+            "q:clear  /:search  n/N:match"
         } else {
-            None
+            "q:clear  /:search  n/N:match  h:head"
         };
-        if let Some(hint) = nav_hint_text {
-            let nav_hint = Paragraph::new(Line::from(vec![Span::styled(
-                hint,
-                Style::default().fg(Color::DarkGray),
-            )]))
-            .alignment(ratatui::layout::Alignment::Center);
-            frame.render_widget(nav_hint, search_inner);
-        }
+
+        let nav_hint = Paragraph::new(Line::from(vec![Span::styled(
+            hint_text,
+            Style::default().fg(Color::DarkGray),
+        )]))
+        .alignment(ratatui::layout::Alignment::Center);
+        frame.render_widget(nav_hint, search_inner);
 
         let counter_text = if total > 0 {
             match current {
@@ -1159,7 +1152,7 @@ fn render_ui(
         .alignment(ratatui::layout::Alignment::Right);
         frame.render_widget(counter, search_inner);
     } else {
-        // Normal mode: show count prefix on left if present, centered hint for search
+        // Normal mode: show count prefix on left if present, centered hints
         if !count_prefix.is_empty() {
             let count_display = Paragraph::new(Line::from(vec![Span::styled(
                 count_prefix,
@@ -1168,8 +1161,21 @@ fn render_ui(
             frame.render_widget(count_display, search_inner);
         }
 
+        // Check if we're on HEAD to conditionally show h:head hint
+        let on_head = branch_info
+            .head_commit
+            .and_then(|head_oid| commits.iter().position(|c| c.id == head_oid))
+            .map(|head_idx| head_idx == selected)
+            .unwrap_or(true); // If no HEAD, don't show hint
+
+        let hint_text = if on_head {
+            "q:quit  /:search".to_string()
+        } else {
+            "q:quit  /:search  h:head".to_string()
+        };
+
         let search_hint = Paragraph::new(Line::from(vec![Span::styled(
-            "q:quit  /:search  j/k:nav  g/G:top/end",
+            hint_text,
             Style::default().fg(Color::DarkGray),
         )]))
         .alignment(ratatui::layout::Alignment::Center);
