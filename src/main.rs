@@ -802,7 +802,7 @@ fn render_ui(
         .unwrap_or(0)
         .min(20);
 
-    // Calculate width needed for line numbers (based on total commits for absolute numbers)
+    // Calculate width needed for line numbers
     let max_line_num = commits.len();
     let gutter_width = if max_line_num >= 1000 { 4 } else if max_line_num >= 100 { 3 } else if max_line_num >= 10 { 2 } else { 1 };
 
@@ -932,12 +932,6 @@ fn render_ui(
             let row = Row::new(vec![
                 Cell::from(""), // Left padding
                 Cell::from(Span::styled(line_num, line_num_style)), // Line number gutter
-                Cell::from(Line::from(highlight_matches(
-                    &c.short_sha,
-                    search_query,
-                    if i == selected { Style::default() } else { Style::default().fg(Color::DarkGray) },
-                    highlight_style,
-                ))),
                 Cell::from(Line::from(graph_spans)),
                 Cell::from(Line::from(message_spans)),
                 Cell::from(Line::from(highlight_matches(
@@ -971,7 +965,6 @@ fn render_ui(
     let widths = [
         Constraint::Length(0), // left padding (column_spacing provides the space)
         Constraint::Length(gutter_width as u16), // line number gutter
-        Constraint::Length(7),  // sha
         Constraint::Length(graph_width as u16),
         Constraint::Fill(1),    // message takes remaining space
         Constraint::Length(12), // date
