@@ -6,6 +6,21 @@ use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Row, Table};
 
+type Sha = git2::Oid;
+
+struct BranchName(String);
+
+impl std::fmt::Display for BranchName {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+struct FlashMessage {
+    text: String,
+    shown_at: std::time::Instant,
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let dump_mode = args.iter().any(|a| a == "--dump");
@@ -28,7 +43,7 @@ fn main() {
                 "{:3} {} {:7} {}",
                 i,
                 graph_str,
-                &commit.id.to_string()[..7],
+                &commit.sha.to_string()[..7],
                 &commit.message
             );
         }
@@ -38,7 +53,7 @@ fn main() {
     // Start with HEAD selected
     let mut selected: usize = branch_info
         .head_commit
-        .and_then(|head_oid| commits.iter().position(|c| c.id == head_oid))
+        .and_then(|head_oid| commits.iter().position(|c| c.sha == head_oid))
         .unwrap_or(0);
     let mut scroll_offset: usize = 0;
     let mut searching = false;
@@ -323,7 +338,7 @@ fn main() {
                         count_prefix.clear();
                         if let Some(head_idx) = branch_info
                             .head_commit
-                            .and_then(|head_oid| commits.iter().position(|c| c.id == head_oid))
+                            .and_then(|head_oid| commits.iter().position(|c| c.sha == head_oid))
                         {
                             selected = head_idx;
                             center_view_on_selection(selected, &mut scroll_offset, visible_height);
@@ -332,8 +347,8 @@ fn main() {
                     KeyCode::Char('c') => {
                         // Copy full SHA to clipboard
                         count_prefix.clear();
-                        let full_sha = commits[selected].id.to_string();
-                        let short_sha = &commits[selected].short_sha;
+                        let full_sha = commits[selected].sha.to_string();
+                        let short_sha = &full_sha[..7];
                         if let Ok(mut child) = std::process::Command::new("pbcopy")
                             .stdin(std::process::Stdio::piped())
                             .spawn()
@@ -343,7 +358,7 @@ fn main() {
                                 let _ = stdin.write_all(full_sha.as_bytes());
                             }
                             let _ = child.wait();
-                            copied_feedback = Some((short_sha.clone(), std::time::Instant::now()));
+                            copied_feedback = Some((short_sha.to_string(), std::time::Instant::now()));
                         }
                     }
                     KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -366,13 +381,11 @@ fn main() {
 }
 
 struct Commit {
-    id: git2::Oid,
-    parent_ids: Vec<git2::Oid>,
-    short_sha: String,
+    sha: Sha,
+    parent_shas: Vec<Sha>,
     message: String,
     author: String,
-    date: String,
-    time: String,
+    timestamp: i64,
 }
 
 struct BranchInfo {
@@ -435,27 +448,12 @@ fn get_commits(repo: &Repository) -> Vec<Commit> {
     revwalk
         .filter_map(|oid| oid.ok())
         .filter_map(|oid| repo.find_commit(oid).ok())
-        .map(|commit| {
-            let time = commit.time();
-            let timestamp = time.seconds();
-            let local_dt = chrono::DateTime::from_timestamp(timestamp, 0)
-                .map(|dt| dt.with_timezone(&chrono::Local));
-            let date_str = local_dt
-                .map(|dt| dt.format("%b %-d, %Y").to_string())
-                .unwrap_or_default();
-            let time_str = local_dt
-                .map(|dt| dt.format("%-I:%M %p").to_string())
-                .unwrap_or_default();
-
-            Commit {
-                id: commit.id(),
-                parent_ids: commit.parent_ids().collect(),
-                short_sha: commit.id().to_string()[..7].to_string(),
-                message: commit.summary().unwrap_or("").to_string(),
-                author: commit.author().name().unwrap_or("").to_string(),
-                date: date_str,
-                time: time_str,
-            }
+        .map(|commit| Commit {
+            sha: commit.id(),
+            parent_shas: commit.parent_ids().collect(),
+            message: commit.summary().unwrap_or("").to_string(),
+            author: commit.author().name().unwrap_or("").to_string(),
+            timestamp: commit.time().seconds(),
         })
         .collect()
 }
@@ -471,24 +469,24 @@ fn build_graph(commits: &[Commit]) -> Vec<Vec<(char, Option<usize>)>> {
         let lanes_with_commit: Vec<usize> = lanes
             .iter()
             .enumerate()
-            .filter(|(_, lane)| **lane == Some(commit.id))
+            .filter(|(_, lane)| **lane == Some(commit.sha))
             .map(|(i, _)| i)
             .collect();
 
         let commit_lane = if lanes_with_commit.is_empty() {
             // New commit - assign to first available lane
             if lanes.is_empty() {
-                lanes.push(Some(commit.id));
+                lanes.push(Some(commit.sha));
                 0
             } else {
                 // Find first empty lane, or create new
                 match lanes.iter().position(|lane| lane.is_none()) {
                     Some(pos) => {
-                        lanes[pos] = Some(commit.id);
+                        lanes[pos] = Some(commit.sha);
                         pos
                     }
                     None => {
-                        lanes.push(Some(commit.id));
+                        lanes.push(Some(commit.sha));
                         lanes.len() - 1
                     }
                 }
@@ -511,8 +509,8 @@ fn build_graph(commits: &[Commit]) -> Vec<Vec<(char, Option<usize>)>> {
             if i != commit_lane && !converging_lanes.contains(&i) {
                 if let Some(lane_commit_id) = lane {
                     // Find if this lane's commit has our commit as its first parent
-                    if let Some(lane_commit) = commits.iter().find(|c| c.id == *lane_commit_id) {
-                        if lane_commit.parent_ids.first() == Some(&commit.id) {
+                    if let Some(lane_commit) = commits.iter().find(|c| c.sha == *lane_commit_id) {
+                        if lane_commit.parent_shas.first() == Some(&commit.sha) {
                             merging_in.push(i);
                         }
                     }
@@ -527,7 +525,7 @@ fn build_graph(commits: &[Commit]) -> Vec<Vec<(char, Option<usize>)>> {
         let mut additional_parent_lanes_new: Vec<usize> = Vec::new(); // New lanes (branch starting)
         let mut additional_parent_lanes_existing: Vec<usize> = Vec::new(); // Existing lanes (merging in)
         let mut temp_lanes = lanes.clone();
-        for parent_id in commit.parent_ids.iter().skip(1) {
+        for parent_id in commit.parent_shas.iter().skip(1) {
             // Check if this parent is already tracked in another lane
             let existing_lane = temp_lanes
                 .iter()
@@ -628,14 +626,14 @@ fn build_graph(commits: &[Commit]) -> Vec<Vec<(char, Option<usize>)>> {
         // Update lanes: this commit's lane now tracks its first parent
         // Allow duplicate tracking - multiple lanes can track the same parent
         // They will converge when we reach that parent commit
-        if let Some(first_parent) = commit.parent_ids.first() {
+        if let Some(first_parent) = commit.parent_shas.first() {
             lanes[commit_lane] = Some(*first_parent);
         } else {
             lanes[commit_lane] = None;
         }
 
         // Handle merge commits (multiple parents) - only add if not already tracked
-        for parent_id in commit.parent_ids.iter().skip(1) {
+        for parent_id in commit.parent_shas.iter().skip(1) {
             let already_tracked = lanes.iter().any(|lane| *lane == Some(*parent_id));
             if !already_tracked {
                 match lanes.iter().position(|lane| lane.is_none()) {
@@ -686,35 +684,53 @@ fn commit_matches_query(commit: &Commit, query: &str, branch_info: &BranchInfo) 
     // Get branch names for this commit
     let branch_names: Vec<&str> = branch_info
         .branches
-        .get(&commit.id)
+        .get(&commit.sha)
         .map(|branches| branches.iter().map(|(name, _)| name.as_str()).collect())
         .unwrap_or_default();
 
+    // Derive display values from raw data
+    let short_sha = &commit.sha.to_string()[..7];
+    let date = format_date(commit.timestamp);
+
     if case_sensitive {
         commit.message.contains(query)
-            || commit.short_sha.contains(query)
+            || short_sha.contains(query)
             || commit.author.contains(query)
-            || commit.date.contains(query)
+            || date.contains(query)
             || branch_names.iter().any(|name| name.contains(query))
     } else {
         let query_lower = query.to_lowercase();
         commit.message.to_lowercase().contains(&query_lower)
-            || commit.short_sha.to_lowercase().contains(&query_lower)
+            || short_sha.to_lowercase().contains(&query_lower)
             || commit.author.to_lowercase().contains(&query_lower)
-            || commit.date.to_lowercase().contains(&query_lower)
+            || date.to_lowercase().contains(&query_lower)
             || branch_names
                 .iter()
                 .any(|name| name.to_lowercase().contains(&query_lower))
     }
 }
 
+fn format_date(timestamp: i64) -> String {
+    chrono::DateTime::from_timestamp(timestamp, 0)
+        .map(|dt| dt.with_timezone(&chrono::Local))
+        .map(|dt| dt.format("%b %-d, %Y").to_string())
+        .unwrap_or_default()
+}
+
+fn format_time(timestamp: i64) -> String {
+    chrono::DateTime::from_timestamp(timestamp, 0)
+        .map(|dt| dt.with_timezone(&chrono::Local))
+        .map(|dt| dt.format("%-I:%M %p").to_string())
+        .unwrap_or_default()
+}
+
 // Helper to highlight search matches in text
-fn highlight_matches<'a>(
-    text: &'a str,
+fn highlight_matches(
+    text: &str,
     query: &str,
     base_style: Style,
     highlight_style: Style,
-) -> Vec<Span<'a>> {
+) -> Vec<Span<'static>> {
     if query.is_empty() {
         return vec![Span::styled(text.to_string(), base_style)];
     }
@@ -850,8 +866,8 @@ fn render_ui(
             let mut message_spans: Vec<Span> = Vec::new();
 
             // Add branch indicators if any branches point to this commit
-            let is_head_commit = branch_info.head_commit == Some(c.id);
-            let branches_at_commit = branch_info.branches.get(&c.id);
+            let is_head_commit = branch_info.head_commit == Some(c.sha);
+            let branches_at_commit = branch_info.branches.get(&c.sha);
 
             if is_head_commit || branches_at_commit.is_some() {
                 // Find this commit's lane color from the graph (where ● is)
@@ -935,19 +951,24 @@ fn render_ui(
                 highlight_style,
             ));
 
+            // Derive display values from raw data
+            let date = format_date(c.timestamp);
+            let time = format_time(c.timestamp);
+            let short_sha = c.sha.to_string()[..7].to_string();
+
             let row = Row::new(vec![
                 Cell::from(""), // Left padding
                 Cell::from(Span::styled(line_num, line_num_style)), // Line number gutter
                 Cell::from(Line::from(graph_spans)),
                 Cell::from(Line::from(message_spans)),
                 Cell::from(Line::from(highlight_matches(
-                    &c.date,
+                    &date,
                     search_query,
                     if i == selected { Style::default().bold() } else { Style::default().fg(Color::Gray) },
                     highlight_style,
                 ))),
                 Cell::from(Line::from(highlight_matches(
-                    &c.time,
+                    &time,
                     search_query,
                     if i == selected { Style::default().fg(Color::Gray) } else { Style::default().fg(Color::DarkGray) },
                     highlight_style,
@@ -959,7 +980,7 @@ fn render_ui(
                     highlight_style,
                 ))),
                 Cell::from(Line::from(highlight_matches(
-                    &c.short_sha,
+                    &short_sha,
                     search_query,
                     if i == selected { Style::default().fg(Color::Gray) } else { Style::default().fg(Color::DarkGray) },
                     highlight_style,
@@ -1080,7 +1101,7 @@ fn render_ui(
         // Check if we're on HEAD to conditionally show h:head hint
         let on_head = branch_info
             .head_commit
-            .and_then(|head_oid| commits.iter().position(|c| c.id == head_oid))
+            .and_then(|head_oid| commits.iter().position(|c| c.sha == head_oid))
             .map(|head_idx| head_idx == selected)
             .unwrap_or(true);
 
@@ -1125,7 +1146,7 @@ fn render_ui(
         // Check if we're on HEAD to conditionally show h:head hint
         let on_head = branch_info
             .head_commit
-            .and_then(|head_oid| commits.iter().position(|c| c.id == head_oid))
+            .and_then(|head_oid| commits.iter().position(|c| c.sha == head_oid))
             .map(|head_idx| head_idx == selected)
             .unwrap_or(true); // If no HEAD, don't show hint
 
