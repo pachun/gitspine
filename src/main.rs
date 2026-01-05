@@ -47,6 +47,7 @@ fn main() {
     let mut search_history: Vec<String> = Vec::new();
     let mut history_index: Option<usize> = None; // None = new search, Some(i) = viewing history[i]
     let mut leader_pressed = false; // For space+key sequences
+    let mut count_prefix = String::new(); // Vim-style count prefix for movements
 
     // Set up panic hook to restore terminal on crash
     let original_hook = std::panic::take_hook();
@@ -82,6 +83,7 @@ fn main() {
                     &search_query,
                     history_index,
                     search_history.len(),
+                    &count_prefix,
                 );
             })
             .unwrap();
@@ -187,30 +189,41 @@ fn main() {
                         continue;
                     }
                     KeyCode::Char('q') => {
-                        if search_query.is_empty() {
+                        if !count_prefix.is_empty() {
+                            count_prefix.clear();
+                        } else if search_query.is_empty() {
                             break;
                         } else {
                             search_query.clear();
                         }
                     }
                     KeyCode::Esc => {
-                        if search_query.is_empty() {
+                        if !count_prefix.is_empty() {
+                            count_prefix.clear();
+                        } else if search_query.is_empty() {
                             break;
                         } else {
                             search_query.clear();
                         }
                     }
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        if search_query.is_empty() {
+                        if !count_prefix.is_empty() {
+                            count_prefix.clear();
+                        } else if search_query.is_empty() {
                             break;
                         } else {
                             search_query.clear();
                         }
                     }
                     KeyCode::Backspace => {
-                        search_query.clear();
+                        if !count_prefix.is_empty() {
+                            count_prefix.pop();
+                        } else {
+                            search_query.clear();
+                        }
                     }
                     KeyCode::Char('/') => {
+                        count_prefix.clear();
                         searching = true;
                         search_query.clear();
                     }
@@ -259,23 +272,40 @@ fn main() {
                         }
                     }
                     KeyCode::Char('j') | KeyCode::Down => {
-                        if selected < commits.len().saturating_sub(1) {
-                            selected += 1;
-                        }
+                        let count = count_prefix.parse::<usize>().unwrap_or(1);
+                        count_prefix.clear();
+                        selected = (selected + count).min(commits.len().saturating_sub(1));
                     }
                     KeyCode::Char('k') | KeyCode::Up => {
-                        selected = selected.saturating_sub(1);
+                        let count = count_prefix.parse::<usize>().unwrap_or(1);
+                        count_prefix.clear();
+                        selected = selected.saturating_sub(count);
+                    }
+                    KeyCode::Char(c) if c.is_ascii_digit() => {
+                        // Ignore leading zeros
+                        if !(c == '0' && count_prefix.is_empty()) {
+                            count_prefix.push(c);
+                        }
                     }
                     KeyCode::Char('g') => {
+                        count_prefix.clear();
                         selected = 0;
                     }
                     KeyCode::Char('G') => {
-                        selected = commits.len().saturating_sub(1);
+                        // G with count goes to that line number, G alone goes to end
+                        if let Ok(line) = count_prefix.parse::<usize>() {
+                            selected = (line.saturating_sub(1)).min(commits.len().saturating_sub(1));
+                        } else {
+                            selected = commits.len().saturating_sub(1);
+                        }
+                        count_prefix.clear();
                     }
                     KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        count_prefix.clear();
                         selected = (selected + half_page).min(commits.len().saturating_sub(1));
                     }
                     KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        count_prefix.clear();
                         selected = selected.saturating_sub(half_page);
                     }
                     _ => {}
@@ -712,6 +742,7 @@ fn render_ui(
     search_query: &str,
     history_index: Option<usize>,
     history_len: usize,
+    count_prefix: &str,
 ) {
     use ratatui::layout::{Direction, Layout};
     use ratatui::text::Line;
@@ -751,8 +782,7 @@ fn render_ui(
 
     // Calculate width needed for line numbers (based on total commits for absolute numbers)
     let max_line_num = commits.len();
-    let num_digits = if max_line_num >= 1000 { 4 } else if max_line_num >= 100 { 3 } else if max_line_num >= 10 { 2 } else { 1 };
-    let gutter_width = num_digits + 1; // +1 for visual padding
+    let gutter_width = if max_line_num >= 1000 { 4 } else if max_line_num >= 100 { 3 } else if max_line_num >= 10 { 2 } else { 1 };
 
     let rows: Vec<Row> = commits
         .iter()
@@ -767,14 +797,12 @@ fn render_ui(
             let (line_num, line_num_style) = if i == selected {
                 // Absolute line number, left-aligned, visible on DarkGray background
                 let num = format!("{:<width$}", i + 1, width = gutter_width);
-                let style = Style::default().fg(Color::Gray); // Lighter gray visible on DarkGray
-                (num, style)
+                (num, Style::default().fg(Color::Gray))
             } else {
                 // Relative line number, right-aligned
                 let distance = (i as isize - selected as isize).unsigned_abs();
                 let num = format!("{:>width$}", distance, width = gutter_width);
-                let style = Style::default().fg(Color::DarkGray);
-                (num, style)
+                (num, Style::default().fg(Color::DarkGray))
             };
 
             // Build colored graph spans (truncate to max width)
@@ -882,18 +910,18 @@ fn render_ui(
             let row = Row::new(vec![
                 Cell::from(""), // Left padding
                 Cell::from(Span::styled(line_num, line_num_style)), // Line number gutter
+                Cell::from(Line::from(highlight_matches(
+                    &c.short_sha,
+                    search_query,
+                    Style::default().fg(Color::Yellow),
+                    highlight_style,
+                ))),
                 Cell::from(Line::from(graph_spans)),
                 Cell::from(Line::from(message_spans)),
                 Cell::from(Line::from(highlight_matches(
                     &c.author,
                     search_query,
                     Style::default().fg(Color::Cyan),
-                    highlight_style,
-                ))),
-                Cell::from(Line::from(highlight_matches(
-                    &c.short_sha,
-                    search_query,
-                    Style::default().fg(Color::Yellow),
                     highlight_style,
                 ))),
                 Cell::from(Line::from(highlight_matches(
@@ -915,10 +943,10 @@ fn render_ui(
     let widths = [
         Constraint::Length(0), // left padding (column_spacing provides the space)
         Constraint::Length(gutter_width as u16), // line number gutter
+        Constraint::Length(8),  // sha
         Constraint::Length(graph_width as u16),
         Constraint::Fill(1),    // message takes remaining space
         Constraint::Length(20), // author
-        Constraint::Length(8),  // sha
         Constraint::Length(10), // date
         Constraint::Length(0),  // right padding (column_spacing provides the space)
     ];
@@ -1074,7 +1102,15 @@ fn render_ui(
         .alignment(ratatui::layout::Alignment::Right);
         frame.render_widget(counter, search_inner);
     } else {
-        // Normal mode: centered hint for search
+        // Normal mode: show count prefix on left if present, centered hint for search
+        if !count_prefix.is_empty() {
+            let count_display = Paragraph::new(Line::from(vec![Span::styled(
+                count_prefix,
+                Style::default().fg(Color::DarkGray),
+            )]));
+            frame.render_widget(count_display, search_inner);
+        }
+
         let search_hint = Paragraph::new(Line::from(vec![Span::styled(
             "[ / → search ]",
             Style::default().fg(Color::DarkGray),
