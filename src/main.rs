@@ -1,4 +1,4 @@
-use crossterm::event::{self, Event, KeyCode, KeyModifiers, MouseEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use git2::Repository;
 use ratatui::Frame;
 use ratatui::layout::Constraint;
@@ -335,13 +335,11 @@ fn main() {
     // Set up panic hook to restore terminal on crash
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
-        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
         ratatui::restore();
         original_hook(panic_info);
     }));
 
     let mut terminal = ratatui::init();
-    crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture).unwrap();
     loop {
         let visible_height = terminal.size().unwrap().height.saturating_sub(3) as usize; // Reserve 3 for search bar with borders
         let half_page = visible_height / 2;
@@ -376,64 +374,6 @@ fn main() {
             })
             .unwrap();
         match event::read().unwrap() {
-            Event::Mouse(mouse) => {
-                // Handle scroll while typing search - treat as Enter then scroll
-                if searching && matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) {
-                    searching = false;
-                    history_index = None;
-                    let has_matches = commits
-                        .iter()
-                        .any(|c| commit_matches_query(c, &search_query, &branch_info));
-                    if has_matches {
-                        if search_history.last() != Some(&search_query) {
-                            search_history.push(search_query.clone());
-                        }
-                    } else {
-                        search_query.clear();
-                    }
-                }
-
-                // Handle mouse scroll in detail view
-                if let Some(ref mut detail) = commit_detail {
-                    match mouse.kind {
-                        MouseEventKind::ScrollUp => {
-                            detail.scroll_offset = detail.scroll_offset.saturating_sub(3);
-                        }
-                        MouseEventKind::ScrollDown => {
-                            detail.scroll_offset = detail.scroll_offset.saturating_add(3);
-                        }
-                        _ => {}
-                    }
-                } else if !searching {
-                    // Handle mouse in list view
-                    match mouse.kind {
-                        MouseEventKind::ScrollUp => {
-                            scroll_offset = scroll_offset.saturating_sub(3);
-                        }
-                        MouseEventKind::ScrollDown => {
-                            let max_offset = commits.len().saturating_sub(visible_height);
-                            scroll_offset = (scroll_offset + 3).min(max_offset);
-                        }
-                        MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
-                            let clicked_row = mouse.row as usize;
-                            if clicked_row < visible_height {
-                                // Clicked in commit list
-                                let clicked_index = scroll_offset + clicked_row;
-                                if clicked_index < commits.len() {
-                                    selected = clicked_index;
-                                    commit_detail = load_commit_detail(&repo, commits[selected].id);
-                                    ensure_selection_visible(selected, &mut scroll_offset, visible_height);
-                                }
-                            } else {
-                                // Clicked in search bar area
-                                searching = true;
-                                search_query.clear();
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
             Event::Key(key) => {
             // Handle detail view mode
             if let Some(ref mut detail) = commit_detail {
@@ -684,7 +624,6 @@ fn main() {
             _ => {}
         }
     }
-    crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture).unwrap();
     ratatui::restore();
 }
 
