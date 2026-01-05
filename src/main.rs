@@ -22,33 +22,11 @@ struct FlashMessage {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    let dump_mode = args.iter().any(|a| a == "--dump");
-    let path = args
-        .iter()
-        .skip(1)
-        .find(|a| !a.starts_with('-'))
-        .cloned()
-        .unwrap_or_else(|| ".".to_string());
+    let path = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
 
     let repo = Repository::open(&path).expect("Not a git repository");
     let commits = get_commits(&repo);
     let branch_info = get_branch_info(&repo);
-
-    if dump_mode {
-        let graph_lines = build_graph(&commits);
-        for (i, (graph, commit)) in graph_lines.iter().zip(commits.iter()).enumerate() {
-            let graph_str: String = graph.iter().map(|(c, _)| c).collect();
-            println!(
-                "{:3} {} {:7} {}",
-                i,
-                graph_str,
-                &commit.sha.to_string()[..7],
-                &commit.message
-            );
-        }
-        return;
-    }
 
     // Start with HEAD selected
     let head_sha = branch_info.head_sha();
