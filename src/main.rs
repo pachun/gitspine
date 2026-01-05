@@ -937,25 +937,25 @@ fn render_ui(
                 Cell::from(Line::from(highlight_matches(
                     &c.date,
                     search_query,
-                    if i == selected { Style::default() } else { Style::default().fg(Color::Gray) },
+                    if i == selected { Style::default().bold() } else { Style::default().fg(Color::Gray) },
                     highlight_style,
                 ))),
                 Cell::from(Line::from(highlight_matches(
                     &c.time,
                     search_query,
-                    if i == selected { Style::default() } else { Style::default().fg(Color::DarkGray) },
+                    if i == selected { Style::default().fg(Color::Gray) } else { Style::default().fg(Color::DarkGray) },
                     highlight_style,
                 )).alignment(ratatui::layout::Alignment::Right)),
                 Cell::from(Line::from(highlight_matches(
                     &c.author,
                     search_query,
-                    if i == selected { Style::default() } else { Style::default().fg(Color::Gray) },
+                    if i == selected { Style::default().bold() } else { Style::default().fg(Color::Gray) },
                     highlight_style,
                 ))),
                 Cell::from(Line::from(highlight_matches(
                     &c.short_sha,
                     search_query,
-                    if i == selected { Style::default() } else { Style::default().fg(Color::DarkGray) },
+                    if i == selected { Style::default().fg(Color::Gray) } else { Style::default().fg(Color::DarkGray) },
                     highlight_style,
                 ))),
                 Cell::from(""), // Right padding
