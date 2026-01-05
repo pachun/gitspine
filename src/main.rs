@@ -952,6 +952,12 @@ fn render_ui(
                     if i == selected { Style::default() } else { Style::default().fg(Color::Gray) },
                     highlight_style,
                 ))),
+                Cell::from(Line::from(highlight_matches(
+                    &c.short_sha,
+                    search_query,
+                    if i == selected { Style::default() } else { Style::default().fg(Color::DarkGray) },
+                    highlight_style,
+                ))),
                 Cell::from(""), // Right padding
             ]);
             if i == selected {
@@ -970,6 +976,7 @@ fn render_ui(
         Constraint::Length(12), // date
         Constraint::Length(8),  // time
         Constraint::Length(author_width as u16), // author
+        Constraint::Length(7),  // sha
         Constraint::Length(0),  // right padding (column_spacing provides the space)
     ];
 
