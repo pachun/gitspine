@@ -31,7 +31,8 @@ fn main() {
 
     let repo = Repository::open(&path).expect("Not a git repository");
     let commits = get_commits(&repo);
-    let (branches, head) = get_branches_and_head(&repo);
+    let branches = get_branches(&repo);
+    let head = get_head(&repo);
 
     // Start with HEAD selected
     let head_sha = head.sha(&branches);
@@ -442,30 +443,8 @@ fn branches_at_commit(
     result
 }
 
-fn get_branches_and_head(repo: &Repository) -> (HashMap<BranchName, Sha>, Head) {
+fn get_branches(repo: &Repository) -> HashMap<BranchName, Sha> {
     let mut branches: HashMap<BranchName, Sha> = HashMap::new();
-
-    // Get HEAD info
-    let head = if let Ok(head_ref) = repo.head() {
-        if head_ref.is_branch() {
-            // Attached HEAD - points to a branch
-            let branch_name = head_ref.shorthand().unwrap_or("").to_string();
-            Head::Attached {
-                branch_name: BranchName(branch_name),
-            }
-        } else {
-            // Detached HEAD - points directly to a commit
-            let sha = head_ref.target().expect("HEAD should have a target");
-            Head::Detached { sha }
-        }
-    } else {
-        // No HEAD (empty repo?) - treat as detached at zero commit
-        Head::Detached {
-            sha: git2::Oid::zero(),
-        }
-    };
-
-    // Get all branches (branch name -> commit sha)
     if let Ok(branch_iter) = repo.branches(None) {
         for branch_result in branch_iter {
             if let Ok((branch, _branch_type)) = branch_result {
@@ -480,8 +459,25 @@ fn get_branches_and_head(repo: &Repository) -> (HashMap<BranchName, Sha>, Head) 
             }
         }
     }
+    branches
+}
 
-    (branches, head)
+fn get_head(repo: &Repository) -> Head {
+    if let Ok(head_ref) = repo.head() {
+        if head_ref.is_branch() {
+            let branch_name = head_ref.shorthand().unwrap_or("").to_string();
+            Head::Attached {
+                branch_name: BranchName(branch_name),
+            }
+        } else {
+            let sha = head_ref.target().expect("HEAD should have a target");
+            Head::Detached { sha }
+        }
+    } else {
+        Head::Detached {
+            sha: git2::Oid::zero(),
+        }
+    }
 }
 
 fn get_commits(repo: &Repository) -> Vec<Commit> {

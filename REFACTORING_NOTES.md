@@ -42,8 +42,8 @@ struct Commit {
 Normalized: a branch is a pointer to a commit. This is a standalone variable in main(), not wrapped in a struct.
 
 ```rust
-let (branches, head) = get_branches_and_head(&repo);
-// branches: HashMap<BranchName, Sha>
+let branches = get_branches(&repo);  // HashMap<BranchName, Sha>
+let head = get_head(&repo);
 ```
 
 At render time, derive reverse index for O(1) lookup:
