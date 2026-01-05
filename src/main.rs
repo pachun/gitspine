@@ -1732,9 +1732,9 @@ fn render_commit_detail(
             .unwrap_or("");
         let config = syntax_highlighter.get_config(extension);
 
-        // Background colors for changes
-        let delete_bg = Color::Rgb(80, 20, 20);  // Dark red background
-        let add_bg = Color::Rgb(20, 80, 20);     // Dark green background
+        // Background colors for changes - subtle shifts from Catppuccin Frappé base (#303446)
+        let delete_bg = Color::Rgb(56, 48, 62);  // Slight red/pink shift
+        let add_bg = Color::Rgb(45, 58, 70);     // Slight green/teal shift
 
         for diff_line in &current_file.lines {
             match (&diff_line.left, &diff_line.right) {
