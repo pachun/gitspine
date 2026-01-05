@@ -74,9 +74,12 @@ impl Head {
 }
 ```
 
+## Removed
+
+- `main_line` / `get_main_line()` - was dead code. Lane 0 (red) is determined by time sorting (newest commits first), not by first-parent ancestry. Removed ~20 lines.
+
 ## State Still To Review
 
-- main_line (HashSet of commits on first-parent chain)
 - selected (current cursor position)
 - scroll_offset
 - Mode (normal, searching, browse)

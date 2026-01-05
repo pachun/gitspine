@@ -18,11 +18,10 @@ fn main() {
 
     let repo = Repository::open(&path).expect("Not a git repository");
     let commits = get_commits(&repo);
-    let main_line = get_main_line(&repo);
     let branch_info = get_branch_info(&repo);
 
     if dump_mode {
-        let graph_lines = build_graph(&commits, &main_line);
+        let graph_lines = build_graph(&commits);
         for (i, (graph, commit)) in graph_lines.iter().zip(commits.iter()).enumerate() {
             let graph_str: String = graph.iter().map(|(c, _)| c).collect();
             println!(
@@ -84,7 +83,6 @@ fn main() {
                 render_ui(
                     frame,
                     &commits,
-                    &main_line,
                     &branch_info,
                     selected,
                     scroll_offset,
@@ -440,27 +438,6 @@ fn get_branch_info(repo: &Repository) -> BranchInfo {
     }
 }
 
-fn get_main_line(repo: &Repository) -> std::collections::HashSet<git2::Oid> {
-    let mut main_line = std::collections::HashSet::new();
-
-    // Start from HEAD and follow first-parent chain
-    if let Ok(head) = repo.head() {
-        if let Some(oid) = head.target() {
-            let mut current = Some(oid);
-            while let Some(commit_id) = current {
-                main_line.insert(commit_id);
-                if let Ok(commit) = repo.find_commit(commit_id) {
-                    current = commit.parent_id(0).ok();
-                } else {
-                    break;
-                }
-            }
-        }
-    }
-
-    main_line
-}
-
 fn get_commits(repo: &Repository) -> Vec<Commit> {
     let mut revwalk = repo.revwalk().expect("Failed to create revwalk");
     revwalk
@@ -503,10 +480,7 @@ fn get_commits(repo: &Repository) -> Vec<Commit> {
 
 // Each character in the graph has an associated lane index for coloring
 // Returns Vec of rows, each row is Vec of (char, lane_index)
-fn build_graph(
-    commits: &[Commit],
-    main_line: &std::collections::HashSet<git2::Oid>,
-) -> Vec<Vec<(char, Option<usize>)>> {
+fn build_graph(commits: &[Commit]) -> Vec<Vec<(char, Option<usize>)>> {
     let mut lanes: Vec<Option<git2::Oid>> = Vec::new();
     let mut graph_lines: Vec<Vec<(char, Option<usize>)>> = Vec::new();
 
@@ -519,22 +493,17 @@ fn build_graph(
             .map(|(i, _)| i)
             .collect();
 
-        let is_main = main_line.contains(&commit.id);
-
         let commit_lane = if lanes_with_commit.is_empty() {
-            // New commit - assign to appropriate lane
+            // New commit - assign to first available lane
             if lanes.is_empty() {
                 lanes.push(Some(commit.id));
                 0
-            } else if is_main && lanes[0].is_none() {
-                lanes[0] = Some(commit.id);
-                0
             } else {
-                // Find first empty lane after 0, or create new
-                match lanes.iter().skip(1).position(|lane| lane.is_none()) {
+                // Find first empty lane, or create new
+                match lanes.iter().position(|lane| lane.is_none()) {
                     Some(pos) => {
-                        lanes[pos + 1] = Some(commit.id);
-                        pos + 1
+                        lanes[pos] = Some(commit.id);
+                        pos
                     }
                     None => {
                         lanes.push(Some(commit.id));
@@ -542,15 +511,6 @@ fn build_graph(
                     }
                 }
             }
-        } else if is_main && lanes_with_commit.contains(&0) {
-            // Main line commit in lane 0
-            0
-        } else if is_main && lanes[0].is_none() {
-            // Main line commit found in wrong lane - move to lane 0
-            let old_pos = lanes_with_commit[0];
-            lanes[old_pos] = None;
-            lanes[0] = Some(commit.id);
-            0
         } else {
             // Use the first (leftmost) lane
             lanes_with_commit[0]
@@ -812,7 +772,6 @@ fn highlight_matches<'a>(
 fn render_ui(
     frame: &mut Frame,
     commits: &[Commit],
-    main_line: &std::collections::HashSet<git2::Oid>,
     branch_info: &BranchInfo,
     selected: usize,
     scroll_offset: usize,
@@ -839,7 +798,7 @@ fn render_ui(
         ])
         .split(padded_area);
 
-    let graph = build_graph(commits, main_line);
+    let graph = build_graph(commits);
     let visible_height = chunks[0].height as usize;
 
     // Calculate graph column width based on widest graph (table provides cell spacing)
