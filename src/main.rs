@@ -423,7 +423,7 @@ fn get_commits(repo: &Repository) -> Vec<Commit> {
             let local_dt = chrono::DateTime::from_timestamp(timestamp, 0)
                 .map(|dt| dt.with_timezone(&chrono::Local));
             let date_str = local_dt
-                .map(|dt| dt.format("%Y-%m-%d").to_string())
+                .map(|dt| dt.format("%b %-d, %Y").to_string())
                 .unwrap_or_default();
             let time_str = local_dt
                 .map(|dt| dt.format("%-I:%M %p").to_string())
@@ -815,10 +815,10 @@ fn render_ui(
         .map(|(i, (c, g))| {
             use ratatui::widgets::Cell;
 
-            // Line number display: absolute for selected, relative for others
+            // Line number display: marker for selected, relative for others
             let (line_num, line_num_style) = if i == selected {
-                // Absolute line number, left-aligned, visible on DarkGray background
-                let num = format!("{:<width$}", i + 1, width = gutter_width);
+                // Selection marker, left-aligned
+                let num = format!("{:<width$}", "▶", width = gutter_width);
                 (num, Style::default().fg(Color::Gray))
             } else {
                 // Relative line number, right-aligned
@@ -935,29 +935,29 @@ fn render_ui(
                 Cell::from(Line::from(highlight_matches(
                     &c.short_sha,
                     search_query,
-                    Style::default().fg(Color::Yellow),
+                    if i == selected { Style::default() } else { Style::default().fg(Color::DarkGray) },
                     highlight_style,
                 ))),
                 Cell::from(Line::from(graph_spans)),
                 Cell::from(Line::from(message_spans)),
                 Cell::from(Line::from(highlight_matches(
-                    &c.author,
-                    search_query,
-                    Style::default().fg(Color::Cyan),
-                    highlight_style,
-                ))),
-                Cell::from(Line::from(highlight_matches(
                     &c.date,
                     search_query,
-                    Style::default().fg(Color::Magenta),
+                    if i == selected { Style::default() } else { Style::default().fg(Color::Gray) },
                     highlight_style,
                 ))),
                 Cell::from(Line::from(highlight_matches(
                     &c.time,
                     search_query,
-                    Style::default().fg(if i == selected { Color::Gray } else { Color::DarkGray }),
+                    if i == selected { Style::default() } else { Style::default().fg(Color::DarkGray) },
                     highlight_style,
                 )).alignment(ratatui::layout::Alignment::Right)),
+                Cell::from(Line::from(highlight_matches(
+                    &c.author,
+                    search_query,
+                    if i == selected { Style::default() } else { Style::default().fg(Color::Gray) },
+                    highlight_style,
+                ))),
                 Cell::from(""), // Right padding
             ]);
             if i == selected {
@@ -971,12 +971,12 @@ fn render_ui(
     let widths = [
         Constraint::Length(0), // left padding (column_spacing provides the space)
         Constraint::Length(gutter_width as u16), // line number gutter
-        Constraint::Length(8),  // sha
+        Constraint::Length(7),  // sha
         Constraint::Length(graph_width as u16),
         Constraint::Fill(1),    // message takes remaining space
-        Constraint::Length(author_width as u16), // author
-        Constraint::Length(10), // date
+        Constraint::Length(12), // date
         Constraint::Length(8),  // time
+        Constraint::Length(author_width as u16), // author
         Constraint::Length(0),  // right padding (column_spacing provides the space)
     ];
 
