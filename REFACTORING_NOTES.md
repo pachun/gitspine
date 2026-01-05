@@ -149,6 +149,12 @@ struct FlashMessage {
 }
 ```
 
+### is_first_render
+
+**Type:** `bool`
+
+**Purpose:** One-time flag to center view on HEAD during initial render. Becomes `false` after first render and stays that way.
+
 ## Also Removed
 
 - `leader_pressed` and space+n leader key handling - was a personal vim hotkey, not standard
