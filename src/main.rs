@@ -5,6 +5,286 @@ use ratatui::layout::Constraint;
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Row, Table};
+use tree_sitter_highlight::{Highlighter, HighlightConfiguration, HighlightEvent};
+use std::collections::HashMap;
+
+// Highlight names that tree-sitter uses
+const HIGHLIGHT_NAMES: &[&str] = &[
+    "attribute",
+    "comment",
+    "constant",
+    "constant.builtin",
+    "constructor",
+    "embedded",
+    "escape",
+    "function",
+    "function.builtin",
+    "function.macro",
+    "keyword",
+    "label",
+    "number",
+    "operator",
+    "property",
+    "punctuation",
+    "punctuation.bracket",
+    "punctuation.delimiter",
+    "punctuation.special",
+    "string",
+    "string.special",
+    "tag",
+    "type",
+    "type.builtin",
+    "variable",
+    "variable.builtin",
+    "variable.parameter",
+];
+
+// Catppuccin Mocha-inspired colors for highlight names
+fn highlight_color(idx: usize) -> Color {
+    match HIGHLIGHT_NAMES.get(idx).copied().unwrap_or("") {
+        "comment" => Color::Rgb(108, 112, 134),           // Surface2 (gray)
+        "keyword" => Color::Rgb(203, 166, 247),           // Mauve (purple)
+        "string" | "string.special" => Color::Rgb(166, 227, 161), // Green
+        "number" | "constant" | "constant.builtin" => Color::Rgb(250, 179, 135), // Peach
+        "function" | "function.builtin" | "function.macro" => Color::Rgb(137, 180, 250), // Blue
+        "type" | "type.builtin" => Color::Rgb(249, 226, 175), // Yellow
+        "variable" | "variable.parameter" => Color::Rgb(205, 214, 244), // Text (white-ish)
+        "variable.builtin" => Color::Rgb(243, 139, 168),  // Red
+        "operator" => Color::Rgb(148, 226, 213),          // Teal
+        "punctuation" | "punctuation.bracket" | "punctuation.delimiter" | "punctuation.special" => Color::Rgb(147, 153, 178), // Overlay1
+        "property" => Color::Rgb(180, 190, 254),          // Lavender
+        "constructor" | "tag" => Color::Rgb(245, 194, 231), // Pink
+        "attribute" => Color::Rgb(249, 226, 175),         // Yellow
+        "escape" => Color::Rgb(245, 194, 231),            // Pink
+        "label" => Color::Rgb(116, 199, 236),             // Sapphire
+        "embedded" => Color::Rgb(203, 166, 247),          // Mauve
+        _ => Color::Rgb(205, 214, 244),                   // Text (default)
+    }
+}
+
+struct SyntaxHighlighter {
+    configs: HashMap<String, HighlightConfiguration>,
+}
+
+impl SyntaxHighlighter {
+    fn new() -> Self {
+        let mut configs = HashMap::new();
+
+        // Rust
+        if let Ok(mut config) = HighlightConfiguration::new(
+            tree_sitter_rust::LANGUAGE.into(),
+            "rust",
+            tree_sitter_rust::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        ) {
+            config.configure(HIGHLIGHT_NAMES);
+            configs.insert("rs".to_string(), config);
+        }
+
+        // JavaScript - create separate config for each extension since HighlightConfiguration doesn't implement Clone
+        for ext in &["js", "mjs", "cjs", "jsx"] {
+            if let Ok(mut config) = HighlightConfiguration::new(
+                tree_sitter_javascript::LANGUAGE.into(),
+                "javascript",
+                tree_sitter_javascript::HIGHLIGHT_QUERY,
+                tree_sitter_javascript::INJECTIONS_QUERY,
+                tree_sitter_javascript::LOCALS_QUERY,
+            ) {
+                config.configure(HIGHLIGHT_NAMES);
+                configs.insert(ext.to_string(), config);
+            }
+        }
+
+        // TypeScript
+        if let Ok(mut config) = HighlightConfiguration::new(
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            "typescript",
+            tree_sitter_typescript::HIGHLIGHTS_QUERY,
+            "",
+            tree_sitter_typescript::LOCALS_QUERY,
+        ) {
+            config.configure(HIGHLIGHT_NAMES);
+            configs.insert("ts".to_string(), config);
+        }
+
+        // TSX
+        if let Ok(mut config) = HighlightConfiguration::new(
+            tree_sitter_typescript::LANGUAGE_TSX.into(),
+            "tsx",
+            tree_sitter_typescript::HIGHLIGHTS_QUERY,
+            "",
+            tree_sitter_typescript::LOCALS_QUERY,
+        ) {
+            config.configure(HIGHLIGHT_NAMES);
+            configs.insert("tsx".to_string(), config);
+        }
+
+        // Python
+        if let Ok(mut config) = HighlightConfiguration::new(
+            tree_sitter_python::LANGUAGE.into(),
+            "python",
+            tree_sitter_python::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        ) {
+            config.configure(HIGHLIGHT_NAMES);
+            configs.insert("py".to_string(), config);
+        }
+
+        // JSON
+        if let Ok(mut config) = HighlightConfiguration::new(
+            tree_sitter_json::LANGUAGE.into(),
+            "json",
+            tree_sitter_json::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        ) {
+            config.configure(HIGHLIGHT_NAMES);
+            configs.insert("json".to_string(), config);
+        }
+
+        // Go
+        if let Ok(mut config) = HighlightConfiguration::new(
+            tree_sitter_go::LANGUAGE.into(),
+            "go",
+            tree_sitter_go::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        ) {
+            config.configure(HIGHLIGHT_NAMES);
+            configs.insert("go".to_string(), config);
+        }
+
+        // C
+        for ext in &["c", "h"] {
+            if let Ok(mut config) = HighlightConfiguration::new(
+                tree_sitter_c::LANGUAGE.into(),
+                "c",
+                tree_sitter_c::HIGHLIGHT_QUERY,
+                "",
+                "",
+            ) {
+                config.configure(HIGHLIGHT_NAMES);
+                configs.insert(ext.to_string(), config);
+            }
+        }
+
+        // C++
+        for ext in &["cpp", "cc", "cxx", "hpp", "hh"] {
+            if let Ok(mut config) = HighlightConfiguration::new(
+                tree_sitter_cpp::LANGUAGE.into(),
+                "cpp",
+                tree_sitter_cpp::HIGHLIGHT_QUERY,
+                "",
+                "",
+            ) {
+                config.configure(HIGHLIGHT_NAMES);
+                configs.insert(ext.to_string(), config);
+            }
+        }
+
+        // Bash
+        for ext in &["sh", "bash", "zsh"] {
+            if let Ok(mut config) = HighlightConfiguration::new(
+                tree_sitter_bash::LANGUAGE.into(),
+                "bash",
+                tree_sitter_bash::HIGHLIGHT_QUERY,
+                "",
+                "",
+            ) {
+                config.configure(HIGHLIGHT_NAMES);
+                configs.insert(ext.to_string(), config);
+            }
+        }
+
+        // YAML
+        for ext in &["yaml", "yml"] {
+            if let Ok(mut config) = HighlightConfiguration::new(
+                tree_sitter_yaml::LANGUAGE.into(),
+                "yaml",
+                tree_sitter_yaml::HIGHLIGHTS_QUERY,
+                "",
+                "",
+            ) {
+                config.configure(HIGHLIGHT_NAMES);
+                configs.insert(ext.to_string(), config);
+            }
+        }
+
+        // HTML
+        for ext in &["html", "htm"] {
+            if let Ok(mut config) = HighlightConfiguration::new(
+                tree_sitter_html::LANGUAGE.into(),
+                "html",
+                tree_sitter_html::HIGHLIGHTS_QUERY,
+                tree_sitter_html::INJECTIONS_QUERY,
+                "",
+            ) {
+                config.configure(HIGHLIGHT_NAMES);
+                configs.insert(ext.to_string(), config);
+            }
+        }
+
+        // CSS
+        if let Ok(mut config) = HighlightConfiguration::new(
+            tree_sitter_css::LANGUAGE.into(),
+            "css",
+            tree_sitter_css::HIGHLIGHTS_QUERY,
+            "",
+            "",
+        ) {
+            config.configure(HIGHLIGHT_NAMES);
+            configs.insert("css".to_string(), config);
+        }
+
+        // Elixir
+        for ext in &["ex", "exs"] {
+            if let Ok(mut config) = HighlightConfiguration::new(
+                tree_sitter_elixir::LANGUAGE.into(),
+                "elixir",
+                tree_sitter_elixir::HIGHLIGHTS_QUERY,
+                "",
+                "",
+            ) {
+                config.configure(HIGHLIGHT_NAMES);
+                configs.insert(ext.to_string(), config);
+            }
+        }
+
+        // Ruby
+        if let Ok(mut config) = HighlightConfiguration::new(
+            tree_sitter_ruby::LANGUAGE.into(),
+            "ruby",
+            tree_sitter_ruby::HIGHLIGHTS_QUERY,
+            "",
+            tree_sitter_ruby::LOCALS_QUERY,
+        ) {
+            config.configure(HIGHLIGHT_NAMES);
+            configs.insert("rb".to_string(), config);
+        }
+
+        // Markdown
+        for ext in &["md", "markdown"] {
+            if let Ok(mut config) = HighlightConfiguration::new(
+                tree_sitter_md::LANGUAGE.into(),
+                "markdown",
+                tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,
+                tree_sitter_md::INJECTION_QUERY_BLOCK,
+                "",
+            ) {
+                config.configure(HIGHLIGHT_NAMES);
+                configs.insert(ext.to_string(), config);
+            }
+        }
+
+        SyntaxHighlighter { configs }
+    }
+
+    fn get_config(&self, extension: &str) -> Option<&HighlightConfiguration> {
+        self.configs.get(extension)
+    }
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -20,6 +300,9 @@ fn main() {
     let commits = get_commits(&repo);
     let main_line = get_main_line(&repo);
     let branch_info = get_branch_info(&repo);
+
+    // Load syntax highlighting (once at startup)
+    let syntax_highlighter = SyntaxHighlighter::new();
 
     if dump_mode {
         let graph_lines = build_graph(&commits, &main_line);
@@ -49,6 +332,14 @@ fn main() {
     let mut leader_pressed = false; // For space+key sequences
     let mut commit_detail: Option<CommitDetail> = None; // Some = detail view, None = list view
 
+    // Set up panic hook to restore terminal on crash
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
+        ratatui::restore();
+        original_hook(panic_info);
+    }));
+
     let mut terminal = ratatui::init();
     crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture).unwrap();
     loop {
@@ -67,7 +358,7 @@ fn main() {
         terminal
             .draw(|frame| {
                 if let Some(ref detail) = commit_detail {
-                    render_commit_detail(frame, detail);
+                    render_commit_detail(frame, detail, &syntax_highlighter);
                 } else {
                     render_ui(
                         frame,
@@ -393,6 +684,7 @@ fn main() {
             _ => {}
         }
     }
+    crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture).unwrap();
     ratatui::restore();
 }
 
@@ -405,11 +697,13 @@ struct Commit {
     date: String,
 }
 
-// A line in a side-by-side diff
+// A line in a unified diff
 struct DiffLine {
     left: Option<String>,  // None = empty (addition on right)
     right: Option<String>, // None = empty (deletion on left)
+    #[allow(dead_code)]
     left_num: Option<u32>,
+    #[allow(dead_code)]
     right_num: Option<u32>,
 }
 
@@ -1313,7 +1607,11 @@ fn render_ui(
     }
 }
 
-fn render_commit_detail(frame: &mut Frame, detail: &CommitDetail) {
+fn render_commit_detail(
+    frame: &mut Frame,
+    detail: &CommitDetail,
+    syntax_highlighter: &SyntaxHighlighter,
+) {
     use ratatui::layout::{Alignment, Constraint, Direction, Layout};
     use ratatui::text::{Line, Text};
     use ratatui::widgets::Paragraph;
@@ -1423,46 +1721,171 @@ fn render_commit_detail(frame: &mut Frame, detail: &CommitDetail) {
         let bottom_border = format!("╰{}╯", "─".repeat(inner_width));
         lines.push(Line::styled(bottom_border, border_style).alignment(Alignment::Center));
 
-        // Side-by-side diff
+        // Unified diff with syntax highlighting
         lines.push(Line::raw(""));
-        let half_width = (padded.width as usize).saturating_sub(3) / 2; // -3 for │ separators
+        let line_width = padded.width.saturating_sub(2) as usize; // Leave margin for prefix
+
+        // Get syntax config for this file based on extension
+        let extension = std::path::Path::new(&current_file.path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        let config = syntax_highlighter.get_config(extension);
+
+        // Background colors for changes
+        let delete_bg = Color::Rgb(80, 20, 20);  // Dark red background
+        let add_bg = Color::Rgb(20, 80, 20);     // Dark green background
 
         for diff_line in &current_file.lines {
-            let left_content = diff_line.left.as_deref().unwrap_or("");
-            let right_content = diff_line.right.as_deref().unwrap_or("");
-
-            // Determine colors based on change type
-            let (left_style, right_style) = match (&diff_line.left, &diff_line.right) {
-                (Some(_), None) => (Style::default().fg(Color::Red), Style::default()),
-                (None, Some(_)) => (Style::default(), Style::default().fg(Color::Green)),
-                (Some(l), Some(r)) if l != r => {
-                    (Style::default().fg(Color::Red), Style::default().fg(Color::Green))
+            match (&diff_line.left, &diff_line.right) {
+                // Context line (same on both sides)
+                (Some(left), Some(right)) if left == right => {
+                    let mut spans = vec![Span::styled(" ", Style::default())];
+                    spans.extend(highlight_line_ts(left, config, line_width, None));
+                    lines.push(Line::from(spans));
                 }
-                _ => (Style::default().fg(Color::DarkGray), Style::default().fg(Color::DarkGray)),
-            };
+                // Modified: show deletion then addition
+                (Some(left), Some(right)) => {
+                    let mut del_spans = vec![Span::styled("-", Style::default().fg(Color::Red))];
+                    del_spans.extend(highlight_line_ts(left, config, line_width, Some(delete_bg)));
+                    lines.push(Line::from(del_spans));
 
-            // Truncate or pad to fit half width
-            let left_display: String = if left_content.len() > half_width {
-                format!("{}…", &left_content[..half_width.saturating_sub(1)])
-            } else {
-                format!("{:<width$}", left_content, width = half_width)
-            };
-
-            let right_display: String = if right_content.len() > half_width {
-                format!("{}…", &right_content[..half_width.saturating_sub(1)])
-            } else {
-                format!("{:<width$}", right_content, width = half_width)
-            };
-
-            lines.push(Line::from(vec![
-                Span::styled(left_display, left_style),
-                Span::styled(" │ ", border_style),
-                Span::styled(right_display, right_style),
-            ]));
+                    let mut add_spans = vec![Span::styled("+", Style::default().fg(Color::Green))];
+                    add_spans.extend(highlight_line_ts(right, config, line_width, Some(add_bg)));
+                    lines.push(Line::from(add_spans));
+                }
+                // Deletion only
+                (Some(left), None) => {
+                    let mut spans = vec![Span::styled("-", Style::default().fg(Color::Red))];
+                    spans.extend(highlight_line_ts(left, config, line_width, Some(delete_bg)));
+                    lines.push(Line::from(spans));
+                }
+                // Addition only
+                (None, Some(right)) => {
+                    let mut spans = vec![Span::styled("+", Style::default().fg(Color::Green))];
+                    spans.extend(highlight_line_ts(right, config, line_width, Some(add_bg)));
+                    lines.push(Line::from(spans));
+                }
+                // Empty (shouldn't happen)
+                (None, None) => {}
+            }
         }
     }
 
     let text = Text::from(lines);
     let paragraph = Paragraph::new(text).scroll((detail.scroll_offset, 0));
     frame.render_widget(paragraph, padded);
+}
+
+// Highlight a line of code using tree-sitter and return ratatui spans
+fn highlight_line_ts(
+    line: &str,
+    config: Option<&HighlightConfiguration>,
+    max_width: usize,
+    bg_modifier: Option<Color>,
+) -> Vec<Span<'static>> {
+    let default_text_color = Color::Rgb(205, 214, 244); // Catppuccin Text
+
+    let Some(config) = config else {
+        // No syntax config - return plain text
+        return plain_text_spans(line, max_width, bg_modifier, default_text_color);
+    };
+
+    let mut highlighter = Highlighter::new();
+    let source = line.as_bytes();
+
+    let Ok(highlights) = highlighter.highlight(config, source, None, |_| None) else {
+        return plain_text_spans(line, max_width, bg_modifier, default_text_color);
+    };
+
+    let mut spans = Vec::new();
+    let mut current_len = 0;
+    let mut current_highlight: Option<usize> = None;
+
+    for event in highlights {
+        if current_len >= max_width {
+            break;
+        }
+
+        match event {
+            Ok(HighlightEvent::Source { start, end }) => {
+                let text = &line[start..end];
+                let remaining = max_width - current_len;
+                let char_count = text.chars().count();
+                let display_text: String = if char_count > remaining {
+                    text.chars().take(remaining).collect()
+                } else {
+                    text.to_string()
+                };
+
+                let fg = current_highlight
+                    .map(highlight_color)
+                    .unwrap_or(default_text_color);
+                let mut style = Style::default().fg(fg);
+                if let Some(bg) = bg_modifier {
+                    style = style.bg(bg);
+                }
+
+                let display_char_count = display_text.chars().count();
+                spans.push(Span::styled(display_text, style));
+                current_len += display_char_count;
+            }
+            Ok(HighlightEvent::HighlightStart(h)) => {
+                current_highlight = Some(h.0);
+            }
+            Ok(HighlightEvent::HighlightEnd) => {
+                current_highlight = None;
+            }
+            Err(_) => break,
+        }
+    }
+
+    // Pad to max_width
+    if current_len < max_width {
+        let padding = " ".repeat(max_width - current_len);
+        let pad_style = if let Some(bg) = bg_modifier {
+            Style::default().bg(bg)
+        } else {
+            Style::default()
+        };
+        spans.push(Span::styled(padding, pad_style));
+    }
+
+    spans
+}
+
+// Plain text fallback for highlighting
+fn plain_text_spans(
+    line: &str,
+    max_width: usize,
+    bg_modifier: Option<Color>,
+    fg_color: Color,
+) -> Vec<Span<'static>> {
+    let char_count = line.chars().count();
+    let display_text: String = if char_count > max_width {
+        line.chars().take(max_width).collect()
+    } else {
+        line.to_string()
+    };
+
+    let mut style = Style::default().fg(fg_color);
+    if let Some(bg) = bg_modifier {
+        style = style.bg(bg);
+    }
+
+    let display_char_count = display_text.chars().count();
+    let mut spans = vec![Span::styled(display_text, style)];
+
+    // Pad to max_width
+    if display_char_count < max_width {
+        let padding = " ".repeat(max_width - display_char_count);
+        let pad_style = if let Some(bg) = bg_modifier {
+            Style::default().bg(bg)
+        } else {
+            Style::default()
+        };
+        spans.push(Span::styled(padding, pad_style));
+    }
+
+    spans
 }
