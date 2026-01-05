@@ -45,7 +45,6 @@ fn main() {
     let mut search_query = String::new();
     let mut search_history: Vec<String> = Vec::new();
     let mut history_index: Option<usize> = None; // None = new search, Some(i) = viewing history[i]
-    let mut leader_pressed = false; // For space+key sequences
     let mut count_prefix = String::new(); // Vim-style count prefix for movements
     let mut first_render = true; // Center view on first render
     let mut pre_search_selected: Option<usize> = None; // Position before search started
@@ -205,24 +204,7 @@ fn main() {
                 let commit_matches =
                     |c: &Commit| -> bool { commit_matches_query(c, &search_query, &branch_info) };
 
-                // Handle leader key sequences
-                if leader_pressed {
-                    leader_pressed = false;
-                    match key.code {
-                        KeyCode::Char('n') => {
-                            // Leader+n: clear search (no highlight)
-                            search_query.clear();
-                        }
-                        _ => {}
-                    }
-                    continue;
-                }
-
                 match key.code {
-                    KeyCode::Char(' ') => {
-                        leader_pressed = true;
-                        continue;
-                    }
                     KeyCode::Char('q') => {
                         if !count_prefix.is_empty() {
                             count_prefix.clear();
