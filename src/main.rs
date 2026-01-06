@@ -28,7 +28,6 @@ struct FlashMessage {
 }
 
 struct UiState {
-    terminal: Terminal<CrosstermBackend<Stdout>>,
     index_of_selected_row: usize,
     index_of_topmost_visible_row: usize,
     is_typing_search_term: bool,
@@ -42,6 +41,8 @@ struct UiState {
 }
 
 impl UiState {
+    const SEARCH_BAR_HEIGHT: u16 = 3;
+
     fn new(repo: &Repo) -> Self {
         let initial_row = repo
             .commits
@@ -49,7 +50,6 @@ impl UiState {
             .position(|commit| commit.sha == repo.head_sha())
             .unwrap_or(0);
         UiState {
-            terminal: Self::initialize_terminal(),
             index_of_selected_row: initial_row,
             index_of_topmost_visible_row: 0,
             is_typing_search_term: false,
@@ -63,41 +63,60 @@ impl UiState {
         }
     }
 
-    fn visible_height(&self) -> usize {
-        self.terminal.size().unwrap().height.saturating_sub(3) as usize
+    fn git_graph_height(terminal: &Terminal<CrosstermBackend<Stdout>>) -> usize {
+        terminal
+            .size()
+            .unwrap()
+            .height
+            .saturating_sub(Self::SEARCH_BAR_HEIGHT) as usize
     }
 
-    fn center_view_on_selected_row(&mut self) {
-        let visible_height = self.visible_height();
+    fn center_view_on_selected_row(&mut self, terminal: &Terminal<CrosstermBackend<Stdout>>) {
         self.index_of_topmost_visible_row = self
             .index_of_selected_row
-            .saturating_sub(visible_height / 2);
+            .saturating_sub(Self::git_graph_height(terminal) / 2);
     }
 
-    fn ensure_selected_row_is_visible(&mut self) {
-        let visible_height = self.visible_height();
-        if self.index_of_selected_row < self.index_of_topmost_visible_row {
-            self.index_of_topmost_visible_row = self.index_of_selected_row;
-        } else if self.index_of_selected_row >= self.index_of_topmost_visible_row + visible_height {
-            self.index_of_topmost_visible_row = self.index_of_selected_row - visible_height + 1;
+    fn scroll_selected_row_to_top(&mut self) {
+        self.index_of_topmost_visible_row = self.index_of_selected_row;
+    }
+
+    fn scroll_selected_row_to_bottom(&mut self, terminal: &Terminal<CrosstermBackend<Stdout>>) {
+        self.index_of_topmost_visible_row =
+            self.index_of_selected_row - Self::git_graph_height(terminal) + 1;
+    }
+
+    fn ensure_selected_row_is_visible(&mut self, terminal: &Terminal<CrosstermBackend<Stdout>>) {
+        let selected_row_is_above_viewport =
+            self.index_of_selected_row < self.index_of_topmost_visible_row;
+        let selected_row_is_below_viewport =
+            self.index_of_selected_row >= self.index_of_topmost_visible_row + Self::git_graph_height(terminal);
+
+        if selected_row_is_above_viewport {
+            self.scroll_selected_row_to_top();
+        } else if selected_row_is_below_viewport {
+            self.scroll_selected_row_to_bottom(terminal);
         }
     }
 
-    fn center_view_on_selected_row_on_first_render(&mut self) {
+    fn center_view_on_selected_row_on_first_render(
+        &mut self,
+        terminal: &Terminal<CrosstermBackend<Stdout>>,
+    ) {
         if self.is_first_render {
-            self.center_view_on_selected_row();
+            self.center_view_on_selected_row(terminal);
             self.is_first_render = false;
         }
     }
+}
 
-    fn initialize_terminal() -> Terminal<CrosstermBackend<Stdout>> {
-        let original_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |panic_info| {
-            ratatui::restore();
-            original_hook(panic_info);
-        }));
-        ratatui::init()
-    }
+fn initialize_terminal() -> Terminal<CrosstermBackend<Stdout>> {
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        ratatui::restore();
+        original_hook(panic_info);
+    }));
+    ratatui::init()
 }
 
 struct Repo {
@@ -132,14 +151,15 @@ impl Repo {
 fn main() {
     let path_to_repo = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
     let repo = Repo::open(&path_to_repo);
+    let mut terminal = initialize_terminal();
     let mut ui_state = UiState::new(&repo);
 
     loop {
-        ui_state.center_view_on_selected_row_on_first_render();
+        ui_state.center_view_on_selected_row_on_first_render(&terminal);
 
         // When terminal grows (e.g. maximizing a tmux pane), index_of_topmost_visible_row may leave
         // blank space at bottom. Pull the list down to fill available space.
-        let visible_height = ui_state.visible_height();
+        let visible_height = UiState::git_graph_height(&terminal);
         if repo.commits.len() >= visible_height {
             let max_offset = repo.commits.len() - visible_height;
             if ui_state.index_of_topmost_visible_row > max_offset {
@@ -147,23 +167,9 @@ fn main() {
             }
         }
 
-        ui_state
-            .terminal
+        terminal
             .draw(|frame| {
-                render_ui(
-                    frame,
-                    &repo.commits,
-                    &repo.branches,
-                    &repo.head,
-                    ui_state.index_of_selected_row,
-                    ui_state.index_of_topmost_visible_row,
-                    ui_state.is_typing_search_term,
-                    &ui_state.search_term,
-                    ui_state.index_of_search_term_history_being_viewed,
-                    ui_state.search_term_history.len(),
-                    &ui_state.jump_distance_string,
-                    &ui_state.flash_message,
-                );
+                render_ui(frame, &ui_state, &repo);
             })
             .unwrap();
         match event::read().unwrap() {
@@ -177,7 +183,7 @@ fn main() {
                             // Return to pre-search position on cancel
                             if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
                                 ui_state.index_of_selected_row = pre;
-                                ui_state.center_view_on_selected_row();
+                                ui_state.center_view_on_selected_row(&terminal);
                             }
                             ui_state.index_of_selected_row_when_search_began = None;
                         }
@@ -188,7 +194,7 @@ fn main() {
                             // Return to pre-search position on cancel
                             if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
                                 ui_state.index_of_selected_row = pre;
-                                ui_state.center_view_on_selected_row();
+                                ui_state.center_view_on_selected_row(&terminal);
                             }
                             ui_state.index_of_selected_row_when_search_began = None;
                         }
@@ -196,10 +202,9 @@ fn main() {
                             // Exit typing mode, but only keep search if there are matches
                             ui_state.is_typing_search_term = false;
                             ui_state.index_of_search_term_history_being_viewed = None;
-                            let has_matches = repo
-                                .commits
-                                .iter()
-                                .any(|c| commit_matches_query(c, &ui_state.search_term, &repo.branches));
+                            let has_matches = repo.commits.iter().any(|c| {
+                                commit_matches_query(c, &ui_state.search_term, &repo.branches)
+                            });
                             if has_matches {
                                 // Add to history only if there were matches (deduplicate consecutive)
                                 if ui_state.search_term_history.last()
@@ -252,7 +257,7 @@ fn main() {
                                 if let Some(pre) = ui_state.index_of_selected_row_when_search_began
                                 {
                                     ui_state.index_of_selected_row = pre;
-                                    ui_state.center_view_on_selected_row();
+                                    ui_state.center_view_on_selected_row(&terminal);
                                 }
                                 ui_state.index_of_selected_row_when_search_began = None;
                             } else {
@@ -268,21 +273,19 @@ fn main() {
                     }
                     // Live search: jump to first matching commit, or back to pre-search position
                     if !ui_state.search_term.is_empty() {
-                        if let Some(idx) = repo
-                            .commits
-                            .iter()
-                            .position(|c| commit_matches_query(c, &ui_state.search_term, &repo.branches))
-                        {
+                        if let Some(idx) = repo.commits.iter().position(|c| {
+                            commit_matches_query(c, &ui_state.search_term, &repo.branches)
+                        }) {
                             ui_state.index_of_selected_row = idx;
                         } else if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
                             // No matches - return to where we were before searching
                             ui_state.index_of_selected_row = pre;
-                            ui_state.center_view_on_selected_row();
+                            ui_state.center_view_on_selected_row(&terminal);
                         }
                     } else if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
                         // Empty query - return to where we were
                         ui_state.index_of_selected_row = pre;
-                        ui_state.center_view_on_selected_row();
+                        ui_state.center_view_on_selected_row(&terminal);
                     }
                 } else {
                     // Helper to check if a commit matches the search
@@ -406,10 +409,11 @@ fn main() {
                         KeyCode::Char('G') => {
                             // G with count goes to that line number, G alone goes to end
                             if let Ok(line) = ui_state.jump_distance_string.parse::<usize>() {
-                                ui_state.index_of_selected_row =
-                                    (line.saturating_sub(1)).min(repo.commits.len().saturating_sub(1));
+                                ui_state.index_of_selected_row = (line.saturating_sub(1))
+                                    .min(repo.commits.len().saturating_sub(1));
                             } else {
-                                ui_state.index_of_selected_row = repo.commits.len().saturating_sub(1);
+                                ui_state.index_of_selected_row =
+                                    repo.commits.len().saturating_sub(1);
                             }
                             ui_state.jump_distance_string.clear();
                         }
@@ -417,15 +421,18 @@ fn main() {
                             // Jump to HEAD commit and center on it
                             ui_state.jump_distance_string.clear();
                             let head_sha = repo.head_sha();
-                            if let Some(head_idx) = repo.commits.iter().position(|c| c.sha == head_sha) {
+                            if let Some(head_idx) =
+                                repo.commits.iter().position(|c| c.sha == head_sha)
+                            {
                                 ui_state.index_of_selected_row = head_idx;
-                                ui_state.center_view_on_selected_row();
+                                ui_state.center_view_on_selected_row(&terminal);
                             }
                         }
                         KeyCode::Char('c') => {
                             // Copy full SHA to clipboard
                             ui_state.jump_distance_string.clear();
-                            let full_sha = repo.commits[ui_state.index_of_selected_row].sha.to_string();
+                            let full_sha =
+                                repo.commits[ui_state.index_of_selected_row].sha.to_string();
                             let short_sha = &full_sha[..7];
                             if let Ok(mut child) = std::process::Command::new("pbcopy")
                                 .stdin(std::process::Stdio::piped())
@@ -443,21 +450,21 @@ fn main() {
                         }
                         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             ui_state.jump_distance_string.clear();
-                            let half_page = ui_state.visible_height() / 2;
+                            let half_page = UiState::git_graph_height(&terminal) / 2;
                             ui_state.index_of_selected_row = (ui_state.index_of_selected_row
                                 + half_page)
                                 .min(repo.commits.len().saturating_sub(1));
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             ui_state.jump_distance_string.clear();
-                            let half_page = ui_state.visible_height() / 2;
+                            let half_page = UiState::git_graph_height(&terminal) / 2;
                             ui_state.index_of_selected_row =
                                 ui_state.index_of_selected_row.saturating_sub(half_page);
                         }
                         _ => {}
                     }
                 }
-                ui_state.ensure_selected_row_is_visible();
+                ui_state.ensure_selected_row_is_visible(&terminal);
             }
             _ => {}
         }
@@ -868,24 +875,11 @@ fn highlight_matches(
     spans
 }
 
-fn render_ui(
-    frame: &mut Frame,
-    commits: &[Commit],
-    branches: &HashMap<BranchName, Sha>,
-    head: &Head,
-    index_of_selected_row: usize,
-    index_of_topmost_visible_row: usize,
-    is_typing_search_term: bool,
-    search_term: &str,
-    index_of_search_term_history_being_viewed: Option<usize>,
-    search_term_history_len: usize,
-    jump_distance_string: &str,
-    flash_message: &Option<FlashMessage>,
-) {
+fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
     // Compute derived values once for this render
-    let head_sha = head.sha(branches);
-    let branches_at_commit_map = branches_at_commit(branches);
-    let head_branch_name = head.branch_name();
+    let head_sha = repo.head_sha();
+    let branches_at_commit_map = branches_at_commit(&repo.branches);
+    let head_branch_name = repo.head.branch_name();
 
     // Use full width - padding is handled by table columns for proper row highlighting
     let padded_area = frame.area();
@@ -899,7 +893,7 @@ fn render_ui(
         ])
         .split(padded_area);
 
-    let graph = build_graph(commits);
+    let graph = build_graph(&repo.commits);
     let visible_height = chunks[0].height as usize;
 
     // Calculate graph column width based on widest graph (table provides cell spacing)
@@ -920,7 +914,8 @@ fn render_ui(
     let highlight_style = Style::default().bg(Color::Yellow).fg(Color::Black);
 
     // Calculate author column width (max author length, capped at 20)
-    let author_width = commits
+    let author_width = repo
+        .commits
         .iter()
         .map(|c| c.author.len())
         .max()
@@ -928,7 +923,7 @@ fn render_ui(
         .min(20);
 
     // Calculate width needed for line numbers
-    let max_line_num = commits.len();
+    let max_line_num = repo.commits.len();
     let gutter_width = if max_line_num >= 1000 {
         4
     } else if max_line_num >= 100 {
@@ -939,21 +934,23 @@ fn render_ui(
         1
     };
 
-    let rows: Vec<Row> = commits
+    let rows: Vec<Row> = repo
+        .commits
         .iter()
         .zip(graph.iter())
         .enumerate()
-        .skip(index_of_topmost_visible_row)
+        .skip(ui_state.index_of_topmost_visible_row)
         .take(visible_height)
         .map(|(i, (c, g))| {
             // Line number display: marker for selected, relative for others
-            let (line_num, line_num_style) = if i == index_of_selected_row {
+            let (line_num, line_num_style) = if i == ui_state.index_of_selected_row {
                 // Selection marker, left-aligned
                 let num = format!("{:<width$}", "▶", width = gutter_width);
                 (num, Style::default().fg(Color::Gray))
             } else {
                 // Relative line number, right-aligned
-                let distance = (i as isize - index_of_selected_row as isize).unsigned_abs();
+                let distance =
+                    (i as isize - ui_state.index_of_selected_row as isize).unsigned_abs();
                 let num = format!("{:>width$}", distance, width = gutter_width);
                 (num, Style::default().fg(Color::DarkGray))
             };
@@ -996,7 +993,7 @@ fn render_ui(
                         // HEAD points to a branch: "HEAD → branch_name"
                         message_spans.extend(highlight_matches(
                             "HEAD",
-                            search_term,
+                            &ui_state.search_term,
                             Style::default().fg(Color::Cyan).bold(),
                             highlight_style,
                         ));
@@ -1007,7 +1004,7 @@ fn render_ui(
                         let branch_color = lane_colors[commit_lane % lane_colors.len()];
                         message_spans.extend(highlight_matches(
                             &head_branch.0,
-                            search_term,
+                            &ui_state.search_term,
                             Style::default().fg(branch_color).bold(),
                             highlight_style,
                         ));
@@ -1015,7 +1012,7 @@ fn render_ui(
                         // Detached HEAD
                         message_spans.extend(highlight_matches(
                             "HEAD",
-                            search_term,
+                            &ui_state.search_term,
                             Style::default().fg(Color::Cyan).bold(),
                             highlight_style,
                         ));
@@ -1039,7 +1036,7 @@ fn render_ui(
                         let branch_color = lane_colors[commit_lane % lane_colors.len()];
                         message_spans.extend(highlight_matches(
                             &branch_name.0,
-                            search_term,
+                            &ui_state.search_term,
                             Style::default().fg(branch_color).bold(),
                             highlight_style,
                         ));
@@ -1055,7 +1052,7 @@ fn render_ui(
 
             message_spans.extend(highlight_matches(
                 &c.message,
-                search_term,
+                &ui_state.search_term,
                 Style::default(),
                 highlight_style,
             ));
@@ -1072,8 +1069,8 @@ fn render_ui(
                 Cell::from(Line::from(message_spans)),
                 Cell::from(Line::from(highlight_matches(
                     &date,
-                    search_term,
-                    if i == index_of_selected_row {
+                    &ui_state.search_term,
+                    if i == ui_state.index_of_selected_row {
                         Style::default().bold()
                     } else {
                         Style::default().fg(Color::Gray)
@@ -1083,8 +1080,8 @@ fn render_ui(
                 Cell::from(
                     Line::from(highlight_matches(
                         &time,
-                        search_term,
-                        if i == index_of_selected_row {
+                        &ui_state.search_term,
+                        if i == ui_state.index_of_selected_row {
                             Style::default().fg(Color::Gray)
                         } else {
                             Style::default().fg(Color::DarkGray)
@@ -1095,8 +1092,8 @@ fn render_ui(
                 ),
                 Cell::from(Line::from(highlight_matches(
                     &c.author,
-                    search_term,
-                    if i == index_of_selected_row {
+                    &ui_state.search_term,
+                    if i == ui_state.index_of_selected_row {
                         Style::default().bold()
                     } else {
                         Style::default().fg(Color::Gray)
@@ -1105,8 +1102,8 @@ fn render_ui(
                 ))),
                 Cell::from(Line::from(highlight_matches(
                     &short_sha,
-                    search_term,
-                    if i == index_of_selected_row {
+                    &ui_state.search_term,
+                    if i == ui_state.index_of_selected_row {
                         Style::default().fg(Color::Gray)
                     } else {
                         Style::default().fg(Color::DarkGray)
@@ -1115,7 +1112,7 @@ fn render_ui(
                 ))),
                 Cell::from(""), // Right padding
             ]);
-            if i == index_of_selected_row {
+            if i == ui_state.index_of_selected_row {
                 row.style(Style::default().bg(Color::DarkGray))
             } else {
                 row
@@ -1139,8 +1136,8 @@ fn render_ui(
     frame.render_widget(table, chunks[0]);
 
     // Render search bar with right-aligned match counter
-    let browse_mode = !is_typing_search_term && !search_term.is_empty();
-    let search_active = is_typing_search_term || browse_mode;
+    let browse_mode = !ui_state.is_typing_search_term && !ui_state.search_term.is_empty();
+    let search_active = ui_state.is_typing_search_term || browse_mode;
     let border_color = if search_active {
         Color::White
     } else {
@@ -1159,27 +1156,27 @@ fn render_ui(
     };
     frame.render_widget(search_block, chunks[1]);
 
-    if is_typing_search_term {
+    if ui_state.is_typing_search_term {
         // Typing mode: yellow input with cursor, match count hint
-        let match_count = if search_term.is_empty() {
+        let match_count = if ui_state.search_term.is_empty() {
             0
         } else {
-            commits
+            repo.commits
                 .iter()
-                .filter(|c| commit_matches_query(c, search_term, branches))
+                .filter(|c| commit_matches_query(c, &ui_state.search_term, &repo.branches))
                 .count()
         };
 
-        let hint = if search_term.is_empty() {
+        let hint = if ui_state.search_term.is_empty() {
             // Show history hints when query is empty
-            let can_go_older = match index_of_search_term_history_being_viewed {
-                None => search_term_history_len > 0,
+            let can_go_older = match ui_state.index_of_search_term_history_being_viewed {
+                None => ui_state.search_term_history.len() > 0,
                 Some(0) => false,
                 Some(_) => true,
             };
-            let can_go_newer = match index_of_search_term_history_being_viewed {
+            let can_go_newer = match ui_state.index_of_search_term_history_being_viewed {
                 None => false,
-                Some(i) => i < search_term_history_len - 1,
+                Some(i) => i < ui_state.search_term_history.len() - 1,
             };
             match (can_go_older, can_go_newer) {
                 (true, true) => " [ ↑↓ history ]".to_string(),
@@ -1197,7 +1194,7 @@ fn render_ui(
 
         let search_input = Paragraph::new(Line::from(vec![
             Span::styled(
-                format!("{}█", search_term),
+                format!("{}█", ui_state.search_term),
                 Style::default().fg(Color::Yellow),
             ),
             Span::styled(hint, Style::default().fg(Color::DarkGray)),
@@ -1206,17 +1203,18 @@ fn render_ui(
     } else if browse_mode {
         // Browse mode: grey input (no cursor), yellow counter
         let search_input = Paragraph::new(Line::from(vec![Span::styled(
-            search_term,
+            &ui_state.search_term,
             Style::default().fg(Color::DarkGray),
         )]));
         frame.render_widget(search_input, search_inner);
 
         // Calculate matches first to determine if we show nav hint
-        let matches: Vec<usize> = commits
+        let matches: Vec<usize> = repo
+            .commits
             .iter()
             .enumerate()
             .filter_map(|(i, c)| {
-                if commit_matches_query(c, search_term, branches) {
+                if commit_matches_query(c, &ui_state.search_term, &repo.branches) {
                     Some(i)
                 } else {
                     None
@@ -1228,14 +1226,14 @@ fn render_ui(
 
         let current = matches
             .iter()
-            .position(|&i| i == index_of_selected_row)
+            .position(|&i| i == ui_state.index_of_selected_row)
             .map(|p| p + 1);
 
         // Center: same hints as normal mode but with q:clear and n/N for search navigation
         // Check if we're on HEAD to conditionally show h:head hint
-        let head_idx = commits.iter().position(|c| c.sha == head_sha);
+        let head_idx = repo.commits.iter().position(|c| c.sha == head_sha);
         let on_head = head_idx
-            .map(|idx| idx == index_of_selected_row)
+            .map(|idx| idx == ui_state.index_of_selected_row)
             .unwrap_or(true);
 
         let hint_text = if on_head {
@@ -1268,18 +1266,18 @@ fn render_ui(
         frame.render_widget(counter, search_inner);
     } else {
         // Normal mode: show count prefix on left if present, centered hints
-        if !jump_distance_string.is_empty() {
+        if !ui_state.jump_distance_string.is_empty() {
             let count_display = Paragraph::new(Line::from(vec![Span::styled(
-                jump_distance_string,
+                &ui_state.jump_distance_string,
                 Style::default().fg(Color::DarkGray),
             )]));
             frame.render_widget(count_display, search_inner);
         }
 
         // Check if we're on HEAD to conditionally show h:head hint
-        let head_idx = commits.iter().position(|c| c.sha == head_sha);
+        let head_idx = repo.commits.iter().position(|c| c.sha == head_sha);
         let on_head = head_idx
-            .map(|idx| idx == index_of_selected_row)
+            .map(|idx| idx == ui_state.index_of_selected_row)
             .unwrap_or(true); // If no HEAD, don't show hint
 
         let hint_text = if on_head {
@@ -1297,8 +1295,8 @@ fn render_ui(
     }
 
     // Show copy feedback in bottom right if recent (works in browse and normal modes)
-    if !is_typing_search_term {
-        if let Some(msg) = flash_message {
+    if !ui_state.is_typing_search_term {
+        if let Some(msg) = &ui_state.flash_message {
             if msg.shown_at.elapsed().as_secs() < 2 {
                 let feedback = Paragraph::new(Line::from(vec![Span::styled(
                     msg.message.clone(),
