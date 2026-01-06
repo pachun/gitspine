@@ -77,6 +77,13 @@ impl UiState {
             self.index_of_topmost_visible_row = self.index_of_selected_row - visible_height + 1;
         }
     }
+
+    fn center_view_on_selected_row_on_first_render(&mut self) {
+        if self.is_first_render {
+            self.center_view_on_selected_row();
+            self.is_first_render = false;
+        }
+    }
 }
 
 fn main() {
@@ -99,11 +106,7 @@ fn main() {
     let mut ui_state = UiState::new(get_terminal(), initial_row);
 
     loop {
-        // Center view on selected commit on first render
-        if ui_state.is_first_render {
-            ui_state.center_view_on_selected_row();
-            ui_state.is_first_render = false;
-        }
+        ui_state.center_view_on_selected_row_on_first_render();
 
         // When terminal grows (e.g. maximizing a tmux pane), index_of_topmost_visible_row may leave
         // blank space at bottom. Pull the list down to fill available space.
