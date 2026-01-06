@@ -27,6 +27,58 @@ struct FlashMessage {
     shown_at: Instant,
 }
 
+struct UiState {
+    terminal: Terminal<CrosstermBackend<Stdout>>,
+    index_of_selected_row: usize,
+    index_of_topmost_visible_row: usize,
+    is_typing_search_term: bool,
+    search_term: String,
+    search_term_history: Vec<String>,
+    index_of_search_term_history_being_viewed: Option<usize>,
+    index_of_selected_row_when_search_began: Option<usize>,
+    jump_distance_string: String,
+    is_first_render: bool,
+    flash_message: Option<FlashMessage>,
+}
+
+impl UiState {
+    fn new(terminal: Terminal<CrosstermBackend<Stdout>>, initial_row: usize) -> Self {
+        UiState {
+            terminal,
+            index_of_selected_row: initial_row,
+            index_of_topmost_visible_row: 0,
+            is_typing_search_term: false,
+            search_term: String::new(),
+            search_term_history: Vec::new(),
+            index_of_search_term_history_being_viewed: None,
+            index_of_selected_row_when_search_began: None,
+            jump_distance_string: String::new(),
+            is_first_render: true,
+            flash_message: None,
+        }
+    }
+
+    fn visible_height(&self) -> usize {
+        self.terminal.size().unwrap().height.saturating_sub(3) as usize
+    }
+
+    fn center_view_on_selected_row(&mut self) {
+        let visible_height = self.visible_height();
+        self.index_of_topmost_visible_row = self
+            .index_of_selected_row
+            .saturating_sub(visible_height / 2);
+    }
+
+    fn ensure_selected_row_is_visible(&mut self) {
+        let visible_height = self.visible_height();
+        if self.index_of_selected_row < self.index_of_topmost_visible_row {
+            self.index_of_topmost_visible_row = self.index_of_selected_row;
+        } else if self.index_of_selected_row >= self.index_of_topmost_visible_row + visible_height {
+            self.index_of_topmost_visible_row = self.index_of_selected_row - visible_height + 1;
+        }
+    }
+}
+
 fn main() {
     let path_to_repo = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
     let repo = Repository::open(&path_to_repo).unwrap_or_else(|err| {
@@ -40,328 +92,302 @@ fn main() {
     let head = get_head(&repo);
     let head_sha = head.sha(&branches);
 
-    let mut index_of_selected_row: usize = commits
+    let initial_row = commits
         .iter()
         .position(|commit| commit.sha == head_sha)
         .unwrap_or(0);
-    let mut index_of_topmost_visible_row: usize = 0;
-    let mut is_typing_search_term = false;
-    let mut search_term = String::new();
-    let mut search_term_history: Vec<String> = Vec::new();
-    let mut index_of_search_term_history_being_viewed: Option<usize> = None;
-    let mut jump_distance_string = String::new();
-    let mut is_first_render = true;
-    let mut index_of_selected_row_when_search_began: Option<usize> = None;
-    let mut flash_message: Option<FlashMessage> = None;
-
-    let mut terminal = get_terminal();
+    let mut ui_state = UiState::new(get_terminal(), initial_row);
 
     loop {
-        let number_of_rows = terminal.size().unwrap().height.saturating_sub(3) as usize; // Reserve 3 for search bar with borders
-
         // Center view on selected commit on first render
-        if is_first_render {
-            center_view_on_selected_row(
-                index_of_selected_row,
-                &mut index_of_topmost_visible_row,
-                number_of_rows,
-            );
-            is_first_render = false;
+        if ui_state.is_first_render {
+            ui_state.center_view_on_selected_row();
+            ui_state.is_first_render = false;
         }
 
         // When terminal grows (e.g. maximizing a tmux pane), index_of_topmost_visible_row may leave
         // blank space at bottom. Pull the list down to fill available space.
-        if commits.len() >= number_of_rows {
-            let max_offset = commits.len() - number_of_rows;
-            if index_of_topmost_visible_row > max_offset {
-                index_of_topmost_visible_row = max_offset;
+        let visible_height = ui_state.visible_height();
+        if commits.len() >= visible_height {
+            let max_offset = commits.len() - visible_height;
+            if ui_state.index_of_topmost_visible_row > max_offset {
+                ui_state.index_of_topmost_visible_row = max_offset;
             }
         }
 
-        terminal
+        ui_state
+            .terminal
             .draw(|frame| {
                 render_ui(
                     frame,
                     &commits,
                     &branches,
                     &head,
-                    index_of_selected_row,
-                    index_of_topmost_visible_row,
-                    is_typing_search_term,
-                    &search_term,
-                    index_of_search_term_history_being_viewed,
-                    search_term_history.len(),
-                    &jump_distance_string,
-                    &flash_message,
+                    ui_state.index_of_selected_row,
+                    ui_state.index_of_topmost_visible_row,
+                    ui_state.is_typing_search_term,
+                    &ui_state.search_term,
+                    ui_state.index_of_search_term_history_being_viewed,
+                    ui_state.search_term_history.len(),
+                    &ui_state.jump_distance_string,
+                    &ui_state.flash_message,
                 );
             })
             .unwrap();
         match event::read().unwrap() {
             Event::Key(key) => {
-                if is_typing_search_term {
+                if ui_state.is_typing_search_term {
                     match key.code {
                         KeyCode::Esc => {
-                            is_typing_search_term = false;
-                            search_term.clear();
-                            index_of_search_term_history_being_viewed = None;
+                            ui_state.is_typing_search_term = false;
+                            ui_state.search_term.clear();
+                            ui_state.index_of_search_term_history_being_viewed = None;
                             // Return to pre-search position on cancel
-                            if let Some(pre) = index_of_selected_row_when_search_began {
-                                index_of_selected_row = pre;
-                                center_view_on_selected_row(
-                                    index_of_selected_row,
-                                    &mut index_of_topmost_visible_row,
-                                    number_of_rows,
-                                );
+                            if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
+                                ui_state.index_of_selected_row = pre;
+                                ui_state.center_view_on_selected_row();
                             }
-                            index_of_selected_row_when_search_began = None;
+                            ui_state.index_of_selected_row_when_search_began = None;
                         }
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            is_typing_search_term = false;
-                            search_term.clear();
-                            index_of_search_term_history_being_viewed = None;
+                            ui_state.is_typing_search_term = false;
+                            ui_state.search_term.clear();
+                            ui_state.index_of_search_term_history_being_viewed = None;
                             // Return to pre-search position on cancel
-                            if let Some(pre) = index_of_selected_row_when_search_began {
-                                index_of_selected_row = pre;
-                                center_view_on_selected_row(
-                                    index_of_selected_row,
-                                    &mut index_of_topmost_visible_row,
-                                    number_of_rows,
-                                );
+                            if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
+                                ui_state.index_of_selected_row = pre;
+                                ui_state.center_view_on_selected_row();
                             }
-                            index_of_selected_row_when_search_began = None;
+                            ui_state.index_of_selected_row_when_search_began = None;
                         }
                         KeyCode::Enter => {
                             // Exit typing mode, but only keep search if there are matches
-                            is_typing_search_term = false;
-                            index_of_search_term_history_being_viewed = None;
+                            ui_state.is_typing_search_term = false;
+                            ui_state.index_of_search_term_history_being_viewed = None;
                             let has_matches = commits
                                 .iter()
-                                .any(|c| commit_matches_query(c, &search_term, &branches));
+                                .any(|c| commit_matches_query(c, &ui_state.search_term, &branches));
                             if has_matches {
                                 // Add to history only if there were matches (deduplicate consecutive)
-                                if search_term_history.last() != Some(&search_term) {
-                                    search_term_history.push(search_term.clone());
+                                if ui_state.search_term_history.last()
+                                    != Some(&ui_state.search_term)
+                                {
+                                    ui_state
+                                        .search_term_history
+                                        .push(ui_state.search_term.clone());
                                 }
                             } else {
-                                search_term.clear();
+                                ui_state.search_term.clear();
                             }
-                            index_of_selected_row_when_search_began = None;
+                            ui_state.index_of_selected_row_when_search_began = None;
                         }
                         KeyCode::Up => {
                             // Navigate to previous history entry
-                            if !search_term_history.is_empty() {
-                                index_of_search_term_history_being_viewed =
-                                    Some(match index_of_search_term_history_being_viewed {
-                                        None => search_term_history.len() - 1,
+                            if !ui_state.search_term_history.is_empty() {
+                                ui_state.index_of_search_term_history_being_viewed = Some(
+                                    match ui_state.index_of_search_term_history_being_viewed {
+                                        None => ui_state.search_term_history.len() - 1,
                                         Some(0) => 0,
                                         Some(i) => i - 1,
-                                    });
-                                search_term = search_term_history
-                                    [index_of_search_term_history_being_viewed.unwrap()]
+                                    },
+                                );
+                                ui_state.search_term = ui_state.search_term_history
+                                    [ui_state.index_of_search_term_history_being_viewed.unwrap()]
                                 .clone();
                             }
                         }
                         KeyCode::Down => {
                             // Navigate to next history entry or back to empty
-                            if let Some(i) = index_of_search_term_history_being_viewed {
-                                if i + 1 < search_term_history.len() {
-                                    index_of_search_term_history_being_viewed = Some(i + 1);
-                                    search_term = search_term_history[i + 1].clone();
+                            if let Some(i) = ui_state.index_of_search_term_history_being_viewed {
+                                if i + 1 < ui_state.search_term_history.len() {
+                                    ui_state.index_of_search_term_history_being_viewed =
+                                        Some(i + 1);
+                                    ui_state.search_term =
+                                        ui_state.search_term_history[i + 1].clone();
                                 } else {
-                                    index_of_search_term_history_being_viewed = None;
-                                    search_term.clear();
+                                    ui_state.index_of_search_term_history_being_viewed = None;
+                                    ui_state.search_term.clear();
                                 }
                             }
                         }
                         KeyCode::Backspace => {
-                            if search_term.is_empty() {
+                            if ui_state.search_term.is_empty() {
                                 // Backspace on empty query exits search mode
-                                is_typing_search_term = false;
-                                index_of_search_term_history_being_viewed = None;
+                                ui_state.is_typing_search_term = false;
+                                ui_state.index_of_search_term_history_being_viewed = None;
                                 // Return to pre-search position
-                                if let Some(pre) = index_of_selected_row_when_search_began {
-                                    index_of_selected_row = pre;
-                                    center_view_on_selected_row(
-                                        index_of_selected_row,
-                                        &mut index_of_topmost_visible_row,
-                                        number_of_rows,
-                                    );
+                                if let Some(pre) = ui_state.index_of_selected_row_when_search_began
+                                {
+                                    ui_state.index_of_selected_row = pre;
+                                    ui_state.center_view_on_selected_row();
                                 }
-                                index_of_selected_row_when_search_began = None;
+                                ui_state.index_of_selected_row_when_search_began = None;
                             } else {
-                                search_term.pop();
-                                index_of_search_term_history_being_viewed = None; // Editing breaks out of history navigation
+                                ui_state.search_term.pop();
+                                ui_state.index_of_search_term_history_being_viewed = None; // Editing breaks out of history navigation
                             }
                         }
                         KeyCode::Char(c) => {
-                            search_term.push(c);
-                            index_of_search_term_history_being_viewed = None; // Editing breaks out of history navigation
+                            ui_state.search_term.push(c);
+                            ui_state.index_of_search_term_history_being_viewed = None; // Editing breaks out of history navigation
                         }
                         _ => {}
                     }
                     // Live search: jump to first matching commit, or back to pre-search position
-                    if !search_term.is_empty() {
+                    if !ui_state.search_term.is_empty() {
                         if let Some(idx) = commits
                             .iter()
-                            .position(|c| commit_matches_query(c, &search_term, &branches))
+                            .position(|c| commit_matches_query(c, &ui_state.search_term, &branches))
                         {
-                            index_of_selected_row = idx;
-                        } else if let Some(pre) = index_of_selected_row_when_search_began {
+                            ui_state.index_of_selected_row = idx;
+                        } else if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
                             // No matches - return to where we were before searching
-                            index_of_selected_row = pre;
-                            center_view_on_selected_row(
-                                index_of_selected_row,
-                                &mut index_of_topmost_visible_row,
-                                number_of_rows,
-                            );
+                            ui_state.index_of_selected_row = pre;
+                            ui_state.center_view_on_selected_row();
                         }
-                    } else if let Some(pre) = index_of_selected_row_when_search_began {
+                    } else if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
                         // Empty query - return to where we were
-                        index_of_selected_row = pre;
-                        center_view_on_selected_row(
-                            index_of_selected_row,
-                            &mut index_of_topmost_visible_row,
-                            number_of_rows,
-                        );
+                        ui_state.index_of_selected_row = pre;
+                        ui_state.center_view_on_selected_row();
                     }
                 } else {
                     // Helper to check if a commit matches the search
-                    let commit_matches =
-                        |c: &Commit| -> bool { commit_matches_query(c, &search_term, &branches) };
+                    let commit_matches = |c: &Commit| -> bool {
+                        commit_matches_query(c, &ui_state.search_term, &branches)
+                    };
 
                     match key.code {
                         KeyCode::Char('q') => {
-                            if !jump_distance_string.is_empty() {
-                                jump_distance_string.clear();
-                            } else if search_term.is_empty() {
+                            if !ui_state.jump_distance_string.is_empty() {
+                                ui_state.jump_distance_string.clear();
+                            } else if ui_state.search_term.is_empty() {
                                 break;
                             } else {
-                                search_term.clear();
+                                ui_state.search_term.clear();
                             }
                         }
                         KeyCode::Esc => {
-                            if !jump_distance_string.is_empty() {
-                                jump_distance_string.clear();
-                            } else if search_term.is_empty() {
+                            if !ui_state.jump_distance_string.is_empty() {
+                                ui_state.jump_distance_string.clear();
+                            } else if ui_state.search_term.is_empty() {
                                 break;
                             } else {
-                                search_term.clear();
+                                ui_state.search_term.clear();
                             }
                         }
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            if !jump_distance_string.is_empty() {
-                                jump_distance_string.clear();
-                            } else if search_term.is_empty() {
+                            if !ui_state.jump_distance_string.is_empty() {
+                                ui_state.jump_distance_string.clear();
+                            } else if ui_state.search_term.is_empty() {
                                 break;
                             } else {
-                                search_term.clear();
+                                ui_state.search_term.clear();
                             }
                         }
                         KeyCode::Backspace => {
-                            if !jump_distance_string.is_empty() {
-                                jump_distance_string.pop();
+                            if !ui_state.jump_distance_string.is_empty() {
+                                ui_state.jump_distance_string.pop();
                             } else {
-                                search_term.clear();
+                                ui_state.search_term.clear();
                             }
                         }
                         KeyCode::Char('/') => {
-                            jump_distance_string.clear();
-                            is_typing_search_term = true;
-                            search_term.clear();
-                            index_of_selected_row_when_search_began = Some(index_of_selected_row);
+                            ui_state.jump_distance_string.clear();
+                            ui_state.is_typing_search_term = true;
+                            ui_state.search_term.clear();
+                            ui_state.index_of_selected_row_when_search_began =
+                                Some(ui_state.index_of_selected_row);
                         }
-                        KeyCode::Char('n') if !search_term.is_empty() => {
+                        KeyCode::Char('n') if !ui_state.search_term.is_empty() => {
                             // Find next match after current selection
                             if let Some(idx) = commits
                                 .iter()
                                 .enumerate()
-                                .skip(index_of_selected_row + 1)
+                                .skip(ui_state.index_of_selected_row + 1)
                                 .find(|(_, c)| commit_matches(c))
                                 .map(|(i, _)| i)
                             {
-                                index_of_selected_row = idx;
+                                ui_state.index_of_selected_row = idx;
                             } else if let Some(idx) = commits
                                 .iter()
                                 .enumerate()
-                                .take(index_of_selected_row)
+                                .take(ui_state.index_of_selected_row)
                                 .find(|(_, c)| commit_matches(c))
                                 .map(|(i, _)| i)
                             {
                                 // Wrap around to beginning
-                                index_of_selected_row = idx;
+                                ui_state.index_of_selected_row = idx;
                             }
                         }
-                        KeyCode::Char('N') if !search_term.is_empty() => {
+                        KeyCode::Char('N') if !ui_state.search_term.is_empty() => {
                             // Find previous match before current selection
                             if let Some(idx) = commits
                                 .iter()
                                 .enumerate()
-                                .take(index_of_selected_row)
+                                .take(ui_state.index_of_selected_row)
                                 .rev()
                                 .find(|(_, c)| commit_matches(c))
                                 .map(|(i, _)| i)
                             {
-                                index_of_selected_row = idx;
+                                ui_state.index_of_selected_row = idx;
                             } else if let Some(idx) = commits
                                 .iter()
                                 .enumerate()
-                                .skip(index_of_selected_row + 1)
+                                .skip(ui_state.index_of_selected_row + 1)
                                 .rev()
                                 .find(|(_, c)| commit_matches(c))
                                 .map(|(i, _)| i)
                             {
                                 // Wrap around to end
-                                index_of_selected_row = idx;
+                                ui_state.index_of_selected_row = idx;
                             }
                         }
                         KeyCode::Char('j') | KeyCode::Down => {
-                            let count = jump_distance_string.parse::<usize>().unwrap_or(1);
-                            jump_distance_string.clear();
-                            index_of_selected_row = (index_of_selected_row + count)
+                            let count = ui_state.jump_distance_string.parse::<usize>().unwrap_or(1);
+                            ui_state.jump_distance_string.clear();
+                            ui_state.index_of_selected_row = (ui_state.index_of_selected_row
+                                + count)
                                 .min(commits.len().saturating_sub(1));
                         }
                         KeyCode::Char('k') | KeyCode::Up => {
-                            let count = jump_distance_string.parse::<usize>().unwrap_or(1);
-                            jump_distance_string.clear();
-                            index_of_selected_row = index_of_selected_row.saturating_sub(count);
+                            let count = ui_state.jump_distance_string.parse::<usize>().unwrap_or(1);
+                            ui_state.jump_distance_string.clear();
+                            ui_state.index_of_selected_row =
+                                ui_state.index_of_selected_row.saturating_sub(count);
                         }
                         KeyCode::Char(c) if c.is_ascii_digit() => {
                             // Ignore leading zeros
-                            if !(c == '0' && jump_distance_string.is_empty()) {
-                                jump_distance_string.push(c);
+                            if !(c == '0' && ui_state.jump_distance_string.is_empty()) {
+                                ui_state.jump_distance_string.push(c);
                             }
                         }
                         KeyCode::Char('g') => {
-                            jump_distance_string.clear();
-                            index_of_selected_row = 0;
+                            ui_state.jump_distance_string.clear();
+                            ui_state.index_of_selected_row = 0;
                         }
                         KeyCode::Char('G') => {
                             // G with count goes to that line number, G alone goes to end
-                            if let Ok(line) = jump_distance_string.parse::<usize>() {
-                                index_of_selected_row =
+                            if let Ok(line) = ui_state.jump_distance_string.parse::<usize>() {
+                                ui_state.index_of_selected_row =
                                     (line.saturating_sub(1)).min(commits.len().saturating_sub(1));
                             } else {
-                                index_of_selected_row = commits.len().saturating_sub(1);
+                                ui_state.index_of_selected_row = commits.len().saturating_sub(1);
                             }
-                            jump_distance_string.clear();
+                            ui_state.jump_distance_string.clear();
                         }
                         KeyCode::Char('h') => {
                             // Jump to HEAD commit and center on it
-                            jump_distance_string.clear();
+                            ui_state.jump_distance_string.clear();
                             let head_sha = head.sha(&branches);
                             if let Some(head_idx) = commits.iter().position(|c| c.sha == head_sha) {
-                                index_of_selected_row = head_idx;
-                                center_view_on_selected_row(
-                                    index_of_selected_row,
-                                    &mut index_of_topmost_visible_row,
-                                    number_of_rows,
-                                );
+                                ui_state.index_of_selected_row = head_idx;
+                                ui_state.center_view_on_selected_row();
                             }
                         }
                         KeyCode::Char('c') => {
                             // Copy full SHA to clipboard
-                            jump_distance_string.clear();
-                            let full_sha = commits[index_of_selected_row].sha.to_string();
+                            ui_state.jump_distance_string.clear();
+                            let full_sha = commits[ui_state.index_of_selected_row].sha.to_string();
                             let short_sha = &full_sha[..7];
                             if let Ok(mut child) = std::process::Command::new("pbcopy")
                                 .stdin(std::process::Stdio::piped())
@@ -371,30 +397,29 @@ fn main() {
                                     let _ = stdin.write_all(full_sha.as_bytes());
                                 }
                                 let _ = child.wait();
-                                flash_message = Some(FlashMessage {
+                                ui_state.flash_message = Some(FlashMessage {
                                     message: format!("copied {}", short_sha),
                                     shown_at: Instant::now(),
                                 });
                             }
                         }
                         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            jump_distance_string.clear();
-                            index_of_selected_row = (index_of_selected_row + number_of_rows / 2)
+                            ui_state.jump_distance_string.clear();
+                            let half_page = ui_state.visible_height() / 2;
+                            ui_state.index_of_selected_row = (ui_state.index_of_selected_row
+                                + half_page)
                                 .min(commits.len().saturating_sub(1));
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            jump_distance_string.clear();
-                            index_of_selected_row =
-                                index_of_selected_row.saturating_sub(number_of_rows / 2);
+                            ui_state.jump_distance_string.clear();
+                            let half_page = ui_state.visible_height() / 2;
+                            ui_state.index_of_selected_row =
+                                ui_state.index_of_selected_row.saturating_sub(half_page);
                         }
                         _ => {}
                     }
                 }
-                ensure_selected_row_is_visible(
-                    index_of_selected_row,
-                    &mut index_of_topmost_visible_row,
-                    number_of_rows,
-                );
+                ui_state.ensure_selected_row_is_visible();
             }
             _ => {}
         }
@@ -711,28 +736,6 @@ fn build_graph(commits: &[Commit]) -> Vec<Vec<(char, Option<usize>)>> {
     }
 
     graph_lines
-}
-
-// Adjust scroll offset to keep selection visible
-fn ensure_selected_row_is_visible(
-    index_of_selected_row: usize,
-    index_of_topmost_visible_row: &mut usize,
-    visible_height: usize,
-) {
-    if index_of_selected_row < *index_of_topmost_visible_row {
-        *index_of_topmost_visible_row = index_of_selected_row;
-    } else if index_of_selected_row >= *index_of_topmost_visible_row + visible_height {
-        *index_of_topmost_visible_row = index_of_selected_row - visible_height + 1;
-    }
-}
-
-// Center the view on the selected row
-fn center_view_on_selected_row(
-    index_of_selected_row: usize,
-    index_of_topmost_visible_row: &mut usize,
-    visible_height: usize,
-) {
-    *index_of_topmost_visible_row = index_of_selected_row.saturating_sub(visible_height / 2);
 }
 
 // Check if query has mixed case (both upper and lowercase letters)
