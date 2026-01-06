@@ -27,9 +27,9 @@ struct FlashMessage {
 }
 
 fn main() {
-    let path = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
-
-    let repo = Repository::open(&path).expect("Not a git repository");
+    let path_to_repo = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
+    let repo = Repository::open(&path_to_repo)
+        .unwrap_or_else(|err| exit_with_error(&format!("Failed to open repository: {}", err.message()), false));
     let commits = get_commits(&repo);
     let branches = get_branches(&repo);
     let head = get_head(&repo);
@@ -50,12 +50,7 @@ fn main() {
     let mut index_of_selected_row_when_search_began: Option<usize> = None;
     let mut flash_message: Option<FlashMessage> = None;
 
-    // Set up panic hook to restore terminal on crash
-    let original_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic_info| {
-        ratatui::restore();
-        original_hook(panic_info);
-    }));
+    restore_terminal_on_crash();
 
     let mut terminal = ratatui::init();
     loop {
@@ -402,6 +397,22 @@ fn main() {
         }
     }
     ratatui::restore();
+}
+
+fn restore_terminal_on_crash() {
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        ratatui::restore();
+        original_hook(panic_info);
+    }));
+}
+
+fn exit_with_error(message: &str, restore: bool) -> ! {
+    if restore {
+        ratatui::restore();
+    }
+    eprintln!("{}", message);
+    std::process::exit(1);
 }
 
 struct Commit {
