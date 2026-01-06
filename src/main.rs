@@ -56,6 +56,7 @@ impl UiState {
 
             is_typing_search_term: false,
             search_term: String::new(),
+
             index_of_search_term_history_being_viewed: None,
             index_of_selected_row_when_search_began: None,
 
