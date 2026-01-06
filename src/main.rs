@@ -110,6 +110,25 @@ impl UiState {
             self.is_first_render = false;
         }
     }
+
+    fn adjust_viewport_after_terminal_resize(
+        &mut self,
+        terminal: &Terminal<CrosstermBackend<Stdout>>,
+        number_of_commits: usize,
+    ) {
+        let git_graph_height = Self::git_graph_height(terminal);
+
+        if number_of_commits >= git_graph_height {
+            // When terminal grows: prevent blank space at bottom by pulling list down
+            let max_offset = number_of_commits - git_graph_height;
+            if self.index_of_topmost_visible_row > max_offset {
+                self.index_of_topmost_visible_row = max_offset;
+            }
+
+            // When terminal shrinks: selected row may now be below viewport
+            self.ensure_selected_row_is_visible(terminal);
+        }
+    }
 }
 
 fn initialize_terminal() -> Terminal<CrosstermBackend<Stdout>> {
@@ -135,18 +154,77 @@ impl Repo {
                 false,
             )
         });
-        let commits = get_commits(&git_repo);
-        let branches = get_branches(&git_repo);
-        let head = get_head(&git_repo);
         Repo {
-            commits,
-            branches,
-            head,
+            commits: Self::get_commits(&git_repo),
+            branches: Self::get_branches(&git_repo),
+            head: Self::get_head(&git_repo),
         }
     }
 
     fn head_sha(&self) -> Sha {
         self.head.sha(&self.branches)
+    }
+
+    fn get_commits(repo: &Repository) -> Vec<Commit> {
+        let mut revwalk = repo.revwalk().expect("Failed to create revwalk");
+        revwalk
+            .set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)
+            .expect("Failed to set sorting");
+        revwalk
+            .push_glob("refs/heads/*")
+            .expect("Failed to push branches");
+        revwalk
+            .push_glob("refs/remotes/*")
+            .expect("Failed to push remotes");
+
+        revwalk
+            .filter_map(|oid| oid.ok())
+            .filter_map(|oid| repo.find_commit(oid).ok())
+            .map(|commit| Commit {
+                sha: commit.id(),
+                parent_shas: commit.parent_ids().collect(),
+                message: commit.summary().unwrap_or("").to_string(),
+                author: commit.author().name().unwrap_or("").to_string(),
+                timestamp: commit.time().seconds(),
+            })
+            .collect()
+    }
+
+    fn get_branches(repo: &Repository) -> HashMap<BranchName, Sha> {
+        let mut branches: HashMap<BranchName, Sha> = HashMap::new();
+        if let Ok(branch_iter) = repo.branches(None) {
+            for branch_result in branch_iter {
+                if let Ok((branch, _branch_type)) = branch_result {
+                    let name = branch.name().ok().flatten().map(|s| s.to_string());
+                    if let Some(name) = name {
+                        if let Ok(reference) = branch.into_reference().resolve() {
+                            if let Some(oid) = reference.target() {
+                                branches.insert(BranchName(name), oid);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        branches
+    }
+
+    fn get_head(repo: &Repository) -> Head {
+        if let Ok(head_ref) = repo.head() {
+            if head_ref.is_branch() {
+                let branch_name = head_ref.shorthand().unwrap_or("").to_string();
+                Head::Attached {
+                    branch_name: BranchName(branch_name),
+                }
+            } else {
+                let sha = head_ref.target().expect("HEAD should have a target");
+                Head::Detached { sha }
+            }
+        } else {
+            Head::Detached {
+                sha: git2::Oid::zero(),
+            }
+        }
     }
 }
 
@@ -158,16 +236,7 @@ fn main() {
 
     loop {
         ui_state.center_view_on_selected_row_on_first_render(&terminal);
-
-        // When terminal grows (e.g. maximizing a tmux pane), index_of_topmost_visible_row may leave
-        // blank space at bottom. Pull the list down to fill available space.
-        let visible_height = UiState::git_graph_height(&terminal);
-        if repo.commits.len() >= visible_height {
-            let max_offset = repo.commits.len() - visible_height;
-            if ui_state.index_of_topmost_visible_row > max_offset {
-                ui_state.index_of_topmost_visible_row = max_offset;
-            }
-        }
+        ui_state.adjust_viewport_after_terminal_resize(&terminal, repo.commits.len());
 
         terminal
             .draw(|frame| {
@@ -518,68 +587,6 @@ fn branches_at_commit(branches: &HashMap<BranchName, Sha>) -> HashMap<Sha, Vec<&
         result.entry(*sha).or_default().push(name);
     }
     result
-}
-
-fn get_branches(repo: &Repository) -> HashMap<BranchName, Sha> {
-    let mut branches: HashMap<BranchName, Sha> = HashMap::new();
-    if let Ok(branch_iter) = repo.branches(None) {
-        for branch_result in branch_iter {
-            if let Ok((branch, _branch_type)) = branch_result {
-                let name = branch.name().ok().flatten().map(|s| s.to_string());
-                if let Some(name) = name {
-                    if let Ok(reference) = branch.into_reference().resolve() {
-                        if let Some(oid) = reference.target() {
-                            branches.insert(BranchName(name), oid);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    branches
-}
-
-fn get_head(repo: &Repository) -> Head {
-    if let Ok(head_ref) = repo.head() {
-        if head_ref.is_branch() {
-            let branch_name = head_ref.shorthand().unwrap_or("").to_string();
-            Head::Attached {
-                branch_name: BranchName(branch_name),
-            }
-        } else {
-            let sha = head_ref.target().expect("HEAD should have a target");
-            Head::Detached { sha }
-        }
-    } else {
-        Head::Detached {
-            sha: git2::Oid::zero(),
-        }
-    }
-}
-
-fn get_commits(repo: &Repository) -> Vec<Commit> {
-    let mut revwalk = repo.revwalk().expect("Failed to create revwalk");
-    revwalk
-        .set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)
-        .expect("Failed to set sorting");
-    revwalk
-        .push_glob("refs/heads/*")
-        .expect("Failed to push branches");
-    revwalk
-        .push_glob("refs/remotes/*")
-        .expect("Failed to push remotes");
-
-    revwalk
-        .filter_map(|oid| oid.ok())
-        .filter_map(|oid| repo.find_commit(oid).ok())
-        .map(|commit| Commit {
-            sha: commit.id(),
-            parent_shas: commit.parent_ids().collect(),
-            message: commit.summary().unwrap_or("").to_string(),
-            author: commit.author().name().unwrap_or("").to_string(),
-            timestamp: commit.time().seconds(),
-        })
-        .collect()
 }
 
 // Each character in the graph has an associated lane index for coloring
