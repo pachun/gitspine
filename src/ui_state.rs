@@ -117,4 +117,34 @@ impl UiState {
             self.ensure_selected_row_is_visible(terminal);
         }
     }
+
+    pub fn cancel_search(&mut self, terminal: &Terminal<CrosstermBackend<Stdout>>) {
+        if !self.is_typing_search_term { return; }
+        self.is_typing_search_term = false;
+        self.search_term.clear();
+        self.index_of_search_term_history_being_viewed = None;
+        if let Some(pre) = self.index_of_selected_row_when_search_began {
+            self.index_of_selected_row = pre;
+            self.center_view_on_selected_row(terminal);
+        }
+        self.index_of_selected_row_when_search_began = None;
+    }
+
+    pub fn search(&mut self, repo: &Repo) {
+        if !self.is_typing_search_term { return; }
+        self.is_typing_search_term = false;
+        self.index_of_search_term_history_being_viewed = None;
+        let has_matches = repo
+            .commits
+            .iter()
+            .any(|c| c.matches(&self.search_term, &repo.branches));
+        if has_matches {
+            if self.search_term_history.last() != Some(&self.search_term) {
+                self.search_term_history.push(self.search_term.clone());
+            }
+        } else {
+            self.search_term.clear();
+        }
+        self.index_of_selected_row_when_search_began = None;
+    }
 }

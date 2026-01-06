@@ -1,3 +1,4 @@
+mod commit_graph;
 mod repo;
 mod ui_state;
 
@@ -13,7 +14,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use ratatui::{Frame, Terminal};
 
-use repo::{BranchName, Commit, Repo, Sha};
+use repo::{BranchName, Commit, Repo, Sha, format_date, has_mixed_case};
 use ui_state::{FlashMessage, UiState};
 
 fn initialize_terminal() -> Terminal<CrosstermBackend<Stdout>> {
@@ -45,47 +46,13 @@ fn main() {
                 if ui_state.is_typing_search_term {
                     match key.code {
                         KeyCode::Esc => {
-                            ui_state.is_typing_search_term = false;
-                            ui_state.search_term.clear();
-                            ui_state.index_of_search_term_history_being_viewed = None;
-                            // Return to pre-search position on cancel
-                            if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
-                                ui_state.index_of_selected_row = pre;
-                                ui_state.center_view_on_selected_row(&terminal);
-                            }
-                            ui_state.index_of_selected_row_when_search_began = None;
+                            ui_state.cancel_search(&terminal);
                         }
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            ui_state.is_typing_search_term = false;
-                            ui_state.search_term.clear();
-                            ui_state.index_of_search_term_history_being_viewed = None;
-                            // Return to pre-search position on cancel
-                            if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
-                                ui_state.index_of_selected_row = pre;
-                                ui_state.center_view_on_selected_row(&terminal);
-                            }
-                            ui_state.index_of_selected_row_when_search_began = None;
+                            ui_state.cancel_search(&terminal);
                         }
                         KeyCode::Enter => {
-                            // Exit typing mode, but only keep search if there are matches
-                            ui_state.is_typing_search_term = false;
-                            ui_state.index_of_search_term_history_being_viewed = None;
-                            let has_matches = repo.commits.iter().any(|c| {
-                                commit_matches_query(c, &ui_state.search_term, &repo.branches)
-                            });
-                            if has_matches {
-                                // Add to history only if there were matches (deduplicate consecutive)
-                                if ui_state.search_term_history.last()
-                                    != Some(&ui_state.search_term)
-                                {
-                                    ui_state
-                                        .search_term_history
-                                        .push(ui_state.search_term.clone());
-                                }
-                            } else {
-                                ui_state.search_term.clear();
-                            }
-                            ui_state.index_of_selected_row_when_search_began = None;
+                            ui_state.search(&repo);
                         }
                         KeyCode::Up => {
                             // Navigate to previous history entry
@@ -118,19 +85,10 @@ fn main() {
                         }
                         KeyCode::Backspace => {
                             if ui_state.search_term.is_empty() {
-                                // Backspace on empty query exits search mode
-                                ui_state.is_typing_search_term = false;
-                                ui_state.index_of_search_term_history_being_viewed = None;
-                                // Return to pre-search position
-                                if let Some(pre) = ui_state.index_of_selected_row_when_search_began
-                                {
-                                    ui_state.index_of_selected_row = pre;
-                                    ui_state.center_view_on_selected_row(&terminal);
-                                }
-                                ui_state.index_of_selected_row_when_search_began = None;
+                                ui_state.cancel_search(&terminal);
                             } else {
                                 ui_state.search_term.pop();
-                                ui_state.index_of_search_term_history_being_viewed = None; // Editing breaks out of history navigation
+                                ui_state.index_of_search_term_history_being_viewed = None;
                             }
                         }
                         KeyCode::Char(c) => {
@@ -141,9 +99,11 @@ fn main() {
                     }
                     // Live search: jump to first matching commit, or back to pre-search position
                     if !ui_state.search_term.is_empty() {
-                        if let Some(idx) = repo.commits.iter().position(|c| {
-                            commit_matches_query(c, &ui_state.search_term, &repo.branches)
-                        }) {
+                        if let Some(idx) = repo
+                            .commits
+                            .iter()
+                            .position(|c| c.matches(&ui_state.search_term, &repo.branches))
+                        {
                             ui_state.index_of_selected_row = idx;
                         } else if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
                             // No matches - return to where we were before searching
@@ -157,9 +117,8 @@ fn main() {
                     }
                 } else {
                     // Helper to check if a commit matches the search
-                    let commit_matches = |c: &Commit| -> bool {
-                        commit_matches_query(c, &ui_state.search_term, &repo.branches)
-                    };
+                    let commit_matches =
+                        |c: &Commit| -> bool { c.matches(&ui_state.search_term, &repo.branches) };
 
                     match key.code {
                         KeyCode::Char('q') => {
@@ -349,251 +308,6 @@ fn branches_at_commit(branches: &HashMap<BranchName, Sha>) -> HashMap<Sha, Vec<&
     result
 }
 
-// Each character in the graph has an associated lane index for coloring
-// Returns Vec of rows, each row is Vec of (char, lane_index)
-fn build_graph(commits: &[Commit]) -> Vec<Vec<(char, Option<usize>)>> {
-    let mut lanes: Vec<Option<git2::Oid>> = Vec::new();
-    let mut graph_lines: Vec<Vec<(char, Option<usize>)>> = Vec::new();
-
-    for commit in commits {
-        // Find ALL lanes that have this commit (multiple lanes can converge here)
-        let lanes_with_commit: Vec<usize> = lanes
-            .iter()
-            .enumerate()
-            .filter(|(_, lane)| **lane == Some(commit.sha))
-            .map(|(i, _)| i)
-            .collect();
-
-        let commit_lane = if lanes_with_commit.is_empty() {
-            // New commit - assign to first available lane
-            if lanes.is_empty() {
-                lanes.push(Some(commit.sha));
-                0
-            } else {
-                // Find first empty lane, or create new
-                match lanes.iter().position(|lane| lane.is_none()) {
-                    Some(pos) => {
-                        lanes[pos] = Some(commit.sha);
-                        pos
-                    }
-                    None => {
-                        lanes.push(Some(commit.sha));
-                        lanes.len() - 1
-                    }
-                }
-            }
-        } else {
-            // Use the first (leftmost) lane
-            lanes_with_commit[0]
-        };
-
-        // Other lanes with this commit are converging here
-        let converging_lanes: Vec<usize> = lanes_with_commit
-            .iter()
-            .filter(|&&i| i != commit_lane)
-            .copied()
-            .collect();
-
-        // Find lanes that merge INTO this commit (their commit's parent is this commit)
-        let mut merging_in: Vec<usize> = Vec::new();
-        for (i, lane) in lanes.iter().enumerate() {
-            if i != commit_lane && !converging_lanes.contains(&i) {
-                if let Some(lane_commit_id) = lane {
-                    // Find if this lane's commit has our commit as its first parent
-                    if let Some(lane_commit) = commits.iter().find(|c| c.sha == *lane_commit_id) {
-                        if lane_commit.parent_shas.first() == Some(&commit.sha) {
-                            merging_in.push(i);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Add converging lanes to merging_in for display
-        merging_in.extend(&converging_lanes);
-
-        // Pre-calculate where additional parents (merge branches) will be placed
-        let mut additional_parent_lanes_new: Vec<usize> = Vec::new(); // New lanes (branch starting)
-        let mut additional_parent_lanes_existing: Vec<usize> = Vec::new(); // Existing lanes (merging in)
-        let mut temp_lanes = lanes.clone();
-        for parent_id in commit.parent_shas.iter().skip(1) {
-            // Check if this parent is already tracked in another lane
-            let existing_lane = temp_lanes
-                .iter()
-                .enumerate()
-                .find(|(i, lane)| *i != commit_lane && **lane == Some(*parent_id))
-                .map(|(i, _)| i);
-
-            if let Some(lane_idx) = existing_lane {
-                // Parent already tracked - show merge from that lane
-                additional_parent_lanes_existing.push(lane_idx);
-            } else {
-                // Parent not tracked - create new lane
-                match temp_lanes.iter().position(|lane| lane.is_none()) {
-                    Some(pos) => {
-                        temp_lanes[pos] = Some(*parent_id);
-                        additional_parent_lanes_new.push(pos);
-                    }
-                    None => {
-                        temp_lanes.push(Some(*parent_id));
-                        additional_parent_lanes_new.push(temp_lanes.len() - 1);
-                    }
-                }
-            }
-        }
-        let additional_parent_lanes: Vec<usize> = additional_parent_lanes_new
-            .iter()
-            .chain(additional_parent_lanes_existing.iter())
-            .copied()
-            .collect();
-
-        // Build the graph line with merge indicators on same row
-        let mut line: Vec<(char, Option<usize>)> = Vec::new();
-        let num_lanes = lanes.len().max(temp_lanes.len());
-
-        // Determine all merge ranges (merging_in and additional parents)
-        let mut merge_lanes: Vec<usize> = merging_in.clone();
-        merge_lanes.extend(&additional_parent_lanes);
-        merge_lanes.push(commit_lane);
-        let min_merge = *merge_lanes.iter().min().unwrap_or(&commit_lane);
-        let max_merge = *merge_lanes.iter().max().unwrap_or(&commit_lane);
-        let has_merges = !merging_in.is_empty() || !additional_parent_lanes.is_empty();
-
-        if has_merges {
-            for i in 0..num_lanes {
-                if i == commit_lane {
-                    line.push(('●', Some(i)));
-                } else if merging_in.contains(&i) {
-                    if i < commit_lane {
-                        line.push(('╰', Some(i)));
-                    } else {
-                        line.push(('╯', Some(i)));
-                    }
-                } else if additional_parent_lanes_new.contains(&i) {
-                    // New branch starting from this merge commit
-                    if i < commit_lane {
-                        line.push(('╭', Some(i)));
-                    } else {
-                        line.push(('╮', Some(i)));
-                    }
-                } else if additional_parent_lanes_existing.contains(&i) {
-                    // Existing lane continues but also connects to this merge commit
-                    if i < commit_lane {
-                        line.push(('├', Some(i)));
-                    } else {
-                        line.push(('┤', Some(i)));
-                    }
-                } else if i > min_merge && i < max_merge {
-                    if lanes.get(i).map(|l| l.is_some()).unwrap_or(false) {
-                        line.push(('┼', Some(i)));
-                    } else {
-                        line.push(('─', None)); // Horizontal connector, no specific lane
-                    }
-                } else if lanes.get(i).map(|l| l.is_some()).unwrap_or(false) {
-                    line.push(('│', Some(i)));
-                } else {
-                    line.push((' ', None));
-                }
-            }
-        } else {
-            for i in 0..num_lanes {
-                if i == commit_lane {
-                    line.push(('●', Some(i)));
-                } else if lanes[i].is_some() {
-                    line.push(('│', Some(i)));
-                } else {
-                    line.push((' ', None));
-                }
-            }
-        }
-
-        graph_lines.push(line);
-
-        // Clear converging lanes (they've merged into this commit)
-        for &lane_idx in &converging_lanes {
-            lanes[lane_idx] = None;
-        }
-
-        // Update lanes: this commit's lane now tracks its first parent
-        // Allow duplicate tracking - multiple lanes can track the same parent
-        // They will converge when we reach that parent commit
-        if let Some(first_parent) = commit.parent_shas.first() {
-            lanes[commit_lane] = Some(*first_parent);
-        } else {
-            lanes[commit_lane] = None;
-        }
-
-        // Handle merge commits (multiple parents) - only add if not already tracked
-        for parent_id in commit.parent_shas.iter().skip(1) {
-            let already_tracked = lanes.iter().any(|lane| *lane == Some(*parent_id));
-            if !already_tracked {
-                match lanes.iter().position(|lane| lane.is_none()) {
-                    Some(pos) => lanes[pos] = Some(*parent_id),
-                    None => lanes.push(Some(*parent_id)),
-                }
-            }
-        }
-
-        // Clean up trailing empty lanes
-        while lanes.last() == Some(&None) {
-            lanes.pop();
-        }
-    }
-
-    graph_lines
-}
-
-// Check if query has mixed case (both upper and lowercase letters)
-fn has_mixed_case(s: &str) -> bool {
-    let has_upper = s.chars().any(|c| c.is_uppercase());
-    let has_lower = s.chars().any(|c| c.is_lowercase());
-    has_upper && has_lower
-}
-
-// Check if a commit matches the search query (searches message, sha, author, date, and branch names)
-fn commit_matches_query(commit: &Commit, query: &str, branches: &HashMap<BranchName, Sha>) -> bool {
-    if query.is_empty() {
-        return false;
-    }
-
-    let case_sensitive = has_mixed_case(query);
-
-    // Get branch names for this commit (branches that point to this commit's sha)
-    let branch_names: Vec<&str> = branches
-        .iter()
-        .filter(|(_, sha)| **sha == commit.sha)
-        .map(|(name, _)| name.0.as_str())
-        .collect();
-
-    // Derive display values from raw data
-    let short_sha = &commit.sha.to_string()[..7];
-    let date = format_date(commit.timestamp);
-
-    if case_sensitive {
-        commit.message.contains(query)
-            || short_sha.contains(query)
-            || commit.author.contains(query)
-            || date.contains(query)
-            || branch_names.iter().any(|name| name.contains(query))
-    } else {
-        let query_lower = query.to_lowercase();
-        commit.message.to_lowercase().contains(&query_lower)
-            || short_sha.to_lowercase().contains(&query_lower)
-            || commit.author.to_lowercase().contains(&query_lower)
-            || date.to_lowercase().contains(&query_lower)
-            || branch_names
-                .iter()
-                .any(|name| name.to_lowercase().contains(&query_lower))
-    }
-}
-
-fn format_date(timestamp: i64) -> String {
-    chrono::DateTime::from_timestamp(timestamp, 0)
-        .map(|dt| dt.with_timezone(&chrono::Local))
-        .map(|dt| dt.format("%b %-d, %Y").to_string())
-        .unwrap_or_default()
-}
-
 fn format_time(timestamp: i64) -> String {
     chrono::DateTime::from_timestamp(timestamp, 0)
         .map(|dt| dt.with_timezone(&chrono::Local))
@@ -662,7 +376,7 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
         ])
         .split(padded_area);
 
-    let graph = build_graph(&repo.commits);
+    let graph = commit_graph::build(&repo.commits);
     let visible_height = chunks[0].height as usize;
 
     // Calculate graph column width based on widest graph (table provides cell spacing)
@@ -932,7 +646,7 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
         } else {
             repo.commits
                 .iter()
-                .filter(|c| commit_matches_query(c, &ui_state.search_term, &repo.branches))
+                .filter(|c| c.matches(&ui_state.search_term, &repo.branches))
                 .count()
         };
 
@@ -983,7 +697,7 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
             .iter()
             .enumerate()
             .filter_map(|(i, c)| {
-                if commit_matches_query(c, &ui_state.search_term, &repo.branches) {
+                if c.matches(&ui_state.search_term, &repo.branches) {
                     Some(i)
                 } else {
                     None

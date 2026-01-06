@@ -21,6 +21,58 @@ pub struct Commit {
     pub timestamp: i64,
 }
 
+impl Commit {
+    /// Check if this commit matches the search query (searches message, sha, author, date, and branch names)
+    pub fn matches(&self, query: &str, branches: &HashMap<BranchName, Sha>) -> bool {
+        if query.is_empty() {
+            return false;
+        }
+
+        let case_sensitive = has_mixed_case(query);
+
+        // Get branch names for this commit (branches that point to this commit's sha)
+        let branch_names: Vec<&str> = branches
+            .iter()
+            .filter(|(_, sha)| **sha == self.sha)
+            .map(|(name, _)| name.0.as_str())
+            .collect();
+
+        // Derive display values from raw data
+        let short_sha = &self.sha.to_string()[..7];
+        let date = format_date(self.timestamp);
+
+        if case_sensitive {
+            self.message.contains(query)
+                || short_sha.contains(query)
+                || self.author.contains(query)
+                || date.contains(query)
+                || branch_names.iter().any(|name| name.contains(query))
+        } else {
+            let query_lower = query.to_lowercase();
+            self.message.to_lowercase().contains(&query_lower)
+                || short_sha.to_lowercase().contains(&query_lower)
+                || self.author.to_lowercase().contains(&query_lower)
+                || date.to_lowercase().contains(&query_lower)
+                || branch_names
+                    .iter()
+                    .any(|name| name.to_lowercase().contains(&query_lower))
+        }
+    }
+}
+
+pub fn has_mixed_case(s: &str) -> bool {
+    let has_upper = s.chars().any(|c| c.is_uppercase());
+    let has_lower = s.chars().any(|c| c.is_lowercase());
+    has_upper && has_lower
+}
+
+pub fn format_date(timestamp: i64) -> String {
+    chrono::DateTime::from_timestamp(timestamp, 0)
+        .map(|dt| dt.with_timezone(&chrono::Local))
+        .map(|dt| dt.format("%b %-d, %Y").to_string())
+        .unwrap_or_default()
+}
+
 pub enum Head {
     Attached { branch_name: BranchName },
     Detached { sha: Sha },
