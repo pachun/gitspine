@@ -1,9 +1,11 @@
+mod repo;
+mod ui_state;
+
 use std::collections::HashMap;
 use std::io::{Stdout, Write};
 use std::time::Instant;
 
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
-use git2::Repository;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::prelude::CrosstermBackend;
 use ratatui::style::{Color, Style};
@@ -11,129 +13,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use ratatui::{Frame, Terminal};
 
-type Sha = git2::Oid;
-
-#[derive(Hash, Eq, PartialEq)]
-struct BranchName(String);
-
-impl std::fmt::Display for BranchName {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-struct FlashMessage {
-    message: String,
-    shown_at: Instant,
-}
-
-struct UiState {
-    index_of_selected_row: usize,
-    index_of_topmost_visible_row: usize,
-    is_typing_search_term: bool,
-    search_term: String,
-    search_term_history: Vec<String>,
-    index_of_search_term_history_being_viewed: Option<usize>,
-    index_of_selected_row_when_search_began: Option<usize>,
-    jump_distance_string: String,
-    is_first_render: bool,
-    flash_message: Option<FlashMessage>,
-}
-
-impl UiState {
-    const SEARCH_BAR_HEIGHT: u16 = 3;
-
-    fn new(repo: &Repo) -> Self {
-        UiState {
-            is_first_render: true,
-
-            index_of_topmost_visible_row: 0,
-            index_of_selected_row: repo
-                .commits
-                .iter()
-                .position(|commit| commit.sha == repo.head_sha())
-                .unwrap_or(0),
-
-            is_typing_search_term: false,
-            search_term: String::new(),
-
-            index_of_search_term_history_being_viewed: None,
-            index_of_selected_row_when_search_began: None,
-
-            search_term_history: Vec::new(),
-            jump_distance_string: String::new(),
-            flash_message: None,
-        }
-    }
-
-    fn git_graph_height(terminal: &Terminal<CrosstermBackend<Stdout>>) -> usize {
-        terminal
-            .size()
-            .unwrap()
-            .height
-            .saturating_sub(Self::SEARCH_BAR_HEIGHT) as usize
-    }
-
-    fn center_view_on_selected_row(&mut self, terminal: &Terminal<CrosstermBackend<Stdout>>) {
-        self.index_of_topmost_visible_row = self
-            .index_of_selected_row
-            .saturating_sub(Self::git_graph_height(terminal) / 2);
-    }
-
-    fn scroll_selected_row_to_top_of_viewport(&mut self) {
-        self.index_of_topmost_visible_row = self.index_of_selected_row;
-    }
-
-    fn scroll_selected_row_to_bottom_of_viewport(
-        &mut self,
-        terminal: &Terminal<CrosstermBackend<Stdout>>,
-    ) {
-        self.index_of_topmost_visible_row =
-            self.index_of_selected_row - Self::git_graph_height(terminal) + 1;
-    }
-
-    fn ensure_selected_row_is_visible(&mut self, terminal: &Terminal<CrosstermBackend<Stdout>>) {
-        let selected_row_is_above_viewport =
-            self.index_of_selected_row < self.index_of_topmost_visible_row;
-        let selected_row_is_below_viewport = self.index_of_selected_row
-            >= self.index_of_topmost_visible_row + Self::git_graph_height(terminal);
-
-        if selected_row_is_above_viewport {
-            self.scroll_selected_row_to_top_of_viewport();
-        } else if selected_row_is_below_viewport {
-            self.scroll_selected_row_to_bottom_of_viewport(terminal);
-        }
-    }
-
-    fn center_view_on_selected_row_on_first_render(
-        &mut self,
-        terminal: &Terminal<CrosstermBackend<Stdout>>,
-    ) {
-        if self.is_first_render {
-            self.center_view_on_selected_row(terminal);
-            self.is_first_render = false;
-        }
-    }
-
-    fn adjust_viewport_after_terminal_resize(
-        &mut self,
-        terminal: &Terminal<CrosstermBackend<Stdout>>,
-        number_of_commits: usize,
-    ) {
-        let git_graph_height = Self::git_graph_height(terminal);
-
-        if number_of_commits >= git_graph_height {
-            // When terminal grows: prevent blank space at bottom by pulling list down
-            let max_offset = number_of_commits - git_graph_height;
-            if self.index_of_topmost_visible_row > max_offset {
-                self.index_of_topmost_visible_row = max_offset;
-            }
-
-            // When terminal shrinks: selected row may now be below viewport
-            self.ensure_selected_row_is_visible(terminal);
-        }
-    }
-}
+use repo::{BranchName, Commit, Repo, Sha};
+use ui_state::{FlashMessage, UiState};
 
 fn initialize_terminal() -> Terminal<CrosstermBackend<Stdout>> {
     let original_hook = std::panic::take_hook();
@@ -142,94 +23,6 @@ fn initialize_terminal() -> Terminal<CrosstermBackend<Stdout>> {
         original_hook(panic_info);
     }));
     ratatui::init()
-}
-
-struct Repo {
-    commits: Vec<Commit>,
-    branches: HashMap<BranchName, Sha>,
-    head: Head,
-}
-
-impl Repo {
-    fn open(path: &str) -> Self {
-        let git_repo = Repository::open(path).unwrap_or_else(|err| {
-            exit_with_error(
-                &format!("Failed to open repository: {}", err.message()),
-                false,
-            )
-        });
-        Repo {
-            commits: Self::get_commits(&git_repo),
-            branches: Self::get_branches(&git_repo),
-            head: Self::get_head(&git_repo),
-        }
-    }
-
-    fn head_sha(&self) -> Sha {
-        self.head.sha(&self.branches)
-    }
-
-    fn get_commits(repo: &Repository) -> Vec<Commit> {
-        let mut revwalk = repo.revwalk().expect("Failed to create revwalk");
-        revwalk
-            .set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)
-            .expect("Failed to set sorting");
-        revwalk
-            .push_glob("refs/heads/*")
-            .expect("Failed to push branches");
-        revwalk
-            .push_glob("refs/remotes/*")
-            .expect("Failed to push remotes");
-
-        revwalk
-            .filter_map(|oid| oid.ok())
-            .filter_map(|oid| repo.find_commit(oid).ok())
-            .map(|commit| Commit {
-                sha: commit.id(),
-                parent_shas: commit.parent_ids().collect(),
-                message: commit.summary().unwrap_or("").to_string(),
-                author: commit.author().name().unwrap_or("").to_string(),
-                timestamp: commit.time().seconds(),
-            })
-            .collect()
-    }
-
-    fn get_branches(repo: &Repository) -> HashMap<BranchName, Sha> {
-        let mut branches: HashMap<BranchName, Sha> = HashMap::new();
-        if let Ok(branch_iter) = repo.branches(None) {
-            for branch_result in branch_iter {
-                if let Ok((branch, _branch_type)) = branch_result {
-                    let name = branch.name().ok().flatten().map(|s| s.to_string());
-                    if let Some(name) = name {
-                        if let Ok(reference) = branch.into_reference().resolve() {
-                            if let Some(oid) = reference.target() {
-                                branches.insert(BranchName(name), oid);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        branches
-    }
-
-    fn get_head(repo: &Repository) -> Head {
-        if let Ok(head_ref) = repo.head() {
-            if head_ref.is_branch() {
-                let branch_name = head_ref.shorthand().unwrap_or("").to_string();
-                Head::Attached {
-                    branch_name: BranchName(branch_name),
-                }
-            } else {
-                let sha = head_ref.target().expect("HEAD should have a target");
-                Head::Detached { sha }
-            }
-        } else {
-            Head::Detached {
-                sha: git2::Oid::zero(),
-            }
-        }
-    }
 }
 
 fn main() {
@@ -545,43 +338,6 @@ fn main() {
         }
     }
     ratatui::restore();
-}
-
-fn exit_with_error(message: &str, restore: bool) -> ! {
-    if restore {
-        ratatui::restore();
-    }
-    eprintln!("{}", message);
-    std::process::exit(1);
-}
-
-struct Commit {
-    sha: Sha,
-    parent_shas: Vec<Sha>,
-    message: String,
-    author: String,
-    timestamp: i64,
-}
-
-enum Head {
-    Attached { branch_name: BranchName },
-    Detached { sha: Sha },
-}
-
-impl Head {
-    fn sha(&self, branches: &HashMap<BranchName, Sha>) -> Sha {
-        match self {
-            Head::Attached { branch_name } => branches[branch_name],
-            Head::Detached { sha } => *sha,
-        }
-    }
-
-    fn branch_name(&self) -> Option<&BranchName> {
-        match self {
-            Head::Attached { branch_name } => Some(branch_name),
-            Head::Detached { .. } => None,
-        }
-    }
 }
 
 /// Build reverse index: commit sha -> list of branch names pointing to it
