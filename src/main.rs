@@ -86,22 +86,43 @@ impl UiState {
     }
 }
 
+struct Repo {
+    commits: Vec<Commit>,
+    branches: HashMap<BranchName, Sha>,
+    head: Head,
+}
+
+impl Repo {
+    fn open(path: &str) -> Self {
+        let git_repo = Repository::open(path).unwrap_or_else(|err| {
+            exit_with_error(
+                &format!("Failed to open repository: {}", err.message()),
+                false,
+            )
+        });
+        let commits = get_commits(&git_repo);
+        let branches = get_branches(&git_repo);
+        let head = get_head(&git_repo);
+        Repo {
+            commits,
+            branches,
+            head,
+        }
+    }
+
+    fn head_sha(&self) -> Sha {
+        self.head.sha(&self.branches)
+    }
+}
+
 fn main() {
     let path_to_repo = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
-    let repo = Repository::open(&path_to_repo).unwrap_or_else(|err| {
-        exit_with_error(
-            &format!("Failed to open repository: {}", err.message()),
-            false,
-        )
-    });
-    let commits = get_commits(&repo);
-    let branches = get_branches(&repo);
-    let head = get_head(&repo);
-    let head_sha = head.sha(&branches);
+    let repo = Repo::open(&path_to_repo);
 
-    let initial_row = commits
+    let initial_row = repo
+        .commits
         .iter()
-        .position(|commit| commit.sha == head_sha)
+        .position(|commit| commit.sha == repo.head_sha())
         .unwrap_or(0);
     let mut ui_state = UiState::new(get_terminal(), initial_row);
 
@@ -111,8 +132,8 @@ fn main() {
         // When terminal grows (e.g. maximizing a tmux pane), index_of_topmost_visible_row may leave
         // blank space at bottom. Pull the list down to fill available space.
         let visible_height = ui_state.visible_height();
-        if commits.len() >= visible_height {
-            let max_offset = commits.len() - visible_height;
+        if repo.commits.len() >= visible_height {
+            let max_offset = repo.commits.len() - visible_height;
             if ui_state.index_of_topmost_visible_row > max_offset {
                 ui_state.index_of_topmost_visible_row = max_offset;
             }
@@ -123,9 +144,9 @@ fn main() {
             .draw(|frame| {
                 render_ui(
                     frame,
-                    &commits,
-                    &branches,
-                    &head,
+                    &repo.commits,
+                    &repo.branches,
+                    &repo.head,
                     ui_state.index_of_selected_row,
                     ui_state.index_of_topmost_visible_row,
                     ui_state.is_typing_search_term,
@@ -167,9 +188,10 @@ fn main() {
                             // Exit typing mode, but only keep search if there are matches
                             ui_state.is_typing_search_term = false;
                             ui_state.index_of_search_term_history_being_viewed = None;
-                            let has_matches = commits
+                            let has_matches = repo
+                                .commits
                                 .iter()
-                                .any(|c| commit_matches_query(c, &ui_state.search_term, &branches));
+                                .any(|c| commit_matches_query(c, &ui_state.search_term, &repo.branches));
                             if has_matches {
                                 // Add to history only if there were matches (deduplicate consecutive)
                                 if ui_state.search_term_history.last()
@@ -238,9 +260,10 @@ fn main() {
                     }
                     // Live search: jump to first matching commit, or back to pre-search position
                     if !ui_state.search_term.is_empty() {
-                        if let Some(idx) = commits
+                        if let Some(idx) = repo
+                            .commits
                             .iter()
-                            .position(|c| commit_matches_query(c, &ui_state.search_term, &branches))
+                            .position(|c| commit_matches_query(c, &ui_state.search_term, &repo.branches))
                         {
                             ui_state.index_of_selected_row = idx;
                         } else if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
@@ -256,7 +279,7 @@ fn main() {
                 } else {
                     // Helper to check if a commit matches the search
                     let commit_matches = |c: &Commit| -> bool {
-                        commit_matches_query(c, &ui_state.search_term, &branches)
+                        commit_matches_query(c, &ui_state.search_term, &repo.branches)
                     };
 
                     match key.code {
@@ -303,7 +326,8 @@ fn main() {
                         }
                         KeyCode::Char('n') if !ui_state.search_term.is_empty() => {
                             // Find next match after current selection
-                            if let Some(idx) = commits
+                            if let Some(idx) = repo
+                                .commits
                                 .iter()
                                 .enumerate()
                                 .skip(ui_state.index_of_selected_row + 1)
@@ -311,7 +335,8 @@ fn main() {
                                 .map(|(i, _)| i)
                             {
                                 ui_state.index_of_selected_row = idx;
-                            } else if let Some(idx) = commits
+                            } else if let Some(idx) = repo
+                                .commits
                                 .iter()
                                 .enumerate()
                                 .take(ui_state.index_of_selected_row)
@@ -324,7 +349,8 @@ fn main() {
                         }
                         KeyCode::Char('N') if !ui_state.search_term.is_empty() => {
                             // Find previous match before current selection
-                            if let Some(idx) = commits
+                            if let Some(idx) = repo
+                                .commits
                                 .iter()
                                 .enumerate()
                                 .take(ui_state.index_of_selected_row)
@@ -333,7 +359,8 @@ fn main() {
                                 .map(|(i, _)| i)
                             {
                                 ui_state.index_of_selected_row = idx;
-                            } else if let Some(idx) = commits
+                            } else if let Some(idx) = repo
+                                .commits
                                 .iter()
                                 .enumerate()
                                 .skip(ui_state.index_of_selected_row + 1)
@@ -350,7 +377,7 @@ fn main() {
                             ui_state.jump_distance_string.clear();
                             ui_state.index_of_selected_row = (ui_state.index_of_selected_row
                                 + count)
-                                .min(commits.len().saturating_sub(1));
+                                .min(repo.commits.len().saturating_sub(1));
                         }
                         KeyCode::Char('k') | KeyCode::Up => {
                             let count = ui_state.jump_distance_string.parse::<usize>().unwrap_or(1);
@@ -372,17 +399,17 @@ fn main() {
                             // G with count goes to that line number, G alone goes to end
                             if let Ok(line) = ui_state.jump_distance_string.parse::<usize>() {
                                 ui_state.index_of_selected_row =
-                                    (line.saturating_sub(1)).min(commits.len().saturating_sub(1));
+                                    (line.saturating_sub(1)).min(repo.commits.len().saturating_sub(1));
                             } else {
-                                ui_state.index_of_selected_row = commits.len().saturating_sub(1);
+                                ui_state.index_of_selected_row = repo.commits.len().saturating_sub(1);
                             }
                             ui_state.jump_distance_string.clear();
                         }
                         KeyCode::Char('h') => {
                             // Jump to HEAD commit and center on it
                             ui_state.jump_distance_string.clear();
-                            let head_sha = head.sha(&branches);
-                            if let Some(head_idx) = commits.iter().position(|c| c.sha == head_sha) {
+                            let head_sha = repo.head_sha();
+                            if let Some(head_idx) = repo.commits.iter().position(|c| c.sha == head_sha) {
                                 ui_state.index_of_selected_row = head_idx;
                                 ui_state.center_view_on_selected_row();
                             }
@@ -390,7 +417,7 @@ fn main() {
                         KeyCode::Char('c') => {
                             // Copy full SHA to clipboard
                             ui_state.jump_distance_string.clear();
-                            let full_sha = commits[ui_state.index_of_selected_row].sha.to_string();
+                            let full_sha = repo.commits[ui_state.index_of_selected_row].sha.to_string();
                             let short_sha = &full_sha[..7];
                             if let Ok(mut child) = std::process::Command::new("pbcopy")
                                 .stdin(std::process::Stdio::piped())
@@ -411,7 +438,7 @@ fn main() {
                             let half_page = ui_state.visible_height() / 2;
                             ui_state.index_of_selected_row = (ui_state.index_of_selected_row
                                 + half_page)
-                                .min(commits.len().saturating_sub(1));
+                                .min(repo.commits.len().saturating_sub(1));
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             ui_state.jump_distance_string.clear();
