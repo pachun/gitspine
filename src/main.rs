@@ -45,19 +45,22 @@ impl UiState {
 
     fn new(repo: &Repo) -> Self {
         UiState {
+            is_first_render: true,
+
+            index_of_topmost_visible_row: 0,
             index_of_selected_row: repo
                 .commits
                 .iter()
                 .position(|commit| commit.sha == repo.head_sha())
                 .unwrap_or(0),
-            index_of_topmost_visible_row: 0,
+
             is_typing_search_term: false,
             search_term: String::new(),
-            search_term_history: Vec::new(),
             index_of_search_term_history_being_viewed: None,
             index_of_selected_row_when_search_began: None,
+
+            search_term_history: Vec::new(),
             jump_distance_string: String::new(),
-            is_first_render: true,
             flash_message: None,
         }
     }
