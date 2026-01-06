@@ -57,23 +57,22 @@ fn main() {
 
     let mut terminal = ratatui::init();
     loop {
-        let visible_height = terminal.size().unwrap().height.saturating_sub(3) as usize; // Reserve 3 for search bar with borders
-        let half_page = visible_height / 2;
+        let number_of_rows = terminal.size().unwrap().height.saturating_sub(3) as usize; // Reserve 3 for search bar with borders
 
         // Center view on selected commit on first render
         if is_first_render {
             center_view_on_selected_row(
                 index_of_selected_row,
                 &mut index_of_topmost_visible_row,
-                visible_height,
+                number_of_rows,
             );
             is_first_render = false;
         }
 
         // When terminal grows (e.g. maximizing a tmux pane), index_of_topmost_visible_row may leave
         // blank space at bottom. Pull the list down to fill available space.
-        if commits.len() >= visible_height {
-            let max_offset = commits.len() - visible_height;
+        if commits.len() >= number_of_rows {
+            let max_offset = commits.len() - number_of_rows;
             if index_of_topmost_visible_row > max_offset {
                 index_of_topmost_visible_row = max_offset;
             }
@@ -111,7 +110,7 @@ fn main() {
                                 center_view_on_selected_row(
                                     index_of_selected_row,
                                     &mut index_of_topmost_visible_row,
-                                    visible_height,
+                                    number_of_rows,
                                 );
                             }
                             index_of_selected_row_when_search_began = None;
@@ -126,7 +125,7 @@ fn main() {
                                 center_view_on_selected_row(
                                     index_of_selected_row,
                                     &mut index_of_topmost_visible_row,
-                                    visible_height,
+                                    number_of_rows,
                                 );
                             }
                             index_of_selected_row_when_search_began = None;
@@ -185,7 +184,7 @@ fn main() {
                                     center_view_on_selected_row(
                                         index_of_selected_row,
                                         &mut index_of_topmost_visible_row,
-                                        visible_height,
+                                        number_of_rows,
                                     );
                                 }
                                 index_of_selected_row_when_search_began = None;
@@ -213,7 +212,7 @@ fn main() {
                             center_view_on_selected_row(
                                 index_of_selected_row,
                                 &mut index_of_topmost_visible_row,
-                                visible_height,
+                                number_of_rows,
                             );
                         }
                     } else if let Some(pre) = index_of_selected_row_when_search_began {
@@ -222,7 +221,7 @@ fn main() {
                         center_view_on_selected_row(
                             index_of_selected_row,
                             &mut index_of_topmost_visible_row,
-                            visible_height,
+                            number_of_rows,
                         );
                     }
                 } else {
@@ -355,7 +354,7 @@ fn main() {
                                 center_view_on_selected_row(
                                     index_of_selected_row,
                                     &mut index_of_topmost_visible_row,
-                                    visible_height,
+                                    number_of_rows,
                                 );
                             }
                         }
@@ -380,12 +379,13 @@ fn main() {
                         }
                         KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             jump_distance_string.clear();
-                            index_of_selected_row = (index_of_selected_row + half_page)
+                            index_of_selected_row = (index_of_selected_row + number_of_rows / 2)
                                 .min(commits.len().saturating_sub(1));
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             jump_distance_string.clear();
-                            index_of_selected_row = index_of_selected_row.saturating_sub(half_page);
+                            index_of_selected_row =
+                                index_of_selected_row.saturating_sub(number_of_rows / 2);
                         }
                         _ => {}
                     }
@@ -393,7 +393,7 @@ fn main() {
                 ensure_selected_row_is_visible(
                     index_of_selected_row,
                     &mut index_of_topmost_visible_row,
-                    visible_height,
+                    number_of_rows,
                 );
             }
             _ => {}
