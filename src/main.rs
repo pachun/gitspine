@@ -27,41 +27,14 @@ struct FlashMessage {
     shown_at: Instant,
 }
 
-enum SearchState {
-    NotSearching,
-    TypingSearch {
-        search_term: String,
-        index_of_search_term_history_being_viewed: Option<usize>,
-        index_of_selected_row_when_search_began: usize,
-    },
-    ViewingSearchResults {
-        search_term: String,
-    },
-}
-
-impl SearchState {
-    fn search_term(&self) -> &str {
-        match self {
-            SearchState::NotSearching => "",
-            SearchState::TypingSearch { search_term, .. } => search_term,
-            SearchState::ViewingSearchResults { search_term } => search_term,
-        }
-    }
-
-    fn is_typing(&self) -> bool {
-        matches!(self, SearchState::TypingSearch { .. })
-    }
-
-    fn is_viewing_results(&self) -> bool {
-        matches!(self, SearchState::ViewingSearchResults { .. })
-    }
-}
-
 struct UiState {
     index_of_selected_row: usize,
     index_of_topmost_visible_row: usize,
-    search_state: SearchState,
+    is_typing_search_term: bool,
+    search_term: String,
     search_term_history: Vec<String>,
+    index_of_search_term_history_being_viewed: Option<usize>,
+    index_of_selected_row_when_search_began: Option<usize>,
     jump_distance_string: String,
     is_first_render: bool,
     flash_message: Option<FlashMessage>,
@@ -81,7 +54,12 @@ impl UiState {
                 .position(|commit| commit.sha == repo.head_sha())
                 .unwrap_or(0),
 
-            search_state: SearchState::NotSearching,
+            is_typing_search_term: false,
+            search_term: String::new(),
+
+            index_of_search_term_history_being_viewed: None,
+            index_of_selected_row_when_search_began: None,
+
             search_term_history: Vec::new(),
             jump_distance_string: String::new(),
             flash_message: None,
@@ -271,159 +249,168 @@ fn main() {
             .unwrap();
         match event::read().unwrap() {
             Event::Key(key) => {
-                if let SearchState::TypingSearch {
-                    ref mut search_term,
-                    ref mut index_of_search_term_history_being_viewed,
-                    index_of_selected_row_when_search_began,
-                } = ui_state.search_state
-                {
+                if ui_state.is_typing_search_term {
                     match key.code {
-                        KeyCode::Esc | KeyCode::Char('c')
-                            if key.code == KeyCode::Esc
-                                || key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
+                        KeyCode::Esc => {
+                            ui_state.is_typing_search_term = false;
+                            ui_state.search_term.clear();
+                            ui_state.index_of_search_term_history_being_viewed = None;
                             // Return to pre-search position on cancel
-                            ui_state.index_of_selected_row = index_of_selected_row_when_search_began;
-                            ui_state.center_view_on_selected_row(&terminal);
-                            ui_state.search_state = SearchState::NotSearching;
+                            if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
+                                ui_state.index_of_selected_row = pre;
+                                ui_state.center_view_on_selected_row(&terminal);
+                            }
+                            ui_state.index_of_selected_row_when_search_began = None;
+                        }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            ui_state.is_typing_search_term = false;
+                            ui_state.search_term.clear();
+                            ui_state.index_of_search_term_history_being_viewed = None;
+                            // Return to pre-search position on cancel
+                            if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
+                                ui_state.index_of_selected_row = pre;
+                                ui_state.center_view_on_selected_row(&terminal);
+                            }
+                            ui_state.index_of_selected_row_when_search_began = None;
                         }
                         KeyCode::Enter => {
                             // Exit typing mode, but only keep search if there are matches
-                            let has_matches = repo
-                                .commits
-                                .iter()
-                                .any(|c| commit_matches_query(c, search_term, &repo.branches));
+                            ui_state.is_typing_search_term = false;
+                            ui_state.index_of_search_term_history_being_viewed = None;
+                            let has_matches = repo.commits.iter().any(|c| {
+                                commit_matches_query(c, &ui_state.search_term, &repo.branches)
+                            });
                             if has_matches {
                                 // Add to history only if there were matches (deduplicate consecutive)
-                                if ui_state.search_term_history.last() != Some(search_term) {
-                                    ui_state.search_term_history.push(search_term.clone());
+                                if ui_state.search_term_history.last()
+                                    != Some(&ui_state.search_term)
+                                {
+                                    ui_state
+                                        .search_term_history
+                                        .push(ui_state.search_term.clone());
                                 }
-                                ui_state.search_state = SearchState::ViewingSearchResults {
-                                    search_term: std::mem::take(search_term),
-                                };
                             } else {
-                                ui_state.search_state = SearchState::NotSearching;
+                                ui_state.search_term.clear();
                             }
+                            ui_state.index_of_selected_row_when_search_began = None;
                         }
                         KeyCode::Up => {
                             // Navigate to previous history entry
                             if !ui_state.search_term_history.is_empty() {
-                                *index_of_search_term_history_being_viewed = Some(
-                                    match *index_of_search_term_history_being_viewed {
+                                ui_state.index_of_search_term_history_being_viewed = Some(
+                                    match ui_state.index_of_search_term_history_being_viewed {
                                         None => ui_state.search_term_history.len() - 1,
                                         Some(0) => 0,
                                         Some(i) => i - 1,
                                     },
                                 );
-                                *search_term = ui_state.search_term_history
-                                    [index_of_search_term_history_being_viewed.unwrap()]
+                                ui_state.search_term = ui_state.search_term_history
+                                    [ui_state.index_of_search_term_history_being_viewed.unwrap()]
                                 .clone();
                             }
                         }
                         KeyCode::Down => {
                             // Navigate to next history entry or back to empty
-                            if let Some(i) = *index_of_search_term_history_being_viewed {
+                            if let Some(i) = ui_state.index_of_search_term_history_being_viewed {
                                 if i + 1 < ui_state.search_term_history.len() {
-                                    *index_of_search_term_history_being_viewed = Some(i + 1);
-                                    *search_term = ui_state.search_term_history[i + 1].clone();
+                                    ui_state.index_of_search_term_history_being_viewed =
+                                        Some(i + 1);
+                                    ui_state.search_term =
+                                        ui_state.search_term_history[i + 1].clone();
                                 } else {
-                                    *index_of_search_term_history_being_viewed = None;
-                                    search_term.clear();
+                                    ui_state.index_of_search_term_history_being_viewed = None;
+                                    ui_state.search_term.clear();
                                 }
                             }
                         }
                         KeyCode::Backspace => {
-                            if search_term.is_empty() {
+                            if ui_state.search_term.is_empty() {
                                 // Backspace on empty query exits search mode
-                                ui_state.index_of_selected_row = index_of_selected_row_when_search_began;
-                                ui_state.center_view_on_selected_row(&terminal);
-                                ui_state.search_state = SearchState::NotSearching;
+                                ui_state.is_typing_search_term = false;
+                                ui_state.index_of_search_term_history_being_viewed = None;
+                                // Return to pre-search position
+                                if let Some(pre) = ui_state.index_of_selected_row_when_search_began
+                                {
+                                    ui_state.index_of_selected_row = pre;
+                                    ui_state.center_view_on_selected_row(&terminal);
+                                }
+                                ui_state.index_of_selected_row_when_search_began = None;
                             } else {
-                                search_term.pop();
-                                *index_of_search_term_history_being_viewed = None;
+                                ui_state.search_term.pop();
+                                ui_state.index_of_search_term_history_being_viewed = None; // Editing breaks out of history navigation
                             }
                         }
                         KeyCode::Char(c) => {
-                            search_term.push(c);
-                            *index_of_search_term_history_being_viewed = None;
+                            ui_state.search_term.push(c);
+                            ui_state.index_of_search_term_history_being_viewed = None; // Editing breaks out of history navigation
                         }
                         _ => {}
                     }
                     // Live search: jump to first matching commit, or back to pre-search position
-                    if let SearchState::TypingSearch {
-                        ref search_term,
-                        index_of_selected_row_when_search_began,
-                        ..
-                    } = ui_state.search_state
-                    {
-                        if !search_term.is_empty() {
-                            if let Some(idx) = repo.commits.iter().position(|c| {
-                                commit_matches_query(c, search_term, &repo.branches)
-                            }) {
-                                ui_state.index_of_selected_row = idx;
-                            } else {
-                                // No matches - return to where we were before searching
-                                ui_state.index_of_selected_row = index_of_selected_row_when_search_began;
-                                ui_state.center_view_on_selected_row(&terminal);
-                            }
-                        } else {
-                            // Empty query - return to where we were
-                            ui_state.index_of_selected_row = index_of_selected_row_when_search_began;
+                    if !ui_state.search_term.is_empty() {
+                        if let Some(idx) = repo.commits.iter().position(|c| {
+                            commit_matches_query(c, &ui_state.search_term, &repo.branches)
+                        }) {
+                            ui_state.index_of_selected_row = idx;
+                        } else if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
+                            // No matches - return to where we were before searching
+                            ui_state.index_of_selected_row = pre;
                             ui_state.center_view_on_selected_row(&terminal);
                         }
+                    } else if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
+                        // Empty query - return to where we were
+                        ui_state.index_of_selected_row = pre;
+                        ui_state.center_view_on_selected_row(&terminal);
                     }
                 } else {
                     // Helper to check if a commit matches the search
-                    let search_term = ui_state.search_state.search_term();
                     let commit_matches = |c: &Commit| -> bool {
-                        commit_matches_query(c, search_term, &repo.branches)
+                        commit_matches_query(c, &ui_state.search_term, &repo.branches)
                     };
 
                     match key.code {
                         KeyCode::Char('q') => {
                             if !ui_state.jump_distance_string.is_empty() {
                                 ui_state.jump_distance_string.clear();
-                            } else if ui_state.search_state.is_viewing_results() {
-                                ui_state.search_state = SearchState::NotSearching;
-                            } else {
+                            } else if ui_state.search_term.is_empty() {
                                 break;
+                            } else {
+                                ui_state.search_term.clear();
                             }
                         }
                         KeyCode::Esc => {
                             if !ui_state.jump_distance_string.is_empty() {
                                 ui_state.jump_distance_string.clear();
-                            } else if ui_state.search_state.is_viewing_results() {
-                                ui_state.search_state = SearchState::NotSearching;
-                            } else {
+                            } else if ui_state.search_term.is_empty() {
                                 break;
+                            } else {
+                                ui_state.search_term.clear();
                             }
                         }
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             if !ui_state.jump_distance_string.is_empty() {
                                 ui_state.jump_distance_string.clear();
-                            } else if ui_state.search_state.is_viewing_results() {
-                                ui_state.search_state = SearchState::NotSearching;
-                            } else {
+                            } else if ui_state.search_term.is_empty() {
                                 break;
+                            } else {
+                                ui_state.search_term.clear();
                             }
                         }
                         KeyCode::Backspace => {
                             if !ui_state.jump_distance_string.is_empty() {
                                 ui_state.jump_distance_string.pop();
                             } else {
-                                ui_state.search_state = SearchState::NotSearching;
+                                ui_state.search_term.clear();
                             }
                         }
                         KeyCode::Char('/') => {
                             ui_state.jump_distance_string.clear();
-                            ui_state.search_state = SearchState::TypingSearch {
-                                search_term: String::new(),
-                                index_of_search_term_history_being_viewed: None,
-                                index_of_selected_row_when_search_began: ui_state
-                                    .index_of_selected_row,
-                            };
+                            ui_state.is_typing_search_term = true;
+                            ui_state.search_term.clear();
+                            ui_state.index_of_selected_row_when_search_began =
+                                Some(ui_state.index_of_selected_row);
                         }
-                        KeyCode::Char('n') if ui_state.search_state.is_viewing_results() => {
+                        KeyCode::Char('n') if !ui_state.search_term.is_empty() => {
                             // Find next match after current selection
                             if let Some(idx) = repo
                                 .commits
@@ -446,7 +433,7 @@ fn main() {
                                 ui_state.index_of_selected_row = idx;
                             }
                         }
-                        KeyCode::Char('N') if ui_state.search_state.is_viewing_results() => {
+                        KeyCode::Char('N') if !ui_state.search_term.is_empty() => {
                             // Find previous match before current selection
                             if let Some(idx) = repo
                                 .commits
@@ -1019,7 +1006,7 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
                         // HEAD points to a branch: "HEAD → branch_name"
                         message_spans.extend(highlight_matches(
                             "HEAD",
-                            ui_state.search_state.search_term(),
+                            &ui_state.search_term,
                             Style::default().fg(Color::Cyan).bold(),
                             highlight_style,
                         ));
@@ -1030,7 +1017,7 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
                         let branch_color = lane_colors[commit_lane % lane_colors.len()];
                         message_spans.extend(highlight_matches(
                             &head_branch.0,
-                            ui_state.search_state.search_term(),
+                            &ui_state.search_term,
                             Style::default().fg(branch_color).bold(),
                             highlight_style,
                         ));
@@ -1038,7 +1025,7 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
                         // Detached HEAD
                         message_spans.extend(highlight_matches(
                             "HEAD",
-                            ui_state.search_state.search_term(),
+                            &ui_state.search_term,
                             Style::default().fg(Color::Cyan).bold(),
                             highlight_style,
                         ));
@@ -1062,7 +1049,7 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
                         let branch_color = lane_colors[commit_lane % lane_colors.len()];
                         message_spans.extend(highlight_matches(
                             &branch_name.0,
-                            ui_state.search_state.search_term(),
+                            &ui_state.search_term,
                             Style::default().fg(branch_color).bold(),
                             highlight_style,
                         ));
@@ -1078,7 +1065,7 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
 
             message_spans.extend(highlight_matches(
                 &c.message,
-                ui_state.search_state.search_term(),
+                &ui_state.search_term,
                 Style::default(),
                 highlight_style,
             ));
@@ -1095,7 +1082,7 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
                 Cell::from(Line::from(message_spans)),
                 Cell::from(Line::from(highlight_matches(
                     &date,
-                    ui_state.search_state.search_term(),
+                    &ui_state.search_term,
                     if i == ui_state.index_of_selected_row {
                         Style::default().bold()
                     } else {
@@ -1106,7 +1093,7 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
                 Cell::from(
                     Line::from(highlight_matches(
                         &time,
-                        ui_state.search_state.search_term(),
+                        &ui_state.search_term,
                         if i == ui_state.index_of_selected_row {
                             Style::default().fg(Color::Gray)
                         } else {
@@ -1118,7 +1105,7 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
                 ),
                 Cell::from(Line::from(highlight_matches(
                     &c.author,
-                    ui_state.search_state.search_term(),
+                    &ui_state.search_term,
                     if i == ui_state.index_of_selected_row {
                         Style::default().bold()
                     } else {
@@ -1128,7 +1115,7 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
                 ))),
                 Cell::from(Line::from(highlight_matches(
                     &short_sha,
-                    ui_state.search_state.search_term(),
+                    &ui_state.search_term,
                     if i == ui_state.index_of_selected_row {
                         Style::default().fg(Color::Gray)
                     } else {
@@ -1162,8 +1149,8 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
     frame.render_widget(table, chunks[0]);
 
     // Render search bar with right-aligned match counter
-    let browse_mode = ui_state.search_state.is_viewing_results();
-    let search_active = ui_state.search_state.is_typing() || browse_mode;
+    let browse_mode = !ui_state.is_typing_search_term && !ui_state.search_term.is_empty();
+    let search_active = ui_state.is_typing_search_term || browse_mode;
     let border_color = if search_active {
         Color::White
     } else {
@@ -1182,30 +1169,25 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
     };
     frame.render_widget(search_block, chunks[1]);
 
-    if let SearchState::TypingSearch {
-        ref search_term,
-        index_of_search_term_history_being_viewed,
-        ..
-    } = ui_state.search_state
-    {
+    if ui_state.is_typing_search_term {
         // Typing mode: yellow input with cursor, match count hint
-        let match_count = if search_term.is_empty() {
+        let match_count = if ui_state.search_term.is_empty() {
             0
         } else {
             repo.commits
                 .iter()
-                .filter(|c| commit_matches_query(c, search_term, &repo.branches))
+                .filter(|c| commit_matches_query(c, &ui_state.search_term, &repo.branches))
                 .count()
         };
 
-        let hint = if search_term.is_empty() {
+        let hint = if ui_state.search_term.is_empty() {
             // Show history hints when query is empty
-            let can_go_older = match index_of_search_term_history_being_viewed {
-                None => !ui_state.search_term_history.is_empty(),
+            let can_go_older = match ui_state.index_of_search_term_history_being_viewed {
+                None => ui_state.search_term_history.len() > 0,
                 Some(0) => false,
                 Some(_) => true,
             };
-            let can_go_newer = match index_of_search_term_history_being_viewed {
+            let can_go_newer = match ui_state.index_of_search_term_history_being_viewed {
                 None => false,
                 Some(i) => i < ui_state.search_term_history.len() - 1,
             };
@@ -1225,7 +1207,7 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
 
         let search_input = Paragraph::new(Line::from(vec![
             Span::styled(
-                format!("{}█", search_term),
+                format!("{}█", ui_state.search_term),
                 Style::default().fg(Color::Yellow),
             ),
             Span::styled(hint, Style::default().fg(Color::DarkGray)),
@@ -1234,7 +1216,7 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
     } else if browse_mode {
         // Browse mode: grey input (no cursor), yellow counter
         let search_input = Paragraph::new(Line::from(vec![Span::styled(
-            ui_state.search_state.search_term(),
+            &ui_state.search_term,
             Style::default().fg(Color::DarkGray),
         )]));
         frame.render_widget(search_input, search_inner);
@@ -1245,7 +1227,7 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
             .iter()
             .enumerate()
             .filter_map(|(i, c)| {
-                if commit_matches_query(c, ui_state.search_state.search_term(), &repo.branches) {
+                if commit_matches_query(c, &ui_state.search_term, &repo.branches) {
                     Some(i)
                 } else {
                     None
@@ -1326,7 +1308,7 @@ fn render_ui(frame: &mut Frame, ui_state: &UiState, repo: &Repo) {
     }
 
     // Show copy feedback in bottom right if recent (works in browse and normal modes)
-    if !ui_state.search_state.is_typing() {
+    if !ui_state.is_typing_search_term {
         if let Some(msg) = &ui_state.flash_message {
             if msg.shown_at.elapsed().as_secs() < 2 {
                 let feedback = Paragraph::new(Line::from(vec![Span::styled(
