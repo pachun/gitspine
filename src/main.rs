@@ -1,14 +1,15 @@
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{Stdout, Write};
 use std::time::Instant;
 
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use git2::Repository;
-use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::prelude::CrosstermBackend;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
+use ratatui::{Frame, Terminal};
 
 type Sha = git2::Oid;
 
@@ -53,9 +54,11 @@ fn main() {
     let mut index_of_selected_row_when_search_began: Option<usize> = None;
     let mut flash_message: Option<FlashMessage> = None;
 
-    restore_terminal_on_crash();
+    // make this let mut terminal = get_terminal()
+    // restore_terminal_on_crash();
+    // let mut terminal = ratatui::init();
+    let mut terminal = get_terminal();
 
-    let mut terminal = ratatui::init();
     loop {
         let number_of_rows = terminal.size().unwrap().height.saturating_sub(3) as usize; // Reserve 3 for search bar with borders
 
@@ -402,12 +405,13 @@ fn main() {
     ratatui::restore();
 }
 
-fn restore_terminal_on_crash() {
+fn get_terminal() -> Terminal<CrosstermBackend<Stdout>> {
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
         ratatui::restore();
         original_hook(panic_info);
     }));
+    return ratatui::init();
 }
 
 fn exit_with_error(message: &str, restore: bool) -> ! {
