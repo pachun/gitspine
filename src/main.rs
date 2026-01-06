@@ -42,9 +42,14 @@ struct UiState {
 }
 
 impl UiState {
-    fn new(terminal: Terminal<CrosstermBackend<Stdout>>, initial_row: usize) -> Self {
+    fn new(repo: &Repo) -> Self {
+        let initial_row = repo
+            .commits
+            .iter()
+            .position(|commit| commit.sha == repo.head_sha())
+            .unwrap_or(0);
         UiState {
-            terminal,
+            terminal: Self::initialize_terminal(),
             index_of_selected_row: initial_row,
             index_of_topmost_visible_row: 0,
             is_typing_search_term: false,
@@ -84,6 +89,15 @@ impl UiState {
             self.is_first_render = false;
         }
     }
+
+    fn initialize_terminal() -> Terminal<CrosstermBackend<Stdout>> {
+        let original_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |panic_info| {
+            ratatui::restore();
+            original_hook(panic_info);
+        }));
+        ratatui::init()
+    }
 }
 
 struct Repo {
@@ -118,13 +132,7 @@ impl Repo {
 fn main() {
     let path_to_repo = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
     let repo = Repo::open(&path_to_repo);
-
-    let initial_row = repo
-        .commits
-        .iter()
-        .position(|commit| commit.sha == repo.head_sha())
-        .unwrap_or(0);
-    let mut ui_state = UiState::new(get_terminal(), initial_row);
+    let mut ui_state = UiState::new(&repo);
 
     loop {
         ui_state.center_view_on_selected_row_on_first_render();
@@ -455,15 +463,6 @@ fn main() {
         }
     }
     ratatui::restore();
-}
-
-fn get_terminal() -> Terminal<CrosstermBackend<Stdout>> {
-    let original_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic_info| {
-        ratatui::restore();
-        original_hook(panic_info);
-    }));
-    return ratatui::init();
 }
 
 fn exit_with_error(message: &str, restore: bool) -> ! {
