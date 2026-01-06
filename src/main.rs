@@ -54,9 +54,6 @@ fn main() {
     let mut index_of_selected_row_when_search_began: Option<usize> = None;
     let mut flash_message: Option<FlashMessage> = None;
 
-    // make this let mut terminal = get_terminal()
-    // restore_terminal_on_crash();
-    // let mut terminal = ratatui::init();
     let mut terminal = get_terminal();
 
     loop {
