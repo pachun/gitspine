@@ -44,13 +44,12 @@ impl UiState {
     const SEARCH_BAR_HEIGHT: u16 = 3;
 
     fn new(repo: &Repo) -> Self {
-        let initial_row = repo
-            .commits
-            .iter()
-            .position(|commit| commit.sha == repo.head_sha())
-            .unwrap_or(0);
         UiState {
-            index_of_selected_row: initial_row,
+            index_of_selected_row: repo
+                .commits
+                .iter()
+                .position(|commit| commit.sha == repo.head_sha())
+                .unwrap_or(0),
             index_of_topmost_visible_row: 0,
             is_typing_search_term: false,
             search_term: String::new(),
@@ -77,11 +76,14 @@ impl UiState {
             .saturating_sub(Self::git_graph_height(terminal) / 2);
     }
 
-    fn scroll_selected_row_to_top(&mut self) {
+    fn scroll_selected_row_to_top_of_viewport(&mut self) {
         self.index_of_topmost_visible_row = self.index_of_selected_row;
     }
 
-    fn scroll_selected_row_to_bottom(&mut self, terminal: &Terminal<CrosstermBackend<Stdout>>) {
+    fn scroll_selected_row_to_bottom_of_viewport(
+        &mut self,
+        terminal: &Terminal<CrosstermBackend<Stdout>>,
+    ) {
         self.index_of_topmost_visible_row =
             self.index_of_selected_row - Self::git_graph_height(terminal) + 1;
     }
@@ -89,13 +91,13 @@ impl UiState {
     fn ensure_selected_row_is_visible(&mut self, terminal: &Terminal<CrosstermBackend<Stdout>>) {
         let selected_row_is_above_viewport =
             self.index_of_selected_row < self.index_of_topmost_visible_row;
-        let selected_row_is_below_viewport =
-            self.index_of_selected_row >= self.index_of_topmost_visible_row + Self::git_graph_height(terminal);
+        let selected_row_is_below_viewport = self.index_of_selected_row
+            >= self.index_of_topmost_visible_row + Self::git_graph_height(terminal);
 
         if selected_row_is_above_viewport {
-            self.scroll_selected_row_to_top();
+            self.scroll_selected_row_to_top_of_viewport();
         } else if selected_row_is_below_viewport {
-            self.scroll_selected_row_to_bottom(terminal);
+            self.scroll_selected_row_to_bottom_of_viewport(terminal);
         }
     }
 
