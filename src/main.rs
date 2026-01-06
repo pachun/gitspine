@@ -28,14 +28,17 @@ struct FlashMessage {
 
 fn main() {
     let path_to_repo = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
-    let repo = Repository::open(&path_to_repo)
-        .unwrap_or_else(|err| exit_with_error(&format!("Failed to open repository: {}", err.message()), false));
+    let repo = Repository::open(&path_to_repo).unwrap_or_else(|err| {
+        exit_with_error(
+            &format!("Failed to open repository: {}", err.message()),
+            false,
+        )
+    });
     let commits = get_commits(&repo);
     let branches = get_branches(&repo);
     let head = get_head(&repo);
-
-    // Start with HEAD selected
     let head_sha = head.sha(&branches);
+
     let mut index_of_selected_row: usize = commits
         .iter()
         .position(|commit| commit.sha == head_sha)
