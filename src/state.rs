@@ -7,7 +7,7 @@ pub struct FlashMessage {
     pub shown_at: Instant,
 }
 
-pub struct UiState {
+pub struct State {
     pub index_of_selected_row: usize,
     pub index_of_topmost_visible_row: usize,
     pub is_typing_search_term: bool,
@@ -19,11 +19,11 @@ pub struct UiState {
     pub flash_message: Option<FlashMessage>,
 }
 
-impl UiState {
+impl State {
     pub const SEARCH_BAR_HEIGHT: u16 = 3;
 
     pub fn new(repo: &Repo) -> Self {
-        UiState {
+        State {
             index_of_topmost_visible_row: 0,
             index_of_selected_row: repo
                 .commits
