@@ -1,8 +1,8 @@
 use std::io::{Stdout, Write};
 use std::time::Instant;
 
-use ratatui::prelude::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::prelude::CrosstermBackend;
 
 use crate::repo::Repo;
 use crate::ui_state::{FlashMessage, UiState};
@@ -234,7 +234,9 @@ fn confirm_search(ui_state: &mut UiState, repo: &Repo) {
         .any(|c| c.matches(&ui_state.search_term, &repo.branches));
     if has_matches {
         if ui_state.search_term_history.last() != Some(&ui_state.search_term) {
-            ui_state.search_term_history.push(ui_state.search_term.clone());
+            ui_state
+                .search_term_history
+                .push(ui_state.search_term.clone());
         }
     } else {
         ui_state.search_term.clear();
@@ -246,16 +248,15 @@ fn navigate_to_previous_search_history_entry(ui_state: &mut UiState) {
     if ui_state.search_term_history.is_empty() {
         return;
     }
-    ui_state.index_of_search_term_history_being_viewed = Some(
-        match ui_state.index_of_search_term_history_being_viewed {
+    ui_state.index_of_search_term_history_being_viewed =
+        Some(match ui_state.index_of_search_term_history_being_viewed {
             None => ui_state.search_term_history.len() - 1,
             Some(0) => 0,
             Some(i) => i - 1,
-        },
-    );
-    ui_state.search_term =
-        ui_state.search_term_history[ui_state.index_of_search_term_history_being_viewed.unwrap()]
-            .clone();
+        });
+    ui_state.search_term = ui_state.search_term_history
+        [ui_state.index_of_search_term_history_being_viewed.unwrap()]
+    .clone();
 }
 
 fn navigate_to_next_search_history_entry(ui_state: &mut UiState) {
