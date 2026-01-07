@@ -9,6 +9,8 @@ mod viewport;
 use std::io::Stdout;
 
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::execute;
+use crossterm::terminal::SetTitle;
 use ratatui::prelude::CrosstermBackend;
 use ratatui::Terminal;
 
@@ -33,6 +35,7 @@ fn main() {
     let path_to_repo = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
     let repo = Repo::open(&path_to_repo);
     let mut terminal = initialize_terminal();
+    let _ = execute!(std::io::stdout(), SetTitle(&repo.name));
     let mut state = State::new(&repo);
 
     center_view_on_selected_row(&mut state, &terminal);

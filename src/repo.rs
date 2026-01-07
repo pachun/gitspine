@@ -84,6 +84,7 @@ impl Head {
 }
 
 pub struct Repo {
+    pub name: String,
     pub commits: Vec<Commit>,
     pub branches: HashMap<BranchName, Sha>,
     pub head: Head,
@@ -95,7 +96,14 @@ impl Repo {
             eprintln!("Failed to open repository: {}", err.message());
             std::process::exit(1);
         });
+        let name = git_repo
+            .workdir()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
         Repo {
+            name,
             commits: Self::get_commits(&git_repo),
             branches: Self::get_branches(&git_repo),
             head: Self::get_head(&git_repo),

@@ -453,14 +453,17 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         .alignment(ratatui::layout::Alignment::Right);
         frame.render_widget(counter, search_inner);
     } else {
-        // Normal mode: show count prefix on left if present, centered hints
-        if !state.jump_distance_string.is_empty() {
-            let count_display = Paragraph::new(Line::from(vec![Span::styled(
-                &state.jump_distance_string,
-                Style::default().fg(Color::DarkGray),
-            )]));
-            frame.render_widget(count_display, search_inner);
-        }
+        // Normal mode: repo name on left (or count if typing), centered hints
+        let left_text = if !state.jump_distance_string.is_empty() {
+            state.jump_distance_string.clone()
+        } else {
+            repo.name.clone()
+        };
+        let left_display = Paragraph::new(Line::from(vec![Span::styled(
+            left_text,
+            Style::default().fg(Color::DarkGray),
+        )]));
+        frame.render_widget(left_display, search_inner);
 
         // Check if we're on HEAD to conditionally show h:head hint
         let head_idx = repo.commits.iter().position(|c| c.sha == head_sha);
