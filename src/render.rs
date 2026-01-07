@@ -375,14 +375,20 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         .alignment(ratatui::layout::Alignment::Right);
         frame.render_widget(hint, search_inner);
     } else if state.is_deleting_branch {
-        // Branch deletion mode: red input with cursor, hint for delete/cancel
-        let delete_input = Paragraph::new(Line::from(vec![
+        // Branch deletion mode: red input with cursor and grey preview
+        let selected_sha = repo.commits[state.index_of_selected_row].sha;
+        let local_branches = repo.local_branches_at(selected_sha);
+        let preview = get_tab_preview(&state.delete_branch_name, &local_branches);
+
+        let mut spans = vec![
             Span::styled("delete branch: ", Style::default().fg(Color::Red)),
-            Span::styled(
-                format!("{}█", state.delete_branch_name),
-                Style::default().fg(Color::Red),
-            ),
-        ]));
+            Span::styled(&state.delete_branch_name, Style::default().fg(Color::Red)),
+            Span::styled("█", Style::default().fg(Color::Red)),
+        ];
+        if let Some(preview_text) = preview {
+            spans.push(Span::styled(preview_text, Style::default().fg(Color::DarkGray)));
+        }
+        let delete_input = Paragraph::new(Line::from(spans));
         frame.render_widget(delete_input, search_inner);
 
         let hint = Paragraph::new(Line::from(vec![Span::styled(
@@ -685,4 +691,42 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             x_offset += col_width + col_spacing;
         }
     }
+}
+
+/// Get preview text for tab completion (what would be added on next Tab)
+fn get_tab_preview(typed: &str, branches: &[String]) -> Option<String> {
+    let mut matches: Vec<&String> = branches.iter().filter(|b| b.starts_with(typed)).collect();
+    matches.sort();
+
+    if matches.is_empty() {
+        return None;
+    }
+
+    let common = common_prefix_of(&matches);
+    if common.len() > typed.len() {
+        // Preview is rest of common prefix
+        Some(common[typed.len()..].to_string())
+    } else if !matches.is_empty() && matches[0].len() > typed.len() {
+        // Preview is rest of first match
+        Some(matches[0][typed.len()..].to_string())
+    } else {
+        None
+    }
+}
+
+fn common_prefix_of(strings: &[&String]) -> String {
+    if strings.is_empty() {
+        return String::new();
+    }
+    let first = &strings[0];
+    let mut prefix_len = first.len();
+    for s in &strings[1..] {
+        prefix_len = first
+            .chars()
+            .zip(s.chars())
+            .take_while(|(a, b)| a == b)
+            .count()
+            .min(prefix_len);
+    }
+    first.chars().take(prefix_len).collect()
 }
