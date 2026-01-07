@@ -494,12 +494,20 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             "[ no matches ]".to_string()
         };
 
-        let counter = Paragraph::new(Line::from(vec![Span::styled(
-            counter_text,
-            Style::default().fg(Color::Yellow),
-        )]))
-        .alignment(ratatui::layout::Alignment::Right);
-        frame.render_widget(counter, search_inner);
+        // Only show counter if no active flash message
+        let has_flash = state
+            .flash_message
+            .as_ref()
+            .map(|m| m.shown_at.elapsed().as_secs() < 3)
+            .unwrap_or(false);
+        if !has_flash {
+            let counter = Paragraph::new(Line::from(vec![Span::styled(
+                counter_text,
+                Style::default().fg(Color::Yellow),
+            )]))
+            .alignment(ratatui::layout::Alignment::Right);
+            frame.render_widget(counter, search_inner);
+        }
     } else {
         // Normal mode: repo name on left (or count if typing), centered hints
         let left_text = if !state.jump_distance_string.is_empty() {
@@ -513,17 +521,25 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         )]));
         frame.render_widget(left_display, search_inner);
 
-        let hotkey_hint = if state.is_showing_help_panel {
-            "? → hide hotkeys"
-        } else {
-            "? → show hotkeys"
-        };
-        let search_hint = Paragraph::new(Line::from(vec![Span::styled(
-            hotkey_hint,
-            Style::default().fg(Color::DarkGray),
-        )]))
-        .alignment(ratatui::layout::Alignment::Right);
-        frame.render_widget(search_hint, search_inner);
+        // Only show hotkey hint if no active flash message
+        let has_flash = state
+            .flash_message
+            .as_ref()
+            .map(|m| m.shown_at.elapsed().as_secs() < 3)
+            .unwrap_or(false);
+        if !has_flash {
+            let hotkey_hint = if state.is_showing_help_panel {
+                "? → hide hotkeys"
+            } else {
+                "? → show hotkeys"
+            };
+            let search_hint = Paragraph::new(Line::from(vec![Span::styled(
+                hotkey_hint,
+                Style::default().fg(Color::DarkGray),
+            )]))
+            .alignment(ratatui::layout::Alignment::Right);
+            frame.render_widget(search_hint, search_inner);
+        }
     }
 
     // Show copy feedback in bottom right if recent (works in browse and normal modes)
