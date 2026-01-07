@@ -16,7 +16,6 @@ pub struct UiState {
     pub index_of_search_term_history_being_viewed: Option<usize>,
     pub index_of_selected_row_when_search_began: Option<usize>,
     pub jump_distance_string: String,
-    pub is_first_render: bool,
     pub flash_message: Option<FlashMessage>,
 }
 
@@ -25,8 +24,6 @@ impl UiState {
 
     pub fn new(repo: &Repo) -> Self {
         UiState {
-            is_first_render: true,
-
             index_of_topmost_visible_row: 0,
             index_of_selected_row: repo
                 .commits

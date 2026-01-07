@@ -6,6 +6,7 @@ use ratatui::prelude::CrosstermBackend;
 
 use crate::repo::Repo;
 use crate::ui_state::{FlashMessage, UiState};
+use crate::viewport::{center_view_on_selected_row, git_graph_height};
 
 /// Actions represent keypresses. The execute() method determines behavior based on UI state.
 pub enum Action {
@@ -345,21 +346,4 @@ fn copy_sha_to_clipboard(ui_state: &mut UiState, repo: &Repo) {
             shown_at: Instant::now(),
         });
     }
-}
-
-pub fn center_view_on_selected_row(
-    ui_state: &mut UiState,
-    terminal: &Terminal<CrosstermBackend<Stdout>>,
-) {
-    ui_state.index_of_topmost_visible_row = ui_state
-        .index_of_selected_row
-        .saturating_sub(git_graph_height(terminal) / 2);
-}
-
-pub fn git_graph_height(terminal: &Terminal<CrosstermBackend<Stdout>>) -> usize {
-    terminal
-        .size()
-        .unwrap()
-        .height
-        .saturating_sub(UiState::SEARCH_BAR_HEIGHT) as usize
 }

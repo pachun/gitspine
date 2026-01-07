@@ -2,6 +2,8 @@ mod action;
 mod commit_graph;
 mod repo;
 mod ui_state;
+mod utils;
+mod viewport;
 
 use std::collections::HashMap;
 use std::io::Stdout;
@@ -15,8 +17,13 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use ratatui::{Frame, Terminal};
 
 use action::Action;
-use repo::{BranchName, Repo, Sha, format_date, has_mixed_case};
+use repo::{BranchName, Repo, Sha};
 use ui_state::UiState;
+use utils::{format_date, has_mixed_case};
+use viewport::{
+    adjust_viewport_after_terminal_resize, center_view_on_selected_row,
+    ensure_selected_row_is_visible, update_selection_for_live_search,
+};
 
 fn initialize_terminal() -> Terminal<CrosstermBackend<Stdout>> {
     let original_hook = std::panic::take_hook();
@@ -33,8 +40,9 @@ fn main() {
     let mut terminal = initialize_terminal();
     let mut ui_state = UiState::new(&repo);
 
+    center_view_on_selected_row(&mut ui_state, &terminal);
+
     loop {
-        center_view_on_selected_row_on_first_render(&mut ui_state, &terminal);
         adjust_viewport_after_terminal_resize(&mut ui_state, &terminal, repo.commits.len());
 
         terminal
@@ -83,99 +91,6 @@ fn main() {
         }
     }
     ratatui::restore();
-}
-
-// Helper functions for viewport management
-
-fn git_graph_height(terminal: &Terminal<CrosstermBackend<Stdout>>) -> usize {
-    terminal
-        .size()
-        .unwrap()
-        .height
-        .saturating_sub(UiState::SEARCH_BAR_HEIGHT) as usize
-}
-
-fn center_view_on_selected_row(
-    ui_state: &mut UiState,
-    terminal: &Terminal<CrosstermBackend<Stdout>>,
-) {
-    ui_state.index_of_topmost_visible_row = ui_state
-        .index_of_selected_row
-        .saturating_sub(git_graph_height(terminal) / 2);
-}
-
-fn center_view_on_selected_row_on_first_render(
-    ui_state: &mut UiState,
-    terminal: &Terminal<CrosstermBackend<Stdout>>,
-) {
-    if ui_state.is_first_render {
-        center_view_on_selected_row(ui_state, terminal);
-        ui_state.is_first_render = false;
-    }
-}
-
-fn ensure_selected_row_is_visible(
-    ui_state: &mut UiState,
-    terminal: &Terminal<CrosstermBackend<Stdout>>,
-) {
-    let height = git_graph_height(terminal);
-    let selected_row_is_above_viewport =
-        ui_state.index_of_selected_row < ui_state.index_of_topmost_visible_row;
-    let selected_row_is_below_viewport =
-        ui_state.index_of_selected_row >= ui_state.index_of_topmost_visible_row + height;
-
-    if selected_row_is_above_viewport {
-        ui_state.index_of_topmost_visible_row = ui_state.index_of_selected_row;
-    } else if selected_row_is_below_viewport {
-        ui_state.index_of_topmost_visible_row = ui_state.index_of_selected_row - height + 1;
-    }
-}
-
-fn adjust_viewport_after_terminal_resize(
-    ui_state: &mut UiState,
-    terminal: &Terminal<CrosstermBackend<Stdout>>,
-    number_of_commits: usize,
-) {
-    let height = git_graph_height(terminal);
-
-    if number_of_commits >= height {
-        // When terminal grows: prevent blank space at bottom by pulling list down
-        let max_offset = number_of_commits - height;
-        if ui_state.index_of_topmost_visible_row > max_offset {
-            ui_state.index_of_topmost_visible_row = max_offset;
-        }
-
-        // When terminal shrinks: selected row may now be below viewport
-        ensure_selected_row_is_visible(ui_state, terminal);
-    }
-}
-
-fn update_selection_for_live_search(
-    ui_state: &mut UiState,
-    repo: &Repo,
-    terminal: &Terminal<CrosstermBackend<Stdout>>,
-) {
-    if !ui_state.is_typing_search_term {
-        return;
-    }
-
-    if !ui_state.search_term.is_empty() {
-        if let Some(idx) = repo
-            .commits
-            .iter()
-            .position(|c| c.matches(&ui_state.search_term, &repo.branches))
-        {
-            ui_state.index_of_selected_row = idx;
-        } else if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
-            // No matches - return to where we were before searching
-            ui_state.index_of_selected_row = pre;
-            center_view_on_selected_row(ui_state, terminal);
-        }
-    } else if let Some(pre) = ui_state.index_of_selected_row_when_search_began {
-        // Empty query - return to where we were
-        ui_state.index_of_selected_row = pre;
-        center_view_on_selected_row(ui_state, terminal);
-    }
 }
 
 // Rendering
