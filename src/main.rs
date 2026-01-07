@@ -69,7 +69,7 @@ fn main() {
                     (KeyCode::Char('g'), _) => Action::CharG,
                     (KeyCode::Char('G'), _) => Action::ShiftG,
                     (KeyCode::Char('h'), _) => Action::CharH,
-                    (KeyCode::Char('c'), _) => Action::CharC,
+                    (KeyCode::Char('y'), _) => Action::CharY,
                     (KeyCode::Char(c), _) if c.is_ascii_digit() => Action::Digit(c),
                     (KeyCode::Char(c), _) => Action::Char(c),
                     _ => Action::None,

@@ -25,7 +25,7 @@ pub enum Action {
     CharG,
     ShiftG,
     CharH,
-    CharC,
+    CharY,
     CtrlD,
     CtrlU,
     Digit(char),
@@ -85,7 +85,7 @@ impl Action {
             | Action::CharG
             | Action::ShiftG
             | Action::CharH
-            | Action::CharC => {
+            | Action::CharY => {
                 let c = match self {
                     Action::CharSlash => '/',
                     Action::CharQ => 'q',
@@ -96,7 +96,7 @@ impl Action {
                     Action::CharG => 'g',
                     Action::ShiftG => 'G',
                     Action::CharH => 'h',
-                    Action::CharC => 'c',
+                    Action::CharY => 'y',
                     _ => unreachable!(),
                 };
                 type_search_character(state, c);
@@ -191,7 +191,7 @@ impl Action {
                     center_view_on_selected_row(state, terminal);
                 }
             }
-            Action::CharC => {
+            Action::CharY => {
                 state.jump_distance_string.clear();
                 copy_sha_to_clipboard(state, repo);
             }
