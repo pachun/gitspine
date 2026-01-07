@@ -28,6 +28,7 @@ pub enum Action {
     CharH,
     CharY,
     CharO,
+    CharL,
     CharB,
     CharD,
     CtrlD,
@@ -97,6 +98,7 @@ impl Action {
             | Action::CharH
             | Action::CharY
             | Action::CharO
+            | Action::CharL
             | Action::CharB
             | Action::CharD => {
                 let c = match self {
@@ -111,6 +113,7 @@ impl Action {
                     Action::CharH => 'h',
                     Action::CharY => 'y',
                     Action::CharO => 'o',
+                    Action::CharL => 'l',
                     Action::CharB => 'b',
                     Action::CharD => 'd',
                     _ => unreachable!(),
@@ -136,7 +139,9 @@ impl Action {
     ) -> bool {
         match self {
             Action::Esc | Action::CtrlC | Action::CharQ => {
-                if !state.jump_distance_string.is_empty() {
+                if state.commit_details.is_some() {
+                    state.commit_details = None;
+                } else if !state.jump_distance_string.is_empty() {
                     state.jump_distance_string.clear();
                 } else if state.search_term.is_empty() {
                     return true; // quit
@@ -173,14 +178,26 @@ impl Action {
             Action::CharJ | Action::Down => {
                 let count = state.jump_distance_string.parse::<usize>().unwrap_or(1);
                 state.jump_distance_string.clear();
-                state.index_of_selected_row = (state.index_of_selected_row + count)
-                    .min(repo.commits.len().saturating_sub(1));
+                if state.commit_details.is_some() {
+                    // Scroll details panel down
+                    state.details_scroll_offset += count;
+                } else {
+                    // Navigate commits
+                    state.index_of_selected_row = (state.index_of_selected_row + count)
+                        .min(repo.commits.len().saturating_sub(1));
+                }
             }
             Action::CharK | Action::Up => {
                 let count = state.jump_distance_string.parse::<usize>().unwrap_or(1);
                 state.jump_distance_string.clear();
-                state.index_of_selected_row =
-                    state.index_of_selected_row.saturating_sub(count);
+                if state.commit_details.is_some() {
+                    // Scroll details panel up
+                    state.details_scroll_offset = state.details_scroll_offset.saturating_sub(count);
+                } else {
+                    // Navigate commits
+                    state.index_of_selected_row =
+                        state.index_of_selected_row.saturating_sub(count);
+                }
             }
             Action::Digit(c) => {
                 // Ignore leading zeros
@@ -190,24 +207,48 @@ impl Action {
             }
             Action::CharG => {
                 state.jump_distance_string.clear();
-                state.index_of_selected_row = 0;
+                if state.commit_details.is_some() {
+                    // Scroll to top of details
+                    state.details_scroll_offset = 0;
+                } else {
+                    // Go to first commit
+                    state.index_of_selected_row = 0;
+                }
             }
             Action::ShiftG => {
-                if let Ok(line) = state.jump_distance_string.parse::<usize>() {
-                    state.index_of_selected_row =
-                        (line.saturating_sub(1)).min(repo.commits.len().saturating_sub(1));
+                if state.commit_details.is_some() {
+                    // Scroll to bottom of details (use a large number, render will clamp)
+                    state.details_scroll_offset = usize::MAX / 2;
                 } else {
-                    state.index_of_selected_row = repo.commits.len().saturating_sub(1);
+                    if let Ok(line) = state.jump_distance_string.parse::<usize>() {
+                        state.index_of_selected_row =
+                            (line.saturating_sub(1)).min(repo.commits.len().saturating_sub(1));
+                    } else {
+                        state.index_of_selected_row = repo.commits.len().saturating_sub(1);
+                    }
                 }
                 state.jump_distance_string.clear();
             }
             Action::CharH => {
                 state.jump_distance_string.clear();
-                let head_sha = repo.head_sha();
-                if let Some(head_idx) = repo.commits.iter().position(|c| c.sha == head_sha) {
-                    state.index_of_selected_row = head_idx;
-                    center_view_on_selected_row(state, terminal);
+                if state.commit_details.is_some() {
+                    // Close details panel (go "left")
+                    state.commit_details = None;
+                } else {
+                    // Go to HEAD commit
+                    let head_sha = repo.head_sha();
+                    if let Some(head_idx) = repo.commits.iter().position(|c| c.sha == head_sha) {
+                        state.index_of_selected_row = head_idx;
+                        center_view_on_selected_row(state, terminal);
+                    }
                 }
+            }
+            Action::CharL => {
+                state.jump_distance_string.clear();
+                // Open details panel (go "right")
+                let sha = repo.commits[state.index_of_selected_row].sha;
+                state.commit_details = repo.load_commit_details(sha);
+                state.details_scroll_offset = 0;
             }
             Action::CharY => {
                 state.jump_distance_string.clear();
@@ -240,14 +281,26 @@ impl Action {
             Action::CtrlD => {
                 state.jump_distance_string.clear();
                 let half_page = git_graph_height(state, terminal) / 2;
-                state.index_of_selected_row = (state.index_of_selected_row + half_page)
-                    .min(repo.commits.len().saturating_sub(1));
+                if state.commit_details.is_some() {
+                    // Half-page scroll down in details
+                    state.details_scroll_offset += half_page;
+                } else {
+                    // Half-page down in commit list
+                    state.index_of_selected_row = (state.index_of_selected_row + half_page)
+                        .min(repo.commits.len().saturating_sub(1));
+                }
             }
             Action::CtrlU => {
                 state.jump_distance_string.clear();
                 let half_page = git_graph_height(state, terminal) / 2;
-                state.index_of_selected_row =
-                    state.index_of_selected_row.saturating_sub(half_page);
+                if state.commit_details.is_some() {
+                    // Half-page scroll up in details
+                    state.details_scroll_offset = state.details_scroll_offset.saturating_sub(half_page);
+                } else {
+                    // Half-page up in commit list
+                    state.index_of_selected_row =
+                        state.index_of_selected_row.saturating_sub(half_page);
+                }
             }
             Action::Char('?') => {
                 state.jump_distance_string.clear();
@@ -304,6 +357,7 @@ impl Action {
             | Action::CharH
             | Action::CharY
             | Action::CharO
+            | Action::CharL
             | Action::CharB
             | Action::CharD => {
                 let c = match self {
@@ -318,6 +372,7 @@ impl Action {
                     Action::CharH => 'h',
                     Action::CharY => 'y',
                     Action::CharO => 'o',
+                    Action::CharL => 'l',
                     Action::CharB => 'b',
                     Action::CharD => 'd',
                     _ => unreachable!(),
@@ -408,6 +463,7 @@ impl Action {
             | Action::CharH
             | Action::CharY
             | Action::CharO
+            | Action::CharL
             | Action::CharB
             | Action::CharD => {
                 state.tab_complete_base = None;
@@ -424,6 +480,7 @@ impl Action {
                     Action::CharH => 'h',
                     Action::CharY => 'y',
                     Action::CharO => 'o',
+                    Action::CharL => 'l',
                     Action::CharB => 'b',
                     Action::CharD => 'd',
                     _ => unreachable!(),

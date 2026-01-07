@@ -65,6 +65,34 @@ impl Commit {
     }
 }
 
+pub struct DiffLine {
+    pub origin: char,          // '+', '-', ' ' (context)
+    pub content: String,
+    pub old_line_no: Option<u32>, // Line number in old file (for '-' and ' ' lines)
+    pub new_line_no: Option<u32>, // Line number in new file (for '+' and ' ' lines)
+}
+
+pub struct Hunk {
+    pub lines: Vec<DiffLine>,
+}
+
+pub struct FileChange {
+    pub path: String,
+    pub status: char, // 'M', 'A', 'D', 'R', etc.
+    pub additions: usize,
+    pub deletions: usize,
+    pub hunks: Vec<Hunk>,
+}
+
+pub struct CommitDetails {
+    pub sha: Sha,
+    pub author_name: String,
+    pub author_email: String,
+    pub timestamp: i64,
+    pub message: String, // Full message, not just summary
+    pub files: Vec<FileChange>,
+}
+
 pub enum Head {
     Attached { branch_name: BranchName },
     Detached { sha: Sha },
@@ -208,6 +236,108 @@ impl Repo {
         };
 
         Some(format!("https://{}/{}{}", host, path, commit_path))
+    }
+
+    /// Load detailed information about a commit including file changes and diff content
+    pub fn load_commit_details(&self, sha: Sha) -> Option<CommitDetails> {
+        let git_repo = Repository::open(&self.path).ok()?;
+        let commit = git_repo.find_commit(sha).ok()?;
+
+        let author = commit.author();
+        let author_name = author.name().unwrap_or("").to_string();
+        let author_email = author.email().unwrap_or("").to_string();
+        let message = commit.message().unwrap_or("").to_string();
+        let timestamp = commit.time().seconds();
+
+        // Get file changes by diffing with parent
+        let mut files = Vec::new();
+        let tree = commit.tree().ok()?;
+        let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+
+        let diff = git_repo
+            .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
+            .ok()?;
+
+        // Iterate through each file delta and extract patch content
+        for delta_idx in 0..diff.deltas().len() {
+            let delta = diff.deltas().nth(delta_idx)?;
+            let status = match delta.status() {
+                git2::Delta::Added => 'A',
+                git2::Delta::Deleted => 'D',
+                git2::Delta::Modified => 'M',
+                git2::Delta::Renamed => 'R',
+                git2::Delta::Copied => 'C',
+                git2::Delta::Typechange => 'T',
+                _ => '?',
+            };
+            let path = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            let mut file_change = FileChange {
+                path,
+                status,
+                additions: 0,
+                deletions: 0,
+                hunks: Vec::new(),
+            };
+
+            // Get the patch for this delta to extract hunks
+            if let Ok(patch) = git2::Patch::from_diff(&diff, delta_idx) {
+                if let Some(patch) = patch {
+                    // Iterate through hunks
+                    for hunk_idx in 0..patch.num_hunks() {
+                        if let Ok((_hunk_header, _)) = patch.hunk(hunk_idx) {
+                            let mut hunk = Hunk { lines: Vec::new() };
+
+                            // Get lines in this hunk
+                            if let Ok(line_count) = patch.num_lines_in_hunk(hunk_idx) {
+                                for line_idx in 0..line_count {
+                                    if let Ok(line) = patch.line_in_hunk(hunk_idx, line_idx) {
+                                        let origin = line.origin();
+                                        let content =
+                                            String::from_utf8_lossy(line.content()).to_string();
+
+                                        // Track additions/deletions
+                                        match origin {
+                                            '+' => file_change.additions += 1,
+                                            '-' => file_change.deletions += 1,
+                                            _ => {}
+                                        }
+
+                                        // Only include +, -, and context lines
+                                        if origin == '+' || origin == '-' || origin == ' ' {
+                                            hunk.lines.push(DiffLine {
+                                                origin,
+                                                content: content.trim_end_matches('\n').to_string(),
+                                                old_line_no: line.old_lineno(),
+                                                new_line_no: line.new_lineno(),
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+
+                            file_change.hunks.push(hunk);
+                        }
+                    }
+                }
+            }
+
+            files.push(file_change);
+        }
+
+        Some(CommitDetails {
+            sha,
+            author_name,
+            author_email,
+            timestamp,
+            message,
+            files,
+        })
     }
 
     pub fn refresh(&mut self) {

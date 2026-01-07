@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use crate::repo::Repo;
+use crate::repo::{CommitDetails, Repo};
 
 pub struct FlashMessage {
     pub message: String,
@@ -25,6 +25,8 @@ pub struct State {
     pub tab_complete_base: Option<String>,
     pub tab_complete_index: usize,
     pub is_showing_help_panel: bool,
+    pub commit_details: Option<CommitDetails>,
+    pub details_scroll_offset: usize,
 }
 
 impl State {
@@ -56,6 +58,8 @@ impl State {
             tab_complete_base: None,
             tab_complete_index: 0,
             is_showing_help_panel: false,
+            commit_details: None,
+            details_scroll_offset: 0,
         }
     }
 }

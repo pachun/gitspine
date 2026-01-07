@@ -1,5 +1,6 @@
 mod action;
 mod commit_graph;
+mod highlight;
 mod render;
 mod repo;
 mod state;
@@ -84,6 +85,7 @@ fn main() {
                     (KeyCode::Char('h'), _) => Action::CharH,
                     (KeyCode::Char('y'), _) => Action::CharY,
                     (KeyCode::Char('o'), _) => Action::CharO,
+                    (KeyCode::Char('l'), _) => Action::CharL,
                     (KeyCode::Char('b'), _) => Action::CharB,
                     (KeyCode::Char('d'), _) => Action::CharD,
                     (KeyCode::Char(c), _) if c.is_ascii_digit() => Action::Digit(c),

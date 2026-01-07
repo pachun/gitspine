@@ -17,3 +17,10 @@ pub fn format_time(timestamp: i64) -> String {
         .map(|dt| dt.format("%-I:%M %p").to_string())
         .unwrap_or_default()
 }
+
+pub fn format_datetime(timestamp: i64) -> String {
+    chrono::DateTime::from_timestamp(timestamp, 0)
+        .map(|dt| dt.with_timezone(&chrono::Local))
+        .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_default()
+}
