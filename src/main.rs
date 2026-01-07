@@ -66,6 +66,7 @@ fn main() {
                 let action = match (key.code, key.modifiers) {
                     (KeyCode::Esc, _) => Action::Esc,
                     (KeyCode::Enter, _) => Action::Enter,
+                    (KeyCode::Tab, _) => Action::Tab,
                     (KeyCode::Up, _) => Action::Up,
                     (KeyCode::Down, _) => Action::Down,
                     (KeyCode::Backspace, _) => Action::Backspace,

@@ -13,6 +13,7 @@ pub enum Action {
     Esc,
     CtrlC,
     Enter,
+    Tab,
     Up,
     Down,
     Backspace,
@@ -122,7 +123,7 @@ impl Action {
             Action::Char(c) => {
                 type_search_character(state, *c);
             }
-            Action::CtrlD | Action::CtrlU | Action::None => {}
+            Action::Tab | Action::CtrlD | Action::CtrlU | Action::None => {}
         }
         false // typing mode never quits
     }
@@ -252,7 +253,7 @@ impl Action {
                 state.jump_distance_string.clear();
                 state.is_showing_help_panel = !state.is_showing_help_panel;
             }
-            Action::Enter | Action::Char(_) | Action::None => {}
+            Action::Tab | Action::Enter | Action::Char(_) | Action::None => {}
         }
         false
     }
@@ -326,7 +327,7 @@ impl Action {
             Action::Digit(c) | Action::Char(c) => {
                 state.branch_name.push(*c);
             }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::None => {}
+            Action::Tab | Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::None => {}
         }
     }
 
@@ -374,7 +375,22 @@ impl Action {
                 state.is_deleting_branch = false;
                 state.delete_branch_name.clear();
             }
+            Action::Tab => {
+                let selected_sha = repo.commits[state.index_of_selected_row].sha;
+                let local_branches = repo.local_branches_at(selected_sha);
+                let (completed, new_base, new_index) = tab_complete_branch(
+                    &state.delete_branch_name,
+                    &local_branches,
+                    &state.tab_complete_base,
+                    state.tab_complete_index,
+                );
+                state.delete_branch_name = completed;
+                state.tab_complete_base = new_base;
+                state.tab_complete_index = new_index;
+            }
             Action::Backspace => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
                 if state.delete_branch_name.is_empty() {
                     state.is_deleting_branch = false;
                 } else {
@@ -394,6 +410,8 @@ impl Action {
             | Action::CharO
             | Action::CharB
             | Action::CharD => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
                 let c = match self {
                     Action::CharSlash => '/',
                     Action::CharQ => 'q',
@@ -413,6 +431,8 @@ impl Action {
                 state.delete_branch_name.push(c);
             }
             Action::Digit(c) | Action::Char(c) => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
                 state.delete_branch_name.push(*c);
             }
             Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::None => {}
@@ -586,4 +606,66 @@ fn open_in_browser(state: &mut State, repo: &Repo) {
             shown_at: Instant::now(),
         });
     }
+}
+
+/// Tab completion for branch names (GitHub CLI style)
+/// Returns: (completed_name, new_base, new_index)
+fn tab_complete_branch(
+    typed: &str,
+    branches: &[String],
+    base: &Option<String>,
+    index: usize,
+) -> (String, Option<String>, usize) {
+    // Get the prefix to match against
+    let prefix = base.as_deref().unwrap_or(typed);
+
+    // Find matches sorted alphabetically
+    let mut matches: Vec<&String> = branches
+        .iter()
+        .filter(|name| name.starts_with(prefix))
+        .collect();
+    matches.sort();
+
+    if matches.is_empty() {
+        return (typed.to_string(), None, 0);
+    }
+
+    if base.is_none() {
+        // First tab: try to complete to common prefix
+        let common_prefix = common_prefix_of(&matches);
+        if common_prefix.len() > typed.len() {
+            // Can complete further
+            return (common_prefix, None, 0);
+        }
+        // Can't complete further, start cycling
+        if matches.len() == 1 {
+            return (matches[0].clone(), None, 0);
+        }
+        return (matches[0].clone(), Some(typed.to_string()), 1);
+    }
+
+    // Subsequent tabs: cycle through matches
+    let cycle_index = index % matches.len();
+    (
+        matches[cycle_index].clone(),
+        base.clone(),
+        index + 1,
+    )
+}
+
+fn common_prefix_of(strings: &[&String]) -> String {
+    if strings.is_empty() {
+        return String::new();
+    }
+    let first = &strings[0];
+    let mut prefix_len = first.len();
+    for s in &strings[1..] {
+        prefix_len = first
+            .chars()
+            .zip(s.chars())
+            .take_while(|(a, b)| a == b)
+            .count()
+            .min(prefix_len);
+    }
+    first.chars().take(prefix_len).collect()
 }
