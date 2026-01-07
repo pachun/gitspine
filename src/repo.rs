@@ -129,6 +129,14 @@ impl Repo {
         Ok(())
     }
 
+    pub fn refresh(&mut self) {
+        if let Ok(git_repo) = Repository::open(&self.path) {
+            self.commits = Self::get_commits(&git_repo);
+            self.branches = Self::get_branches(&git_repo);
+            self.head = Self::get_head(&git_repo);
+        }
+    }
+
     fn get_commits(repo: &Repository) -> Vec<Commit> {
         let mut revwalk = repo.revwalk().expect("Failed to create revwalk");
         revwalk

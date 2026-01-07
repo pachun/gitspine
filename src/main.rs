@@ -5,8 +5,10 @@ mod repo;
 mod state;
 mod utils;
 mod viewport;
+mod watcher;
 
 use std::io::Stdout;
+use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::execute;
@@ -37,10 +39,16 @@ fn main() {
     let mut terminal = initialize_terminal();
     let _ = execute!(std::io::stdout(), SetTitle(&repo.name));
     let mut state = State::new(&repo);
+    let watcher_rx = watcher::watch_git_dir(&path_to_repo);
 
     center_view_on_selected_row(&mut state, &terminal);
 
     loop {
+        // Check for external git changes
+        if watcher_rx.try_recv().is_ok() {
+            repo.refresh();
+        }
+
         adjust_viewport_after_terminal_resize(&mut state, &terminal, repo.commits.len());
 
         terminal
@@ -48,6 +56,10 @@ fn main() {
                 render::render(frame, &state, &repo);
             })
             .unwrap();
+
+        if !event::poll(Duration::from_millis(100)).unwrap() {
+            continue;
+        }
 
         match event::read().unwrap() {
             Event::Key(key) => {
