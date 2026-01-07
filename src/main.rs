@@ -33,7 +33,7 @@ fn initialize_terminal() -> Terminal<CrosstermBackend<Stdout>> {
 
 fn main() {
     let path_to_repo = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
-    let repo = Repo::open(&path_to_repo);
+    let mut repo = Repo::open(&path_to_repo);
     let mut terminal = initialize_terminal();
     let _ = execute!(std::io::stdout(), SetTitle(&repo.name));
     let mut state = State::new(&repo);
@@ -70,12 +70,13 @@ fn main() {
                     (KeyCode::Char('G'), _) => Action::ShiftG,
                     (KeyCode::Char('h'), _) => Action::CharH,
                     (KeyCode::Char('y'), _) => Action::CharY,
+                    (KeyCode::Char('b'), _) => Action::CharB,
                     (KeyCode::Char(c), _) if c.is_ascii_digit() => Action::Digit(c),
                     (KeyCode::Char(c), _) => Action::Char(c),
                     _ => Action::None,
                 };
 
-                let should_quit = action.execute(&mut state, &repo, &terminal);
+                let should_quit = action.execute(&mut state, &mut repo, &terminal);
                 if should_quit {
                     break;
                 }

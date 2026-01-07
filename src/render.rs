@@ -326,7 +326,9 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
     // Render search bar with right-aligned match counter
     let browse_mode = !state.is_typing_search_term && !state.search_term.is_empty();
     let search_active = state.is_typing_search_term || browse_mode;
-    let border_color = if search_active {
+    let border_color = if state.is_creating_branch {
+        Color::Cyan
+    } else if search_active {
         Color::White
     } else {
         Color::DarkGray
@@ -344,7 +346,24 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
     };
     frame.render_widget(search_block, chunks[1]);
 
-    if state.is_typing_search_term {
+    if state.is_creating_branch {
+        // Branch creation mode: cyan input with cursor, hint for create/cancel
+        let branch_input = Paragraph::new(Line::from(vec![
+            Span::styled("branch: ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("{}█", state.branch_name),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]));
+        frame.render_widget(branch_input, search_inner);
+
+        let hint = Paragraph::new(Line::from(vec![Span::styled(
+            "enter → create   esc → cancel",
+            Style::default().fg(Color::DarkGray),
+        )]))
+        .alignment(ratatui::layout::Alignment::Right);
+        frame.render_widget(hint, search_inner);
+    } else if state.is_typing_search_term {
         // Typing mode: yellow input with cursor, match count hint
         let match_count = if state.search_term.is_empty() {
             0
@@ -425,9 +444,9 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             .unwrap_or(true);
 
         let hint_text = if on_head {
-            "q → clear   / → search   n/N   y → copy sha"
+            "q → clear   / → search   n/N   y → copy sha   b → branch"
         } else {
-            "q → clear   / → search   n/N   y → copy sha   h → goto head"
+            "q → clear   / → search   n/N   y → copy sha   h → goto head   b → branch"
         };
 
         let nav_hint = Paragraph::new(Line::from(vec![Span::styled(
@@ -472,9 +491,9 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             .unwrap_or(true); // If no HEAD, don't show hint
 
         let hint_text = if on_head {
-            "q → quit   / → search   y → copy sha".to_string()
+            "q → quit   / → search   y → copy sha   b → branch".to_string()
         } else {
-            "q → quit   / → search   y → copy sha   h → goto head".to_string()
+            "q → quit   / → search   y → copy sha   h → goto head   b → branch".to_string()
         };
 
         let search_hint = Paragraph::new(Line::from(vec![Span::styled(

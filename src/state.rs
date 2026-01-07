@@ -18,6 +18,8 @@ pub struct State {
     pub index_of_topmost_visible_row_when_search_began: Option<usize>,
     pub jump_distance_string: String,
     pub flash_message: Option<FlashMessage>,
+    pub is_creating_branch: bool,
+    pub branch_name: String,
 }
 
 impl State {
@@ -42,6 +44,8 @@ impl State {
             search_term_history: Vec::new(),
             jump_distance_string: String::new(),
             flash_message: None,
+            is_creating_branch: false,
+            branch_name: String::new(),
         }
     }
 }

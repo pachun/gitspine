@@ -84,6 +84,7 @@ impl Head {
 }
 
 pub struct Repo {
+    path: String,
     pub name: String,
     pub commits: Vec<Commit>,
     pub branches: HashMap<BranchName, Sha>,
@@ -103,6 +104,7 @@ impl Repo {
             .unwrap_or("unknown")
             .to_string();
         Repo {
+            path: path.to_string(),
             name,
             commits: Self::get_commits(&git_repo),
             branches: Self::get_branches(&git_repo),
@@ -112,6 +114,19 @@ impl Repo {
 
     pub fn head_sha(&self) -> Sha {
         self.head.sha(&self.branches)
+    }
+
+    pub fn create_branch(&mut self, name: &str, sha: Sha) -> Result<(), String> {
+        let git_repo = Repository::open(&self.path).map_err(|e| e.message().to_string())?;
+        let commit = git_repo
+            .find_commit(sha)
+            .map_err(|e| e.message().to_string())?;
+        git_repo
+            .branch(name, &commit, false)
+            .map_err(|e| e.message().to_string())?;
+        // Refresh branches to show the new branch
+        self.branches = Self::get_branches(&git_repo);
+        Ok(())
     }
 
     fn get_commits(repo: &Repository) -> Vec<Commit> {

@@ -26,6 +26,7 @@ pub enum Action {
     ShiftG,
     CharH,
     CharY,
+    CharB,
     CtrlD,
     CtrlU,
     Digit(char),
@@ -38,11 +39,14 @@ impl Action {
     pub fn execute(
         &self,
         state: &mut State,
-        repo: &Repo,
+        repo: &mut Repo,
         terminal: &Terminal<CrosstermBackend<Stdout>>,
     ) -> bool {
         if state.is_typing_search_term {
             self.execute_typing_mode(state, repo, terminal)
+        } else if state.is_creating_branch {
+            self.execute_branch_creation_mode(state, repo);
+            false
         } else {
             self.execute_normal_mode(state, repo, terminal)
         }
@@ -85,7 +89,8 @@ impl Action {
             | Action::CharG
             | Action::ShiftG
             | Action::CharH
-            | Action::CharY => {
+            | Action::CharY
+            | Action::CharB => {
                 let c = match self {
                     Action::CharSlash => '/',
                     Action::CharQ => 'q',
@@ -97,6 +102,7 @@ impl Action {
                     Action::ShiftG => 'G',
                     Action::CharH => 'h',
                     Action::CharY => 'y',
+                    Action::CharB => 'b',
                     _ => unreachable!(),
                 };
                 type_search_character(state, c);
@@ -197,6 +203,11 @@ impl Action {
                 state.jump_distance_string.clear();
                 copy_sha_to_clipboard(state, repo);
             }
+            Action::CharB => {
+                state.jump_distance_string.clear();
+                state.is_creating_branch = true;
+                state.branch_name.clear();
+            }
             Action::CtrlD => {
                 state.jump_distance_string.clear();
                 let half_page = git_graph_height(terminal) / 2;
@@ -212,6 +223,75 @@ impl Action {
             Action::Enter | Action::Char(_) | Action::None => {}
         }
         false
+    }
+
+    fn execute_branch_creation_mode(&self, state: &mut State, repo: &mut Repo) {
+        match self {
+            Action::Esc | Action::CtrlC => {
+                state.is_creating_branch = false;
+                state.branch_name.clear();
+            }
+            Action::Enter => {
+                if !state.branch_name.is_empty() {
+                    let sha = repo.commits[state.index_of_selected_row].sha;
+                    match repo.create_branch(&state.branch_name, sha) {
+                        Ok(()) => {
+                            state.flash_message = Some(FlashMessage {
+                                message: format!("created {}", state.branch_name),
+                                shown_at: Instant::now(),
+                            });
+                        }
+                        Err(e) => {
+                            state.flash_message = Some(FlashMessage {
+                                message: e,
+                                shown_at: Instant::now(),
+                            });
+                        }
+                    }
+                }
+                state.is_creating_branch = false;
+                state.branch_name.clear();
+            }
+            Action::Backspace => {
+                if state.branch_name.is_empty() {
+                    state.is_creating_branch = false;
+                } else {
+                    state.branch_name.pop();
+                }
+            }
+            // All character keys type into the branch name
+            Action::CharSlash
+            | Action::CharQ
+            | Action::CharN
+            | Action::ShiftN
+            | Action::CharJ
+            | Action::CharK
+            | Action::CharG
+            | Action::ShiftG
+            | Action::CharH
+            | Action::CharY
+            | Action::CharB => {
+                let c = match self {
+                    Action::CharSlash => '/',
+                    Action::CharQ => 'q',
+                    Action::CharN => 'n',
+                    Action::ShiftN => 'N',
+                    Action::CharJ => 'j',
+                    Action::CharK => 'k',
+                    Action::CharG => 'g',
+                    Action::ShiftG => 'G',
+                    Action::CharH => 'h',
+                    Action::CharY => 'y',
+                    Action::CharB => 'b',
+                    _ => unreachable!(),
+                };
+                state.branch_name.push(c);
+            }
+            Action::Digit(c) | Action::Char(c) => {
+                state.branch_name.push(*c);
+            }
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::None => {}
+        }
     }
 }
 
