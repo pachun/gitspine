@@ -15,6 +15,7 @@ pub struct State {
     pub search_term_history: Vec<String>,
     pub index_of_search_term_history_being_viewed: Option<usize>,
     pub index_of_selected_row_when_search_began: Option<usize>,
+    pub index_of_topmost_visible_row_when_search_began: Option<usize>,
     pub jump_distance_string: String,
     pub flash_message: Option<FlashMessage>,
 }
@@ -36,6 +37,7 @@ impl State {
 
             index_of_search_term_history_being_viewed: None,
             index_of_selected_row_when_search_began: None,
+            index_of_topmost_visible_row_when_search_began: None,
 
             search_term_history: Vec::new(),
             jump_distance_string: String::new(),

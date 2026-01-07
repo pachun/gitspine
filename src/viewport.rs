@@ -62,7 +62,7 @@ pub fn adjust_viewport_after_terminal_resize(
 pub fn update_selection_for_live_search(
     state: &mut State,
     repo: &Repo,
-    terminal: &Terminal<CrosstermBackend<Stdout>>,
+    _terminal: &Terminal<CrosstermBackend<Stdout>>,
 ) {
     if !state.is_typing_search_term {
         return;
@@ -78,11 +78,15 @@ pub fn update_selection_for_live_search(
         } else if let Some(pre) = state.index_of_selected_row_when_search_began {
             // No matches - return to where we were before searching
             state.index_of_selected_row = pre;
-            center_view_on_selected_row(state, terminal);
+            if let Some(viewport_pre) = state.index_of_topmost_visible_row_when_search_began {
+                state.index_of_topmost_visible_row = viewport_pre;
+            }
         }
     } else if let Some(pre) = state.index_of_selected_row_when_search_began {
         // Empty query - return to where we were
         state.index_of_selected_row = pre;
-        center_view_on_selected_row(state, terminal);
+        if let Some(viewport_pre) = state.index_of_topmost_visible_row_when_search_began {
+            state.index_of_topmost_visible_row = viewport_pre;
+        }
     }
 }

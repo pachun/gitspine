@@ -52,11 +52,11 @@ impl Action {
         &self,
         state: &mut State,
         repo: &Repo,
-        terminal: &Terminal<CrosstermBackend<Stdout>>,
+        _terminal: &Terminal<CrosstermBackend<Stdout>>,
     ) -> bool {
         match self {
             Action::Esc | Action::CtrlC => {
-                cancel_search(state, terminal);
+                cancel_search(state);
             }
             Action::Enter => {
                 confirm_search(state, repo);
@@ -69,7 +69,7 @@ impl Action {
             }
             Action::Backspace => {
                 if state.search_term.is_empty() {
-                    cancel_search(state, terminal);
+                    cancel_search(state);
                 } else {
                     state.search_term.pop();
                     state.index_of_search_term_history_being_viewed = None;
@@ -141,6 +141,8 @@ impl Action {
                 state.search_term.clear();
                 state.index_of_selected_row_when_search_began =
                     Some(state.index_of_selected_row);
+                state.index_of_topmost_visible_row_when_search_began =
+                    Some(state.index_of_topmost_visible_row);
             }
             Action::CharN => {
                 if !state.search_term.is_empty() {
@@ -215,15 +217,18 @@ impl Action {
 
 // Helper functions (state transitions)
 
-fn cancel_search(state: &mut State, terminal: &Terminal<CrosstermBackend<Stdout>>) {
+fn cancel_search(state: &mut State) {
     state.is_typing_search_term = false;
     state.search_term.clear();
     state.index_of_search_term_history_being_viewed = None;
     if let Some(pre) = state.index_of_selected_row_when_search_began {
         state.index_of_selected_row = pre;
-        center_view_on_selected_row(state, terminal);
+    }
+    if let Some(pre) = state.index_of_topmost_visible_row_when_search_began {
+        state.index_of_topmost_visible_row = pre;
     }
     state.index_of_selected_row_when_search_began = None;
+    state.index_of_topmost_visible_row_when_search_began = None;
 }
 
 fn confirm_search(state: &mut State, repo: &Repo) {
@@ -243,6 +248,7 @@ fn confirm_search(state: &mut State, repo: &Repo) {
         state.search_term.clear();
     }
     state.index_of_selected_row_when_search_began = None;
+    state.index_of_topmost_visible_row_when_search_began = None;
 }
 
 fn navigate_to_previous_search_history_entry(state: &mut State) {
