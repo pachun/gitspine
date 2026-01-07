@@ -22,6 +22,7 @@ pub struct State {
     pub branch_name: String,
     pub is_deleting_branch: bool,
     pub delete_branch_name: String,
+    pub is_showing_help_panel: bool,
 }
 
 impl State {
@@ -50,6 +51,7 @@ impl State {
             branch_name: String::new(),
             is_deleting_branch: false,
             delete_branch_name: String::new(),
+            is_showing_help_panel: false,
         }
     }
 }

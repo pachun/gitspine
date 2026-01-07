@@ -230,15 +230,19 @@ impl Action {
             }
             Action::CtrlD => {
                 state.jump_distance_string.clear();
-                let half_page = git_graph_height(terminal) / 2;
+                let half_page = git_graph_height(state, terminal) / 2;
                 state.index_of_selected_row = (state.index_of_selected_row + half_page)
                     .min(repo.commits.len().saturating_sub(1));
             }
             Action::CtrlU => {
                 state.jump_distance_string.clear();
-                let half_page = git_graph_height(terminal) / 2;
+                let half_page = git_graph_height(state, terminal) / 2;
                 state.index_of_selected_row =
                     state.index_of_selected_row.saturating_sub(half_page);
+            }
+            Action::Char('?') => {
+                state.jump_distance_string.clear();
+                state.is_showing_help_panel = !state.is_showing_help_panel;
             }
             Action::Enter | Action::Char(_) | Action::None => {}
         }

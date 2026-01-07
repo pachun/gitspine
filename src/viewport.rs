@@ -6,12 +6,15 @@ use ratatui::Terminal;
 use crate::repo::Repo;
 use crate::state::State;
 
-pub fn git_graph_height(terminal: &Terminal<CrosstermBackend<Stdout>>) -> usize {
-    terminal
-        .size()
-        .unwrap()
-        .height
-        .saturating_sub(State::SEARCH_BAR_HEIGHT) as usize
+pub const HELP_PANEL_HEIGHT: u16 = 4;
+
+pub fn git_graph_height(state: &State, terminal: &Terminal<CrosstermBackend<Stdout>>) -> usize {
+    let mut height = terminal.size().unwrap().height;
+    height = height.saturating_sub(State::SEARCH_BAR_HEIGHT);
+    if state.is_showing_help_panel {
+        height = height.saturating_sub(HELP_PANEL_HEIGHT);
+    }
+    height as usize
 }
 
 pub fn center_view_on_selected_row(
@@ -20,14 +23,14 @@ pub fn center_view_on_selected_row(
 ) {
     state.index_of_topmost_visible_row = state
         .index_of_selected_row
-        .saturating_sub(git_graph_height(terminal) / 2);
+        .saturating_sub(git_graph_height(state, terminal) / 2);
 }
 
 pub fn ensure_selected_row_is_visible(
     state: &mut State,
     terminal: &Terminal<CrosstermBackend<Stdout>>,
 ) {
-    let height = git_graph_height(terminal);
+    let height = git_graph_height(state, terminal);
     let selected_row_is_above_viewport =
         state.index_of_selected_row < state.index_of_topmost_visible_row;
     let selected_row_is_below_viewport =
@@ -45,7 +48,7 @@ pub fn adjust_viewport_after_terminal_resize(
     terminal: &Terminal<CrosstermBackend<Stdout>>,
     number_of_commits: usize,
 ) {
-    let height = git_graph_height(terminal);
+    let height = git_graph_height(state, terminal);
 
     if number_of_commits >= height {
         // When terminal grows: prevent blank space at bottom by pulling list down

@@ -72,13 +72,22 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
     // Use full width - padding is handled by table columns for proper row highlighting
     let padded_area = frame.area();
 
-    // Split into main area and search bar
+    // Split into main area, search bar, and optional help panel
+    let constraints = if state.is_showing_help_panel {
+        vec![
+            Constraint::Min(1),    // main table
+            Constraint::Length(3), // search bar
+            Constraint::Length(4), // help panel
+        ]
+    } else {
+        vec![
+            Constraint::Min(1),    // main table
+            Constraint::Length(3), // search bar
+        ]
+    };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(1),    // main table
-            Constraint::Length(3), // search bar with top and bottom borders
-        ])
+        .constraints(constraints)
         .split(padded_area);
 
     let graph = commit_graph::build(&repo.commits);
@@ -463,26 +472,6 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             .position(|&i| i == state.index_of_selected_row)
             .map(|p| p + 1);
 
-        // Center: same hints as normal mode but with q:clear and n/N for search navigation
-        // Check if we're on HEAD to conditionally show h:head hint
-        let head_idx = repo.commits.iter().position(|c| c.sha == head_sha);
-        let on_head = head_idx
-            .map(|idx| idx == state.index_of_selected_row)
-            .unwrap_or(true);
-
-        let hint_text = if on_head {
-            "q → clear   / → search   n/N   y → copy sha   b → branch   d → delete"
-        } else {
-            "q → clear   / → search   n/N   y → copy sha   h → goto head   b → branch   d → delete"
-        };
-
-        let nav_hint = Paragraph::new(Line::from(vec![Span::styled(
-            hint_text,
-            Style::default().fg(Color::DarkGray),
-        )]))
-        .alignment(ratatui::layout::Alignment::Center);
-        frame.render_widget(nav_hint, search_inner);
-
         let counter_text = if total > 0 {
             match current {
                 Some(pos) => format!("[ {} / {} ]", pos, total),
@@ -511,23 +500,16 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         )]));
         frame.render_widget(left_display, search_inner);
 
-        // Check if we're on HEAD to conditionally show h:head hint
-        let head_idx = repo.commits.iter().position(|c| c.sha == head_sha);
-        let on_head = head_idx
-            .map(|idx| idx == state.index_of_selected_row)
-            .unwrap_or(true); // If no HEAD, don't show hint
-
-        let hint_text = if on_head {
-            "q → quit   / → search   y → copy sha   b → branch   d → delete".to_string()
+        let hotkey_hint = if state.is_showing_help_panel {
+            "? → hide hotkeys"
         } else {
-            "q → quit   / → search   y → copy sha   h → goto head   b → branch   d → delete".to_string()
+            "? → show hotkeys"
         };
-
         let search_hint = Paragraph::new(Line::from(vec![Span::styled(
-            hint_text,
+            hotkey_hint,
             Style::default().fg(Color::DarkGray),
         )]))
-        .alignment(ratatui::layout::Alignment::Center);
+        .alignment(ratatui::layout::Alignment::Right);
         frame.render_widget(search_hint, search_inner);
     }
 
@@ -541,6 +523,68 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                 )]))
                 .alignment(ratatui::layout::Alignment::Right);
                 frame.render_widget(feedback, search_inner);
+            }
+        }
+    }
+
+    // Render help panel if shown
+    if state.is_showing_help_panel {
+        let help_area = chunks[2];
+        let help_inner = ratatui::layout::Rect {
+            x: help_area.x + 1,
+            y: help_area.y,
+            width: help_area.width.saturating_sub(2),
+            height: help_area.height,
+        };
+
+        let help_style = Style::default().fg(Color::DarkGray);
+        let key_style = Style::default().fg(Color::White);
+
+        // Define columns: each column is a vec of (key, description) pairs
+        // New section = new column. Items flow top-to-bottom within column.
+        let columns: Vec<Vec<(&str, &str)>> = vec![
+            // Quit
+            vec![("q", "quit")],
+            // Navigation
+            vec![
+                ("j/k", "↑/↓"),
+                ("g", "top"),
+                ("G", "bottom"),
+                ("h", "head"),
+            ],
+            // Navigation continued
+            vec![("^d", "½ page ↓"), ("^u", "½ page ↑")],
+            // Search
+            vec![("/", "search"), ("n", "next"), ("N", "prev"), ("q", "clear")],
+            // Actions
+            vec![("y", "copy sha"), ("b", "branch"), ("d", "delete")],
+        ];
+
+        // Calculate column width (key + space + desc + padding)
+        let col_width = 14u16;
+        let mut x_offset = help_inner.x;
+
+        for column in &columns {
+            for (row_idx, (key, desc)) in column.iter().enumerate() {
+                if row_idx >= help_inner.height as usize {
+                    break;
+                }
+                let cell_area = ratatui::layout::Rect {
+                    x: x_offset,
+                    y: help_inner.y + row_idx as u16,
+                    width: col_width.min(help_inner.width.saturating_sub(x_offset - help_inner.x)),
+                    height: 1,
+                };
+                let cell = Paragraph::new(Line::from(vec![
+                    Span::styled(*key, key_style),
+                    Span::styled(" ", help_style),
+                    Span::styled(*desc, help_style),
+                ]));
+                frame.render_widget(cell, cell_area);
+            }
+            x_offset += col_width;
+            if x_offset >= help_inner.x + help_inner.width {
+                break;
             }
         }
     }
