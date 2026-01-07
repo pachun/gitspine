@@ -425,9 +425,9 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             .unwrap_or(true);
 
         let hint_text = if on_head {
-            "q:clear  /:search  n/N:match  c:copy"
+            "q → clear   / → search   n/N   c → copy sha"
         } else {
-            "q:clear  /:search  n/N:match  c:copy  h:head"
+            "q → clear   / → search   n/N   c → copy sha   h → goto head"
         };
 
         let nav_hint = Paragraph::new(Line::from(vec![Span::styled(
@@ -472,9 +472,9 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             .unwrap_or(true); // If no HEAD, don't show hint
 
         let hint_text = if on_head {
-            "q:quit  /:search  c:copy".to_string()
+            "q → quit   / → search   c → copy sha".to_string()
         } else {
-            "q:quit  /:search  c:copy  h:head".to_string()
+            "q → quit   / → search   c → copy sha   h → goto head".to_string()
         };
 
         let search_hint = Paragraph::new(Line::from(vec![Span::styled(
