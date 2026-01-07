@@ -24,13 +24,14 @@ pub struct Commit {
 }
 
 impl Commit {
-    /// Check if this commit matches the search query (searches message, sha, author, date, and branch names)
-    pub fn matches(&self, query: &str, branches: &HashMap<BranchName, Sha>) -> bool {
+    /// Check if this commit matches the search query (searches message, sha, author, date, branch names, and HEAD)
+    pub fn matches(&self, query: &str, branches: &HashMap<BranchName, Sha>, head_sha: Sha) -> bool {
         if query.is_empty() {
             return false;
         }
 
         let case_sensitive = has_mixed_case(query);
+        let is_head = self.sha == head_sha;
 
         // Get branch names for this commit (branches that point to this commit's sha)
         let branch_names: Vec<&str> = branches
@@ -49,6 +50,7 @@ impl Commit {
                 || self.author.contains(query)
                 || date.contains(query)
                 || branch_names.iter().any(|name| name.contains(query))
+                || (is_head && "HEAD".contains(query))
         } else {
             let query_lower = query.to_lowercase();
             self.message.to_lowercase().contains(&query_lower)
@@ -58,6 +60,7 @@ impl Commit {
                 || branch_names
                     .iter()
                     .any(|name| name.to_lowercase().contains(&query_lower))
+                || (is_head && "head".contains(&query_lower))
         }
     }
 }

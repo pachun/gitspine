@@ -405,7 +405,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         } else {
             repo.commits
                 .iter()
-                .filter(|c| c.matches(&state.search_term, &repo.branches))
+                .filter(|c| c.matches(&state.search_term, &repo.branches, head_sha))
                 .count()
         };
 
@@ -470,7 +470,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             .iter()
             .enumerate()
             .filter_map(|(i, c)| {
-                if c.matches(&state.search_term, &repo.branches) {
+                if c.matches(&state.search_term, &repo.branches, head_sha) {
                     Some(i)
                 } else {
                     None

@@ -218,6 +218,7 @@ impl Action {
             }
             Action::CharB => {
                 state.jump_distance_string.clear();
+                state.flash_message = None;
                 state.is_creating_branch = true;
                 state.branch_name.clear();
             }
@@ -225,6 +226,7 @@ impl Action {
                 state.jump_distance_string.clear();
                 let selected_sha = repo.commits[state.index_of_selected_row].sha;
                 if repo.has_local_branches_at(selected_sha) {
+                    state.flash_message = None;
                     state.is_deleting_branch = true;
                     state.delete_branch_name.clear();
                 } else {
@@ -440,7 +442,7 @@ fn confirm_search(state: &mut State, repo: &Repo) {
     let has_matches = repo
         .commits
         .iter()
-        .any(|c| c.matches(&state.search_term, &repo.branches));
+        .any(|c| c.matches(&state.search_term, &repo.branches, repo.head_sha()));
     if has_matches {
         if state.search_term_history.last() != Some(&state.search_term) {
             state
@@ -488,7 +490,8 @@ fn type_search_character(state: &mut State, c: char) {
 }
 
 fn find_next_match(state: &mut State, repo: &Repo) {
-    let commit_matches = |c: &crate::repo::Commit| c.matches(&state.search_term, &repo.branches);
+    let head_sha = repo.head_sha();
+    let commit_matches = |c: &crate::repo::Commit| c.matches(&state.search_term, &repo.branches, head_sha);
 
     if let Some(idx) = repo
         .commits
@@ -513,7 +516,8 @@ fn find_next_match(state: &mut State, repo: &Repo) {
 }
 
 fn find_previous_match(state: &mut State, repo: &Repo) {
-    let commit_matches = |c: &crate::repo::Commit| c.matches(&state.search_term, &repo.branches);
+    let head_sha = repo.head_sha();
+    let commit_matches = |c: &crate::repo::Commit| c.matches(&state.search_term, &repo.branches, head_sha);
 
     if let Some(idx) = repo
         .commits

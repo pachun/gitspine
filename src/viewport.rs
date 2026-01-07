@@ -75,7 +75,7 @@ pub fn update_selection_for_live_search(
         if let Some(idx) = repo
             .commits
             .iter()
-            .position(|c| c.matches(&state.search_term, &repo.branches))
+            .position(|c| c.matches(&state.search_term, &repo.branches, repo.head_sha()))
         {
             state.index_of_selected_row = idx;
         } else if let Some(pre) = state.index_of_selected_row_when_search_began {
