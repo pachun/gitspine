@@ -224,13 +224,12 @@ impl Action {
             Action::CharD => {
                 state.jump_distance_string.clear();
                 let selected_sha = repo.commits[state.index_of_selected_row].sha;
-                let has_branches = repo.branches.values().any(|sha| *sha == selected_sha);
-                if has_branches {
+                if repo.has_local_branches_at(selected_sha) {
                     state.is_deleting_branch = true;
                     state.delete_branch_name.clear();
                 } else {
                     state.flash_message = Some(FlashMessage {
-                        message: "no branches on this commit".to_string(),
+                        message: "no local branches on this commit".to_string(),
                         shown_at: Instant::now(),
                     });
                 }
@@ -354,8 +353,6 @@ impl Action {
                             Err(e) => {
                                 let msg = if e.contains("current HEAD") {
                                     "can't delete current branch".to_string()
-                                } else if e.contains("cannot locate") && state.delete_branch_name.contains('/') {
-                                    "can't delete remote branches".to_string()
                                 } else {
                                     e
                                 };

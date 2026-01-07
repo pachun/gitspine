@@ -139,6 +139,27 @@ impl Repo {
         Ok(())
     }
 
+    /// Check if there are any local (non-remote) branches pointing to the given sha
+    pub fn has_local_branches_at(&self, sha: Sha) -> bool {
+        let git_repo = match Repository::open(&self.path) {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        let Ok(branch_iter) = git_repo.branches(Some(git2::BranchType::Local)) else {
+            return false;
+        };
+        for branch_result in branch_iter {
+            if let Ok((branch, _)) = branch_result {
+                if let Ok(reference) = branch.into_reference().resolve() {
+                    if reference.target() == Some(sha) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Get the web URL for a commit based on the origin remote
     /// Supports GitHub, GitLab, Bitbucket, and other git forges
     pub fn commit_url(&self, sha: Sha) -> Option<String> {
