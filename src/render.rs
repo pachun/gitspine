@@ -534,7 +534,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
     // Show copy feedback in bottom right if recent (works in browse and normal modes)
     if !state.is_typing_search_term {
         if let Some(msg) = &state.flash_message {
-            if msg.shown_at.elapsed().as_secs() < 2 {
+            if msg.shown_at.elapsed().as_secs() < 3 {
                 let feedback = Paragraph::new(Line::from(vec![Span::styled(
                     msg.message.clone(),
                     Style::default().fg(Color::Yellow),

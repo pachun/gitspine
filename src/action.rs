@@ -339,15 +339,22 @@ impl Action {
                                 });
                             }
                             Err(e) => {
+                                let msg = if e.contains("current HEAD") {
+                                    "can't delete current branch".to_string()
+                                } else if e.contains("cannot locate") && state.delete_branch_name.contains('/') {
+                                    "can't delete remote branches".to_string()
+                                } else {
+                                    e
+                                };
                                 state.flash_message = Some(FlashMessage {
-                                    message: e,
+                                    message: msg,
                                     shown_at: Instant::now(),
                                 });
                             }
                         }
                     } else {
                         state.flash_message = Some(FlashMessage {
-                            message: format!("'{}' not on this commit", state.delete_branch_name),
+                            message: format!("no '{}' branch", state.delete_branch_name),
                             shown_at: Instant::now(),
                         });
                     }
