@@ -82,6 +82,7 @@ fn main() {
                     (KeyCode::Char('G'), _) => Action::ShiftG,
                     (KeyCode::Char('h'), _) => Action::CharH,
                     (KeyCode::Char('y'), _) => Action::CharY,
+                    (KeyCode::Char('o'), _) => Action::CharO,
                     (KeyCode::Char('b'), _) => Action::CharB,
                     (KeyCode::Char('d'), _) => Action::CharD,
                     (KeyCode::Char(c), _) if c.is_ascii_digit() => Action::Digit(c),

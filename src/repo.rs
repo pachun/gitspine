@@ -139,6 +139,44 @@ impl Repo {
         Ok(())
     }
 
+    /// Get the web URL for a commit based on the origin remote
+    /// Supports GitHub, GitLab, Bitbucket, and other git forges
+    pub fn commit_url(&self, sha: Sha) -> Option<String> {
+        let git_repo = Repository::open(&self.path).ok()?;
+        let remote = git_repo.find_remote("origin").ok()?;
+        let url = remote.url()?;
+
+        // Parse remote URL to extract host and path
+        // Formats: git@host:user/repo.git or https://host/user/repo.git
+        let (host, path) = if let Some(rest) = url.strip_prefix("git@") {
+            // SSH format: git@host:user/repo.git
+            let colon_pos = rest.find(':')?;
+            let host = &rest[..colon_pos];
+            let path = rest[colon_pos + 1..].strip_suffix(".git").unwrap_or(&rest[colon_pos + 1..]);
+            (host, path)
+        } else if let Some(rest) = url.strip_prefix("https://") {
+            // HTTPS format: https://host/user/repo.git
+            let slash_pos = rest.find('/')?;
+            let host = &rest[..slash_pos];
+            let path = rest[slash_pos + 1..].strip_suffix(".git").unwrap_or(&rest[slash_pos + 1..]);
+            (host, path)
+        } else {
+            return None;
+        };
+
+        // Different forges use different URL patterns for commits
+        let commit_path = if host.contains("gitlab") {
+            format!("/-/commit/{}", sha)
+        } else if host.contains("bitbucket") {
+            format!("/commits/{}", sha)
+        } else {
+            // GitHub, Gitea, Forgejo, and most others use /commit/
+            format!("/commit/{}", sha)
+        };
+
+        Some(format!("https://{}/{}{}", host, path, commit_path))
+    }
+
     pub fn refresh(&mut self) {
         if let Ok(git_repo) = Repository::open(&self.path) {
             self.commits = Self::get_commits(&git_repo);

@@ -604,7 +604,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                 vec![("/", "search"), ("n", "next"), ("N", "prev")]
             },
             // Actions
-            vec![("y", "copy sha"), ("b", "create branch"), ("d", "delete branch")],
+            vec![("y", "copy sha"), ("o", "view in github"), ("b", "create branch"), ("d", "delete branch")],
         ];
 
         // Calculate column widths

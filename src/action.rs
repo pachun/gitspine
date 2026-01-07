@@ -26,6 +26,7 @@ pub enum Action {
     ShiftG,
     CharH,
     CharY,
+    CharO,
     CharB,
     CharD,
     CtrlD,
@@ -94,6 +95,7 @@ impl Action {
             | Action::ShiftG
             | Action::CharH
             | Action::CharY
+            | Action::CharO
             | Action::CharB
             | Action::CharD => {
                 let c = match self {
@@ -107,6 +109,7 @@ impl Action {
                     Action::ShiftG => 'G',
                     Action::CharH => 'h',
                     Action::CharY => 'y',
+                    Action::CharO => 'o',
                     Action::CharB => 'b',
                     Action::CharD => 'd',
                     _ => unreachable!(),
@@ -209,6 +212,10 @@ impl Action {
                 state.jump_distance_string.clear();
                 copy_sha_to_clipboard(state, repo);
             }
+            Action::CharO => {
+                state.jump_distance_string.clear();
+                open_in_browser(state, repo);
+            }
             Action::CharB => {
                 state.jump_distance_string.clear();
                 state.is_creating_branch = true;
@@ -294,6 +301,7 @@ impl Action {
             | Action::ShiftG
             | Action::CharH
             | Action::CharY
+            | Action::CharO
             | Action::CharB
             | Action::CharD => {
                 let c = match self {
@@ -307,6 +315,7 @@ impl Action {
                     Action::ShiftG => 'G',
                     Action::CharH => 'h',
                     Action::CharY => 'y',
+                    Action::CharO => 'o',
                     Action::CharB => 'b',
                     Action::CharD => 'd',
                     _ => unreachable!(),
@@ -383,6 +392,7 @@ impl Action {
             | Action::ShiftG
             | Action::CharH
             | Action::CharY
+            | Action::CharO
             | Action::CharB
             | Action::CharD => {
                 let c = match self {
@@ -396,6 +406,7 @@ impl Action {
                     Action::ShiftG => 'G',
                     Action::CharH => 'h',
                     Action::CharY => 'y',
+                    Action::CharO => 'o',
                     Action::CharB => 'b',
                     Action::CharD => 'd',
                     _ => unreachable!(),
@@ -544,6 +555,33 @@ fn copy_sha_to_clipboard(state: &mut State, repo: &Repo) {
         let _ = child.wait();
         state.flash_message = Some(FlashMessage {
             message: format!("copied {}", short_sha),
+            shown_at: Instant::now(),
+        });
+    }
+}
+
+fn open_in_browser(state: &mut State, repo: &Repo) {
+    let sha = repo.commits[state.index_of_selected_row].sha;
+    if let Some(url) = repo.commit_url(sha) {
+        // Use 'open' on macOS to open the URL in the default browser
+        if std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .is_ok()
+        {
+            state.flash_message = Some(FlashMessage {
+                message: "opened in browser".to_string(),
+                shown_at: Instant::now(),
+            });
+        } else {
+            state.flash_message = Some(FlashMessage {
+                message: "failed to open browser".to_string(),
+                shown_at: Instant::now(),
+            });
+        }
+    } else {
+        state.flash_message = Some(FlashMessage {
+            message: "no remote URL".to_string(),
             shown_at: Instant::now(),
         });
     }
