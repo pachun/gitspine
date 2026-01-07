@@ -364,7 +364,14 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         .alignment(ratatui::layout::Alignment::Right);
         frame.render_widget(hint, search_inner);
     } else if state.is_typing_search_term {
-        // Typing mode: yellow input with cursor, match count hint
+        // Typing mode: yellow /query with cursor on left, hints on right
+        let search_input = Paragraph::new(Line::from(vec![Span::styled(
+            format!("/{}█", state.search_term),
+            Style::default().fg(Color::Yellow),
+        )]));
+        frame.render_widget(search_input, search_inner);
+
+        // Build right-side hint: match info + action hints
         let match_count = if state.search_term.is_empty() {
             0
         } else {
@@ -374,10 +381,10 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                 .count()
         };
 
-        let hint = if state.search_term.is_empty() {
+        let match_info = if state.search_term.is_empty() {
             // Show history hints when query is empty
             let can_go_older = match state.index_of_search_term_history_being_viewed {
-                None => state.search_term_history.len() > 0,
+                None => !state.search_term_history.is_empty(),
                 Some(0) => false,
                 Some(_) => true,
             };
@@ -386,27 +393,28 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                 Some(i) => i < state.search_term_history.len() - 1,
             };
             match (can_go_older, can_go_newer) {
-                (true, true) => " [ ↑↓ history ]".to_string(),
-                (true, false) => " [ ↑ history ]".to_string(),
-                (false, true) => " [ ↓ history ]".to_string(),
+                (true, true) => "↑↓ history   ".to_string(),
+                (true, false) => "↑ history   ".to_string(),
+                (false, true) => "↓ history   ".to_string(),
                 (false, false) => "".to_string(),
             }
         } else if match_count == 0 {
-            " [ no matches ]".to_string()
+            "no matches   ".to_string()
         } else if match_count == 1 {
-            " [ 1 commit ]".to_string()
+            "1 commit   ".to_string()
         } else {
-            format!(" [ {} commits ]", match_count)
+            format!("{} commits   ", match_count)
         };
 
-        let search_input = Paragraph::new(Line::from(vec![
+        let hint = Paragraph::new(Line::from(vec![
+            Span::styled(match_info, Style::default().fg(Color::Yellow)),
             Span::styled(
-                format!("{}█", state.search_term),
-                Style::default().fg(Color::Yellow),
+                "enter → confirm   esc → cancel",
+                Style::default().fg(Color::DarkGray),
             ),
-            Span::styled(hint, Style::default().fg(Color::DarkGray)),
-        ]));
-        frame.render_widget(search_input, search_inner);
+        ]))
+        .alignment(ratatui::layout::Alignment::Right);
+        frame.render_widget(hint, search_inner);
     } else if browse_mode {
         // Browse mode: grey input (no cursor), yellow counter
         let search_input = Paragraph::new(Line::from(vec![Span::styled(
