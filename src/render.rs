@@ -360,7 +360,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
     if state.is_creating_branch {
         // Branch creation mode: cyan input with cursor, hint for create/cancel
         let branch_input = Paragraph::new(Line::from(vec![
-            Span::styled("branch: ", Style::default().fg(Color::Cyan)),
+            Span::styled("create branch: ", Style::default().fg(Color::Cyan)),
             Span::styled(
                 format!("{}█", state.branch_name),
                 Style::default().fg(Color::Cyan),
@@ -377,7 +377,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
     } else if state.is_deleting_branch {
         // Branch deletion mode: red input with cursor, hint for delete/cancel
         let delete_input = Paragraph::new(Line::from(vec![
-            Span::styled("delete: ", Style::default().fg(Color::Red)),
+            Span::styled("delete branch: ", Style::default().fg(Color::Red)),
             Span::styled(
                 format!("{}█", state.delete_branch_name),
                 Style::default().fg(Color::Red),
@@ -450,6 +450,19 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             Style::default().fg(Color::DarkGray),
         )]));
         frame.render_widget(search_input, search_inner);
+
+        // Center: toggle help hint
+        let hotkey_hint = if state.is_showing_help_panel {
+            "? → hide hotkeys"
+        } else {
+            "? → show hotkeys"
+        };
+        let center_hint = Paragraph::new(Line::from(vec![Span::styled(
+            hotkey_hint,
+            Style::default().fg(Color::DarkGray),
+        )]))
+        .alignment(ratatui::layout::Alignment::Center);
+        frame.render_widget(center_hint, search_inner);
 
         // Calculate matches first to determine if we show nav hint
         let matches: Vec<usize> = repo
@@ -537,34 +550,99 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             height: help_area.height,
         };
 
+        // Grey out most of help panel during typing modes (except first column)
+        let in_typing_mode =
+            state.is_typing_search_term || state.is_creating_branch || state.is_deleting_branch;
         let help_style = Style::default().fg(Color::DarkGray);
-        let key_style = Style::default().fg(Color::White);
 
         // Define columns: each column is a vec of (key, description) pairs
         // New section = new column. Items flow top-to-bottom within column.
-        let columns: Vec<Vec<(&str, &str)>> = vec![
-            // Quit
-            vec![("q", "quit")],
+
+        // First column: quit/cancel actions
+        // In typing mode: q quit (greyed), ^c/esc cancel (active)
+        // In browse mode: q clears search, ^c/esc quit
+        // In normal mode: all three quit
+        // First column has per-item active state (key, desc, is_active)
+        let first_column: Vec<(&str, &str, bool)> = if in_typing_mode {
+            vec![("q", "quit", false), ("^c", "cancel", true), ("esc", "cancel", true)]
+        } else if !state.search_term.is_empty() {
+            vec![("q", "clear search", true), ("^c", "quit", true), ("esc", "quit", true)]
+        } else {
+            vec![("q", "quit", true), ("^c", "quit", true), ("esc", "quit", true)]
+        };
+
+        let other_columns: Vec<Vec<(&str, &str)>> = vec![
             // Navigation
             vec![
                 ("j/k", "↑/↓"),
                 ("g", "top"),
                 ("G", "bottom"),
-                ("h", "head"),
+                ("h", "goto head"),
             ],
             // Navigation continued
             vec![("^d", "½ page ↓"), ("^u", "½ page ↑")],
             // Search
-            vec![("/", "search"), ("n", "next"), ("N", "prev"), ("q", "clear")],
+            if state.search_term.is_empty() {
+                vec![("/", "search")]
+            } else {
+                vec![("/", "search"), ("n", "next"), ("N", "prev")]
+            },
             // Actions
-            vec![("y", "copy sha"), ("b", "branch"), ("d", "delete")],
+            vec![("y", "copy sha"), ("b", "create branch"), ("d", "delete branch")],
         ];
 
-        // Calculate column width (key + space + desc + padding)
-        let col_width = 14u16;
+        // Calculate column widths
+        let col_spacing = 3u16;
+        // First column fixed width to prevent layout shift (longest is "q clear search")
+        let first_col_width = 14u16;
+        let other_col_widths: Vec<u16> = other_columns
+            .iter()
+            .map(|col| {
+                col.iter()
+                    .map(|(key, desc)| (key.chars().count() + 1 + desc.chars().count()) as u16)
+                    .max()
+                    .unwrap_or(0)
+            })
+            .collect();
+
         let mut x_offset = help_inner.x;
 
-        for column in &columns {
+        // Render first column (with per-item active state)
+        for (row_idx, (key, desc, is_active)) in first_column.iter().enumerate() {
+            if row_idx >= help_inner.height as usize {
+                break;
+            }
+            let key_style = if *is_active {
+                Style::default().fg(Color::White)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            let cell_area = ratatui::layout::Rect {
+                x: x_offset,
+                y: help_inner.y + row_idx as u16,
+                width: first_col_width.min(help_inner.width.saturating_sub(x_offset - help_inner.x)),
+                height: 1,
+            };
+            let cell = Paragraph::new(Line::from(vec![
+                Span::styled(*key, key_style),
+                Span::styled(" ", help_style),
+                Span::styled(*desc, help_style),
+            ]));
+            frame.render_widget(cell, cell_area);
+        }
+        x_offset += first_col_width + col_spacing;
+
+        // Render other columns
+        for (col_idx, column) in other_columns.iter().enumerate() {
+            if x_offset >= help_inner.x + help_inner.width {
+                break;
+            }
+            let col_width = other_col_widths[col_idx];
+            let col_key_style = if in_typing_mode {
+                Style::default().fg(Color::DarkGray)
+            } else {
+                Style::default().fg(Color::White)
+            };
             for (row_idx, (key, desc)) in column.iter().enumerate() {
                 if row_idx >= help_inner.height as usize {
                     break;
@@ -576,16 +654,13 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                     height: 1,
                 };
                 let cell = Paragraph::new(Line::from(vec![
-                    Span::styled(*key, key_style),
+                    Span::styled(*key, col_key_style),
                     Span::styled(" ", help_style),
                     Span::styled(*desc, help_style),
                 ]));
                 frame.render_widget(cell, cell_area);
             }
-            x_offset += col_width;
-            if x_offset >= help_inner.x + help_inner.width {
-                break;
-            }
+            x_offset += col_width + col_spacing;
         }
     }
 }
