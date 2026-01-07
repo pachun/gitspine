@@ -129,6 +129,16 @@ impl Repo {
         Ok(())
     }
 
+    pub fn delete_branch(&mut self, name: &str) -> Result<(), String> {
+        let git_repo = Repository::open(&self.path).map_err(|e| e.message().to_string())?;
+        let mut branch = git_repo
+            .find_branch(name, git2::BranchType::Local)
+            .map_err(|e| e.message().to_string())?;
+        branch.delete().map_err(|e| e.message().to_string())?;
+        self.branches = Self::get_branches(&git_repo);
+        Ok(())
+    }
+
     pub fn refresh(&mut self) {
         if let Ok(git_repo) = Repository::open(&self.path) {
             self.commits = Self::get_commits(&git_repo);

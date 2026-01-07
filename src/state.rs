@@ -20,6 +20,8 @@ pub struct State {
     pub flash_message: Option<FlashMessage>,
     pub is_creating_branch: bool,
     pub branch_name: String,
+    pub is_deleting_branch: bool,
+    pub delete_branch_name: String,
 }
 
 impl State {
@@ -46,6 +48,8 @@ impl State {
             flash_message: None,
             is_creating_branch: false,
             branch_name: String::new(),
+            is_deleting_branch: false,
+            delete_branch_name: String::new(),
         }
     }
 }

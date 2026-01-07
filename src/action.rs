@@ -27,6 +27,7 @@ pub enum Action {
     CharH,
     CharY,
     CharB,
+    CharD,
     CtrlD,
     CtrlU,
     Digit(char),
@@ -46,6 +47,9 @@ impl Action {
             self.execute_typing_mode(state, repo, terminal)
         } else if state.is_creating_branch {
             self.execute_branch_creation_mode(state, repo);
+            false
+        } else if state.is_deleting_branch {
+            self.execute_branch_deletion_mode(state, repo);
             false
         } else {
             self.execute_normal_mode(state, repo, terminal)
@@ -90,7 +94,8 @@ impl Action {
             | Action::ShiftG
             | Action::CharH
             | Action::CharY
-            | Action::CharB => {
+            | Action::CharB
+            | Action::CharD => {
                 let c = match self {
                     Action::CharSlash => '/',
                     Action::CharQ => 'q',
@@ -103,6 +108,7 @@ impl Action {
                     Action::CharH => 'h',
                     Action::CharY => 'y',
                     Action::CharB => 'b',
+                    Action::CharD => 'd',
                     _ => unreachable!(),
                 };
                 type_search_character(state, c);
@@ -208,6 +214,20 @@ impl Action {
                 state.is_creating_branch = true;
                 state.branch_name.clear();
             }
+            Action::CharD => {
+                state.jump_distance_string.clear();
+                let selected_sha = repo.commits[state.index_of_selected_row].sha;
+                let has_branches = repo.branches.values().any(|sha| *sha == selected_sha);
+                if has_branches {
+                    state.is_deleting_branch = true;
+                    state.delete_branch_name.clear();
+                } else {
+                    state.flash_message = Some(FlashMessage {
+                        message: "no branches on this commit".to_string(),
+                        shown_at: Instant::now(),
+                    });
+                }
+            }
             Action::CtrlD => {
                 state.jump_distance_string.clear();
                 let half_page = git_graph_height(terminal) / 2;
@@ -270,7 +290,8 @@ impl Action {
             | Action::ShiftG
             | Action::CharH
             | Action::CharY
-            | Action::CharB => {
+            | Action::CharB
+            | Action::CharD => {
                 let c = match self {
                     Action::CharSlash => '/',
                     Action::CharQ => 'q',
@@ -283,12 +304,95 @@ impl Action {
                     Action::CharH => 'h',
                     Action::CharY => 'y',
                     Action::CharB => 'b',
+                    Action::CharD => 'd',
                     _ => unreachable!(),
                 };
                 state.branch_name.push(c);
             }
             Action::Digit(c) | Action::Char(c) => {
                 state.branch_name.push(*c);
+            }
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::None => {}
+        }
+    }
+
+    fn execute_branch_deletion_mode(&self, state: &mut State, repo: &mut Repo) {
+        match self {
+            Action::Esc | Action::CtrlC => {
+                state.is_deleting_branch = false;
+                state.delete_branch_name.clear();
+            }
+            Action::Enter => {
+                if !state.delete_branch_name.is_empty() {
+                    let selected_sha = repo.commits[state.index_of_selected_row].sha;
+                    let branch_exists_on_commit = repo
+                        .branches
+                        .iter()
+                        .any(|(name, sha)| name.0 == state.delete_branch_name && *sha == selected_sha);
+
+                    if branch_exists_on_commit {
+                        match repo.delete_branch(&state.delete_branch_name) {
+                            Ok(()) => {
+                                state.flash_message = Some(FlashMessage {
+                                    message: format!("deleted {}", state.delete_branch_name),
+                                    shown_at: Instant::now(),
+                                });
+                            }
+                            Err(e) => {
+                                state.flash_message = Some(FlashMessage {
+                                    message: e,
+                                    shown_at: Instant::now(),
+                                });
+                            }
+                        }
+                    } else {
+                        state.flash_message = Some(FlashMessage {
+                            message: format!("'{}' not on this commit", state.delete_branch_name),
+                            shown_at: Instant::now(),
+                        });
+                    }
+                }
+                state.is_deleting_branch = false;
+                state.delete_branch_name.clear();
+            }
+            Action::Backspace => {
+                if state.delete_branch_name.is_empty() {
+                    state.is_deleting_branch = false;
+                } else {
+                    state.delete_branch_name.pop();
+                }
+            }
+            Action::CharSlash
+            | Action::CharQ
+            | Action::CharN
+            | Action::ShiftN
+            | Action::CharJ
+            | Action::CharK
+            | Action::CharG
+            | Action::ShiftG
+            | Action::CharH
+            | Action::CharY
+            | Action::CharB
+            | Action::CharD => {
+                let c = match self {
+                    Action::CharSlash => '/',
+                    Action::CharQ => 'q',
+                    Action::CharN => 'n',
+                    Action::ShiftN => 'N',
+                    Action::CharJ => 'j',
+                    Action::CharK => 'k',
+                    Action::CharG => 'g',
+                    Action::ShiftG => 'G',
+                    Action::CharH => 'h',
+                    Action::CharY => 'y',
+                    Action::CharB => 'b',
+                    Action::CharD => 'd',
+                    _ => unreachable!(),
+                };
+                state.delete_branch_name.push(c);
+            }
+            Action::Digit(c) | Action::Char(c) => {
+                state.delete_branch_name.push(*c);
             }
             Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::None => {}
         }
