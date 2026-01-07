@@ -587,24 +587,30 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             vec![("q", "quit", true), ("^c", "quit", true), ("esc", "quit", true)]
         };
 
-        let other_columns: Vec<Vec<(&str, &str)>> = vec![
+        // Contextual checks for greying out items
+        let selected_sha = repo.commits[state.index_of_selected_row].sha;
+        let is_on_head = selected_sha == head_sha;
+        let has_local_branches = repo.has_local_branches_at(selected_sha);
+
+        // Other columns now have per-item active state: (key, desc, is_active)
+        let other_columns: Vec<Vec<(&str, &str, bool)>> = vec![
             // Navigation
             vec![
-                ("j/k", "↑/↓"),
-                ("g", "top"),
-                ("G", "bottom"),
-                ("h", "goto head"),
+                ("j/k", "↑/↓", true),
+                ("g", "top", true),
+                ("G", "bottom", true),
+                ("h", "goto head", !is_on_head),
             ],
             // Navigation continued
-            vec![("^d", "½ page ↓"), ("^u", "½ page ↑")],
+            vec![("^d", "½ page ↓", true), ("^u", "½ page ↑", true)],
             // Search
             if state.search_term.is_empty() {
-                vec![("/", "search")]
+                vec![("/", "search", true)]
             } else {
-                vec![("/", "search"), ("n", "next"), ("N", "prev")]
+                vec![("/", "search", true), ("n", "next", true), ("N", "prev", true)]
             },
             // Actions
-            vec![("y", "copy sha"), ("o", "view in github"), ("b", "create branch"), ("d", "delete branch")],
+            vec![("y", "copy sha", true), ("o", "view in github", true), ("b", "create branch", true), ("d", "delete branch", has_local_branches)],
         ];
 
         // Calculate column widths
@@ -615,7 +621,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             .iter()
             .map(|col| {
                 col.iter()
-                    .map(|(key, desc)| (key.chars().count() + 1 + desc.chars().count()) as u16)
+                    .map(|(key, desc, _)| (key.chars().count() + 1 + desc.chars().count()) as u16)
                     .max()
                     .unwrap_or(0)
             })
@@ -648,21 +654,21 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         }
         x_offset += first_col_width + col_spacing;
 
-        // Render other columns
+        // Render other columns (with per-item active state)
         for (col_idx, column) in other_columns.iter().enumerate() {
             if x_offset >= help_inner.x + help_inner.width {
                 break;
             }
             let col_width = other_col_widths[col_idx];
-            let col_key_style = if in_typing_mode {
-                Style::default().fg(Color::DarkGray)
-            } else {
-                Style::default().fg(Color::White)
-            };
-            for (row_idx, (key, desc)) in column.iter().enumerate() {
+            for (row_idx, (key, desc, is_active)) in column.iter().enumerate() {
                 if row_idx >= help_inner.height as usize {
                     break;
                 }
+                let key_style = if in_typing_mode || !is_active {
+                    Style::default().fg(Color::DarkGray)
+                } else {
+                    Style::default().fg(Color::White)
+                };
                 let cell_area = ratatui::layout::Rect {
                     x: x_offset,
                     y: help_inner.y + row_idx as u16,
@@ -670,7 +676,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                     height: 1,
                 };
                 let cell = Paragraph::new(Line::from(vec![
-                    Span::styled(*key, col_key_style),
+                    Span::styled(*key, key_style),
                     Span::styled(" ", help_style),
                     Span::styled(*desc, help_style),
                 ]));
