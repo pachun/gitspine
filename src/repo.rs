@@ -250,6 +250,10 @@ impl Repo {
                 if let Ok((branch, _branch_type)) = branch_result {
                     let name = branch.name().ok().flatten().map(|s| s.to_string());
                     if let Some(name) = name {
+                        // Skip origin/HEAD - it's a symbolic ref to the default branch
+                        if name.ends_with("/HEAD") {
+                            continue;
+                        }
                         if let Ok(reference) = branch.into_reference().resolve() {
                             if let Some(oid) = reference.target() {
                                 branches.insert(BranchName(name), oid);
