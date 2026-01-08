@@ -39,10 +39,10 @@ impl Highlighter {
             .find_syntax_by_extension(extension)
             .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
 
-        // Use base16-ocean.dark theme (or fall back to first available)
+        // Use Catppuccin Frappé for syntax colors
         let theme = self
             .theme_set
-            .get(two_face::theme::EmbeddedThemeName::Base16OceanDark);
+            .get(two_face::theme::EmbeddedThemeName::CatppuccinFrappe);
 
         let mut h = HighlightLines::new(syntax, theme);
 

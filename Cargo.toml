@@ -9,4 +9,4 @@ crossterm = "0.29.0"
 git2 = "0.20.3"
 notify = "6"
 ratatui = "0.30.0"
-two-face = { version = "0.4", default-features = false, features = ["syntect-default-onig"] }
+two-face = "0.5.1"
