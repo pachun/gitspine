@@ -9,7 +9,6 @@ use ratatui::Frame;
 use crate::action::compute_details_match_lines;
 use crate::repo::{BranchName, CommitDetails, Repo, Sha};
 use crate::state::State;
-use crate::utils::format_datetime;
 use crate::utils::{format_date, format_time, has_mixed_case};
 
 /// Build reverse index: commit sha -> list of branch names pointing to it
@@ -801,31 +800,41 @@ fn render_details_panel(
         height: inner.height,
     };
 
-    let short_sha = &details.sha.to_string()[..7];
-    let datetime = format_datetime(details.timestamp);
+    let full_sha = details.sha.to_string();
+    let datetime = format!("{} {}", format_date(details.timestamp), format_time(details.timestamp));
+    let author_line = format!("{} <{}>", details.author_name, details.author_email);
 
-    // Build all lines for the details panel
-    let mut lines: Vec<Line> = vec![
-        Line::from(vec![
-            Span::styled("Commit ", Style::default().fg(Color::DarkGray)),
-            Span::styled(short_sha, Style::default().fg(Color::Yellow)),
-        ]),
-        Line::from(vec![
-            Span::styled("Author: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(&details.author_name, Style::default()),
-            Span::styled(" <", Style::default().fg(Color::DarkGray)),
-            Span::styled(&details.author_email, Style::default().fg(Color::DarkGray)),
-            Span::styled(">", Style::default().fg(Color::DarkGray)),
-        ]),
-        Line::from(vec![
-            Span::styled("Date:   ", Style::default().fg(Color::DarkGray)),
-            Span::styled(datetime, Style::default().fg(Color::DarkGray)),
-        ]),
-        Line::from(""),
+    // Metadata for right side (SHA, author, date)
+    let meta_lines = vec![
+        full_sha,
+        author_line,
+        datetime,
     ];
 
-    // Add commit message (may be multiple lines) with search highlighting
-    for line in details.message.lines() {
+    let msg_lines: Vec<&str> = details.message.lines().collect();
+    let available_width = inner.width as usize;
+
+    // Build all lines for the details panel
+    let mut lines: Vec<Line> = Vec::new();
+
+    // First 3 lines: message on left, metadata on right
+    for i in 0..3 {
+        let msg = msg_lines.get(i).copied().unwrap_or("");
+        let meta = &meta_lines[i];
+
+        let msg_len = msg.chars().count();
+        let meta_len = meta.chars().count();
+        let padding = available_width.saturating_sub(msg_len + meta_len + 1);
+
+        let mut spans = highlight_matches(msg, search_term, Style::default(), highlight_style);
+        spans.push(Span::raw(" ".repeat(padding.max(1))));
+        spans.push(Span::styled(meta.clone(), Style::default().fg(Color::DarkGray)));
+
+        lines.push(Line::from(spans));
+    }
+
+    // Remaining message lines (if more than 3)
+    for line in msg_lines.iter().skip(3) {
         lines.push(Line::from(highlight_matches(line, search_term, Style::default(), highlight_style)));
     }
 
