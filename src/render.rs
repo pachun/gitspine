@@ -903,7 +903,7 @@ fn render_details_panel(
     let file_count = details.files.len();
     let files_word = if file_count == 1 { "file" } else { "files" };
 
-    let bg_color = Color::Rgb(40, 40, 50);
+    let bg_color = Color::DarkGray;
     let bg_style = Style::default().bg(bg_color);
 
     // Build the content to calculate width
@@ -978,7 +978,7 @@ fn render_details_panel(
         });
 
         // File header - 3-line solid background bar
-        let bg_color = Color::Rgb(40, 40, 50);
+        let bg_color = Color::DarkGray;
         let filename_style = Style::default().fg(Color::White).bg(bg_color).add_modifier(Modifier::BOLD);
         let bg_style = Style::default().bg(bg_color);
         let width = inner.width as usize;
@@ -1160,7 +1160,7 @@ fn render_details_panel(
     // Also apply selected match styling if the selected line is visible
     let visible_lines: Vec<Line> = if let Some(section) = sticky_header {
         // Build sticky bar with variable height (shrinks as next header approaches)
-        let bg_color = Color::Rgb(40, 40, 50);
+        let bg_color = Color::DarkGray;
         let filename_style = Style::default().fg(Color::White).bg(bg_color).add_modifier(Modifier::BOLD);
         let bg_style = Style::default().bg(bg_color);
         let width = inner.width as usize;
