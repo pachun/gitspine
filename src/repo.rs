@@ -66,9 +66,8 @@ impl Commit {
 }
 
 pub struct DiffLine {
-    pub origin: char,          // '+', '-', ' ' (context)
+    pub origin: char,             // '+', '-', ' ' (context)
     pub content: String,
-    pub old_line_no: Option<u32>, // Line number in old file (for '-' and ' ' lines)
     pub new_line_no: Option<u32>, // Line number in new file (for '+' and ' ' lines)
 }
 
@@ -313,7 +312,6 @@ impl Repo {
                                             hunk.lines.push(DiffLine {
                                                 origin,
                                                 content: content.trim_end_matches('\n').to_string(),
-                                                old_line_no: line.old_lineno(),
                                                 new_line_no: line.new_lineno(),
                                             });
                                         }

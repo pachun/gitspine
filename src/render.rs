@@ -128,7 +128,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
     let main_chunks = if show_details {
         Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Length((graph_width + gutter_width + 4) as u16), Constraint::Fill(1)])
+            .constraints([Constraint::Length((graph_width + 2) as u16), Constraint::Fill(1)])
             .split(chunks[0])
     } else {
         Layout::default()
@@ -289,11 +289,10 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             let time = format_time(c.timestamp);
             let short_sha = c.sha.to_string()[..7].to_string();
 
-            // Build row cells - when showing details, only show graph
+            // Build row cells - when showing details, only show graph (no line numbers)
             let cells: Vec<Cell> = if show_details {
                 vec![
-                    Cell::from(""),                                     // Left padding
-                    Cell::from(Span::styled(line_num, line_num_style)), // Line number gutter
+                    Cell::from(""), // Left padding
                     Cell::from(Line::from(graph_spans)),
                     Cell::from(""), // Right padding
                 ]
@@ -358,11 +357,10 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         })
         .collect();
 
-    // Build widths - when showing details, only graph column
+    // Build widths - when showing details, only graph column (no line numbers)
     let widths: Vec<Constraint> = if show_details {
         vec![
             Constraint::Length(0), // left padding
-            Constraint::Length(gutter_width as u16), // line number gutter
             Constraint::Fill(1),   // graph takes remaining space
             Constraint::Length(0), // right padding
         ]
@@ -903,21 +901,15 @@ fn render_details_panel(
                         _ => (Style::default().fg(Color::DarkGray), None),
                     };
 
-                    // Format line numbers: old | new | prefix content
-                    let old_num = diff_line
-                        .old_line_no
-                        .map(|n| format!("{:>4}", n))
-                        .unwrap_or_else(|| "    ".to_string());
-                    let new_num = diff_line
+                    // Format line number (new file only, saves horizontal space)
+                    let line_num = diff_line
                         .new_line_no
                         .map(|n| format!("{:>4}", n))
                         .unwrap_or_else(|| "    ".to_string());
 
-                    // Build spans: line numbers + prefix + syntax-highlighted content
+                    // Build spans: line number + prefix + syntax-highlighted content
                     let mut spans = vec![
-                        Span::styled(old_num, Style::default().fg(Color::DarkGray)),
-                        Span::styled(" ", Style::default()),
-                        Span::styled(new_num, Style::default().fg(Color::DarkGray)),
+                        Span::styled(line_num, Style::default().fg(Color::DarkGray)),
                         Span::styled(" ", Style::default()),
                         Span::styled(diff_line.origin.to_string(), prefix_style),
                         Span::styled(" ", Style::default()),
