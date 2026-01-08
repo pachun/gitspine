@@ -18,6 +18,18 @@ fn branches_at_commit(branches: &HashMap<BranchName, Sha>) -> HashMap<Sha, Vec<&
     for (name, sha) in branches {
         result.entry(*sha).or_default().push(name);
     }
+    // Sort each branch list: local first (alphabetical), then remote (alphabetical)
+    for branches in result.values_mut() {
+        branches.sort_by(|a, b| {
+            let a_is_remote = a.0.contains('/');
+            let b_is_remote = b.0.contains('/');
+            match (a_is_remote, b_is_remote) {
+                (false, true) => std::cmp::Ordering::Less,
+                (true, false) => std::cmp::Ordering::Greater,
+                _ => a.0.cmp(&b.0),
+            }
+        });
+    }
     result
 }
 
