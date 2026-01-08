@@ -901,19 +901,15 @@ fn render_details_panel(
                         _ => (Style::default().fg(Color::DarkGray), None),
                     };
 
-                    // Format line number (new file only, saves horizontal space)
+                    // Format: "{origin}{line_num} " - origin on left, then 4-char line num
                     let line_num = diff_line
                         .new_line_no
                         .map(|n| format!("{:>4}", n))
                         .unwrap_or_else(|| "    ".to_string());
+                    let prefix = format!("{}{} ", diff_line.origin, line_num);
 
-                    // Build spans: line number + prefix + syntax-highlighted content
-                    let mut spans = vec![
-                        Span::styled(line_num, Style::default().fg(Color::DarkGray)),
-                        Span::styled(" ", Style::default()),
-                        Span::styled(diff_line.origin.to_string(), prefix_style),
-                        Span::styled(" ", Style::default()),
-                    ];
+                    // Build spans: prefix + syntax-highlighted content
+                    let mut spans = vec![Span::styled(prefix, prefix_style)];
 
                     // Use pre-highlighted content
                     let highlighted = &highlighted_lines[highlight_idx];
