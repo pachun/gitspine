@@ -841,52 +841,9 @@ fn render_details_panel(
     // Add blank line before files
     lines.push(Line::from(""));
 
-    // Add files changed header
-    let file_count = details.files.len();
-    lines.push(Line::from(vec![Span::styled(
-        format!("Files Changed ({}):", file_count),
-        Style::default().fg(Color::DarkGray),
-    )]));
-
-    // Add file list with status, path, and +/- counts
-    for file in &details.files {
-        let status_color = match file.status {
-            'A' => Color::Green,
-            'D' => Color::Red,
-            'M' => Color::Yellow,
-            'R' => Color::Blue,
-            _ => Color::Gray,
-        };
-
-        let mut spans = vec![
-            Span::styled(" ", Style::default()),
-            Span::styled(file.status.to_string(), Style::default().fg(status_color)),
-            Span::styled(" ", Style::default()),
-        ];
-        spans.extend(highlight_matches(&file.path, search_term, Style::default(), highlight_style));
-
-        // Add +/- counts if available
-        if file.additions > 0 || file.deletions > 0 {
-            spans.push(Span::styled(" ", Style::default()));
-            if file.additions > 0 {
-                spans.push(Span::styled(
-                    format!("+{}", file.additions),
-                    Style::default().fg(Color::Green),
-                ));
-            }
-            if file.deletions > 0 {
-                if file.additions > 0 {
-                    spans.push(Span::styled(" ", Style::default()));
-                }
-                spans.push(Span::styled(
-                    format!("-{}", file.deletions),
-                    Style::default().fg(Color::Red),
-                ));
-            }
-        }
-
-        lines.push(Line::from(spans));
-    }
+    // Build and render file tree
+    let file_tree = build_file_tree(&details.files);
+    render_file_tree(&file_tree, "", &mut lines, search_term, highlight_style);
 
     // Add blank line before diffs
     lines.push(Line::from(""));
@@ -1165,4 +1122,150 @@ fn common_prefix_of(strings: &[&String]) -> String {
             .min(prefix_len);
     }
     first.chars().take(prefix_len).collect()
+}
+
+/// A node in the file tree (either a directory or a file)
+struct FileTreeNode {
+    name: String,
+    status: Option<char>,
+    additions: usize,
+    deletions: usize,
+    children: Vec<FileTreeNode>,
+}
+
+/// Build a tree structure from flat file paths
+fn build_file_tree(files: &[crate::repo::FileChange]) -> Vec<FileTreeNode> {
+    let mut root: Vec<FileTreeNode> = Vec::new();
+
+    for file in files {
+        let parts: Vec<&str> = file.path.split('/').collect();
+        insert_into_tree(&mut root, &parts, file.status, file.additions, file.deletions);
+    }
+
+    // Sort each level: directories first, then files, both alphabetically
+    sort_tree(&mut root);
+    root
+}
+
+fn insert_into_tree(
+    nodes: &mut Vec<FileTreeNode>,
+    parts: &[&str],
+    status: char,
+    additions: usize,
+    deletions: usize,
+) {
+    if parts.is_empty() {
+        return;
+    }
+
+    let name = parts[0];
+    let is_file = parts.len() == 1;
+
+    // Find existing node or create new one
+    let node_idx = nodes.iter().position(|n| n.name == name);
+    let node = if let Some(idx) = node_idx {
+        &mut nodes[idx]
+    } else {
+        nodes.push(FileTreeNode {
+            name: name.to_string(),
+            status: if is_file { Some(status) } else { None },
+            additions: if is_file { additions } else { 0 },
+            deletions: if is_file { deletions } else { 0 },
+            children: Vec::new(),
+        });
+        nodes.last_mut().unwrap()
+    };
+
+    if parts.len() > 1 {
+        insert_into_tree(&mut node.children, &parts[1..], status, additions, deletions);
+    }
+}
+
+fn sort_tree(nodes: &mut Vec<FileTreeNode>) {
+    // Sort: directories (have children) first, then files, alphabetically within each group
+    nodes.sort_by(|a, b| {
+        let a_is_dir = !a.children.is_empty();
+        let b_is_dir = !b.children.is_empty();
+        match (a_is_dir, b_is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        }
+    });
+
+    for node in nodes {
+        sort_tree(&mut node.children);
+    }
+}
+
+/// Render the file tree with tree-drawing characters
+fn render_file_tree(
+    nodes: &[FileTreeNode],
+    prefix: &str,
+    lines: &mut Vec<Line<'static>>,
+    search_term: &str,
+    highlight_style: Style,
+) {
+    for (i, node) in nodes.iter().enumerate() {
+        let is_last = i == nodes.len() - 1;
+        let connector = if is_last { "└── " } else { "├── " };
+
+        let mut spans = vec![
+            Span::styled(prefix.to_string(), Style::default().fg(Color::DarkGray)),
+            Span::styled(connector, Style::default().fg(Color::DarkGray)),
+        ];
+
+        if let Some(status) = node.status {
+            // It's a file - show status
+            let status_color = match status {
+                'A' => Color::Green,
+                'D' => Color::Red,
+                'M' => Color::Yellow,
+                'R' => Color::Blue,
+                _ => Color::Gray,
+            };
+            spans.push(Span::styled(format!("{} ", status), Style::default().fg(status_color)));
+            spans.extend(highlight_matches(&node.name, search_term, Style::default(), highlight_style));
+
+            // Add +/- counts
+            if node.additions > 0 || node.deletions > 0 {
+                spans.push(Span::styled(" ", Style::default()));
+                if node.additions > 0 {
+                    spans.push(Span::styled(
+                        format!("+{}", node.additions),
+                        Style::default().fg(Color::Green),
+                    ));
+                }
+                if node.deletions > 0 {
+                    if node.additions > 0 {
+                        spans.push(Span::styled(" ", Style::default()));
+                    }
+                    spans.push(Span::styled(
+                        format!("-{}", node.deletions),
+                        Style::default().fg(Color::Red),
+                    ));
+                }
+            }
+        } else {
+            // It's a directory
+            spans.extend(highlight_matches(
+                &format!("{}/", node.name),
+                search_term,
+                Style::default().fg(Color::Blue),
+                highlight_style,
+            ));
+        }
+
+        lines.push(Line::from(spans));
+
+        // Recurse into children with updated prefix
+        if !node.children.is_empty() {
+            let child_prefix = if is_last {
+                format!("{}    ", prefix)
+            } else {
+                format!("{}│   ", prefix)
+            };
+            render_file_tree(&node.children, &child_prefix, lines, search_term, highlight_style);
+        }
+    }
 }
