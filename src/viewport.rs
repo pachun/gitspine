@@ -17,6 +17,14 @@ pub fn git_graph_height(state: &State, terminal: &Terminal<CrosstermBackend<Stdo
     height as usize
 }
 
+/// Height of the details panel when showing commit details
+/// Layout: 3 rows for commits at top, rest for details
+pub fn details_panel_height(state: &State, terminal: &Terminal<CrosstermBackend<Stdout>>) -> usize {
+    let total = git_graph_height(state, terminal);
+    // Subtract 3 rows for commit list, 1 for border
+    total.saturating_sub(4)
+}
+
 pub fn center_view_on_selected_row(
     state: &mut State,
     terminal: &Terminal<CrosstermBackend<Stdout>>,

@@ -7,6 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use ratatui::Frame;
 
+use crate::action::compute_details_match_lines;
 use crate::commit_graph;
 use crate::highlight::Highlighter;
 use crate::repo::{BranchName, CommitDetails, Repo, Sha};
@@ -162,6 +163,9 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         state.index_of_topmost_visible_row
     };
 
+    // When in details view, don't highlight search matches in commit list
+    let commit_list_search = if show_details { "" } else { &state.search_term };
+
     let rows: Vec<Row> = repo
         .commits
         .iter()
@@ -221,7 +225,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                         // HEAD points to a branch: "HEAD → branch_name"
                         message_spans.extend(highlight_matches(
                             "HEAD",
-                            &state.search_term,
+                            commit_list_search,
                             Style::default().fg(Color::Cyan).bold(),
                             highlight_style,
                         ));
@@ -232,7 +236,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                         let branch_color = lane_colors[commit_lane % lane_colors.len()];
                         message_spans.extend(highlight_matches(
                             &head_branch.0,
-                            &state.search_term,
+                            commit_list_search,
                             Style::default().fg(branch_color).bold(),
                             highlight_style,
                         ));
@@ -240,7 +244,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                         // Detached HEAD
                         message_spans.extend(highlight_matches(
                             "HEAD",
-                            &state.search_term,
+                            commit_list_search,
                             Style::default().fg(Color::Cyan).bold(),
                             highlight_style,
                         ));
@@ -264,7 +268,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                         let branch_color = lane_colors[commit_lane % lane_colors.len()];
                         message_spans.extend(highlight_matches(
                             &branch_name.0,
-                            &state.search_term,
+                            commit_list_search,
                             Style::default().fg(branch_color).bold(),
                             highlight_style,
                         ));
@@ -280,7 +284,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
 
             message_spans.extend(highlight_matches(
                 &c.message,
-                &state.search_term,
+                commit_list_search,
                 Style::default(),
                 highlight_style,
             ));
@@ -298,7 +302,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                 Cell::from(Line::from(message_spans)),
                 Cell::from(Line::from(highlight_matches(
                     &date,
-                    &state.search_term,
+                    commit_list_search,
                     if i == state.index_of_selected_row {
                         Style::default().bold()
                     } else {
@@ -309,7 +313,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                 Cell::from(
                     Line::from(highlight_matches(
                         &time,
-                        &state.search_term,
+                        commit_list_search,
                         if i == state.index_of_selected_row {
                             Style::default().fg(Color::Gray)
                         } else {
@@ -321,7 +325,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                 ),
                 Cell::from(Line::from(highlight_matches(
                     &c.author,
-                    &state.search_term,
+                    commit_list_search,
                     if i == state.index_of_selected_row {
                         Style::default().bold()
                     } else {
@@ -331,7 +335,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                 ))),
                 Cell::from(Line::from(highlight_matches(
                     &short_sha,
-                    &state.search_term,
+                    commit_list_search,
                     if i == state.index_of_selected_row {
                         Style::default().fg(Color::Gray)
                     } else {
@@ -368,11 +372,17 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
 
     // Render details panel if showing
     if let Some(details) = &state.commit_details {
-        render_details_panel(frame, main_chunks[1], details, state.details_scroll_offset, &state.search_term);
+        render_details_panel(frame, main_chunks[1], details, state.details_scroll_offset, &state.details_search_term, state.details_selected_match_line);
     }
 
     // Render search bar with right-aligned match counter
-    let browse_mode = !state.is_typing_search_term && !state.search_term.is_empty();
+    // Browse mode: not typing, and have an active search term (context-dependent)
+    let active_search_term = if state.commit_details.is_some() {
+        &state.details_search_term
+    } else {
+        &state.search_term
+    };
+    let browse_mode = !state.is_typing_search_term && !active_search_term.is_empty();
     let search_active = state.is_typing_search_term || browse_mode;
     let border_color = if state.is_creating_branch {
         Color::Cyan
@@ -439,44 +449,57 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
     } else if state.is_typing_search_term {
         // Typing mode: yellow /query with cursor on left, hints on right
         let search_input = Paragraph::new(Line::from(vec![Span::styled(
-            format!("/{}█", state.search_term),
+            format!("/{}█", active_search_term),
             Style::default().fg(Color::Yellow),
         )]));
         frame.render_widget(search_input, search_inner);
 
         // Build right-side hint: match info + action hints
-        let match_count = if state.search_term.is_empty() {
-            0
+        let match_info = if active_search_term.is_empty() {
+            // Show history hints when query is empty (only for commit search, not details)
+            if state.commit_details.is_none() {
+                let can_go_older = match state.index_of_search_term_history_being_viewed {
+                    None => !state.search_term_history.is_empty(),
+                    Some(0) => false,
+                    Some(_) => true,
+                };
+                let can_go_newer = match state.index_of_search_term_history_being_viewed {
+                    None => false,
+                    Some(i) => i < state.search_term_history.len() - 1,
+                };
+                match (can_go_older, can_go_newer) {
+                    (true, true) => "↑↓ history   ".to_string(),
+                    (true, false) => "↑ history   ".to_string(),
+                    (false, true) => "↓ history   ".to_string(),
+                    (false, false) => "".to_string(),
+                }
+            } else {
+                "".to_string()
+            }
+        } else if state.commit_details.is_some() {
+            // In details view: count lines with matches
+            let match_count = compute_details_match_lines(state, repo).len();
+            if match_count == 0 {
+                "no matches   ".to_string()
+            } else if match_count == 1 {
+                "1 match   ".to_string()
+            } else {
+                format!("{} matches   ", match_count)
+            }
         } else {
-            repo.commits
+            // In commit list: count matching commits
+            let match_count = repo
+                .commits
                 .iter()
                 .filter(|c| c.matches(&state.search_term, &repo.branches, head_sha))
-                .count()
-        };
-
-        let match_info = if state.search_term.is_empty() {
-            // Show history hints when query is empty
-            let can_go_older = match state.index_of_search_term_history_being_viewed {
-                None => !state.search_term_history.is_empty(),
-                Some(0) => false,
-                Some(_) => true,
-            };
-            let can_go_newer = match state.index_of_search_term_history_being_viewed {
-                None => false,
-                Some(i) => i < state.search_term_history.len() - 1,
-            };
-            match (can_go_older, can_go_newer) {
-                (true, true) => "↑↓ history   ".to_string(),
-                (true, false) => "↑ history   ".to_string(),
-                (false, true) => "↓ history   ".to_string(),
-                (false, false) => "".to_string(),
+                .count();
+            if match_count == 0 {
+                "no matches   ".to_string()
+            } else if match_count == 1 {
+                "1 commit   ".to_string()
+            } else {
+                format!("{} commits   ", match_count)
             }
-        } else if match_count == 0 {
-            "no matches   ".to_string()
-        } else if match_count == 1 {
-            "1 commit   ".to_string()
-        } else {
-            format!("{} commits   ", match_count)
         };
 
         let hint = Paragraph::new(Line::from(vec![
@@ -491,7 +514,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
     } else if browse_mode {
         // Browse mode: grey input (no cursor), yellow counter
         let search_input = Paragraph::new(Line::from(vec![Span::styled(
-            &state.search_term,
+            active_search_term,
             Style::default().fg(Color::DarkGray),
         )]));
         frame.render_widget(search_input, search_inner);
@@ -509,34 +532,48 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         .alignment(ratatui::layout::Alignment::Center);
         frame.render_widget(center_hint, search_inner);
 
-        // Calculate matches first to determine if we show nav hint
-        let matches: Vec<usize> = repo
-            .commits
-            .iter()
-            .enumerate()
-            .filter_map(|(i, c)| {
-                if c.matches(&state.search_term, &repo.branches, head_sha) {
-                    Some(i)
-                } else {
-                    None
+        // Calculate matches - use diff matches if in details view, otherwise commit matches
+        let counter_text = if state.commit_details.is_some() {
+            // In details view: show matches within the current diff
+            let match_lines = compute_details_match_lines(state, repo);
+            let total = match_lines.len();
+            if total > 0 {
+                match state.details_selected_match_index {
+                    Some(idx) => format!("[ {} / {} ]", idx + 1, total),
+                    None => format!("[ {} matches ]", total),
                 }
-            })
-            .collect();
-
-        let total = matches.len();
-
-        let current = matches
-            .iter()
-            .position(|&i| i == state.index_of_selected_row)
-            .map(|p| p + 1);
-
-        let counter_text = if total > 0 {
-            match current {
-                Some(pos) => format!("[ {} / {} ]", pos, total),
-                None => format!("[ {} matches ]", total),
+            } else {
+                "[ no matches ]".to_string()
             }
         } else {
-            "[ no matches ]".to_string()
+            // In commit list: show matching commits
+            let matches: Vec<usize> = repo
+                .commits
+                .iter()
+                .enumerate()
+                .filter_map(|(i, c)| {
+                    if c.matches(&state.search_term, &repo.branches, head_sha) {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            let total = matches.len();
+            let current = matches
+                .iter()
+                .position(|&i| i == state.index_of_selected_row)
+                .map(|p| p + 1);
+
+            if total > 0 {
+                match current {
+                    Some(pos) => format!("[ {} / {} ]", pos, total),
+                    None => format!("[ {} matches ]", total),
+                }
+            } else {
+                "[ no matches ]".to_string()
+            }
         };
 
         // Only show counter if no active flash message
@@ -625,15 +662,22 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         // In browse mode: q clears search, ^c/esc quit
         // In normal mode: all three quit
         // First column has per-item active state (key, desc, is_active)
+        // Use context-appropriate search term for help panel
+        let has_active_search = if show_details {
+            !state.details_search_term.is_empty()
+        } else {
+            !state.search_term.is_empty()
+        };
+
         let first_column: Vec<(&str, &str, bool)> = if in_typing_mode {
             vec![("q", "quit", false), ("^c", "cancel", true), ("esc", "cancel", true)]
         } else if show_details {
-            if !state.search_term.is_empty() {
+            if has_active_search {
                 vec![("q", "back", true), ("^c", "back", true), ("esc", "clear search", true)]
             } else {
                 vec![("q", "back", true), ("^c", "back", true), ("esc", "back", true)]
             }
-        } else if !state.search_term.is_empty() {
+        } else if has_active_search {
             vec![("q", "clear search", true), ("^c", "quit", true), ("esc", "quit", true)]
         } else {
             vec![("q", "quit", true), ("^c", "quit", true), ("esc", "quit", true)]
@@ -649,17 +693,16 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             // Navigation
             vec![
                 ("j/k", "↑/↓", true),
+                ("^d/^u", "½ page", true),
                 ("g", "top", true),
                 ("G", "bottom", true),
                 ("h", if show_details { "back" } else { "goto head" }, if show_details { true } else { !is_on_head }),
             ],
-            // Navigation continued
-            vec![("^d", "½ page ↓", true), ("^u", "½ page ↑", true)],
             // Search
-            if state.search_term.is_empty() {
-                vec![("/", "search", true)]
-            } else {
+            if has_active_search {
                 vec![("/", "search", true), ("n", "next", true), ("N", "prev", true)]
+            } else {
+                vec![("/", "search", true)]
             },
             // Actions
             vec![("y", "copy sha", true), ("o", "view in github", true), ("b", "create branch", true), ("d", "delete branch", has_local_branches)],
@@ -746,8 +789,11 @@ fn render_details_panel(
     details: &CommitDetails,
     scroll_offset: usize,
     search_term: &str,
+    selected_match_line: Option<usize>,
 ) {
     let highlight_style = Style::default().bg(Color::Yellow).fg(Color::Black);
+    // Selected match uses teal/cyan background instead of yellow
+    let selected_match_style = Style::default().bg(Color::Cyan).fg(Color::Black);
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(Color::DarkGray));
@@ -785,9 +831,9 @@ fn render_details_panel(
         Line::from(""),
     ];
 
-    // Add commit message (may be multiple lines)
+    // Add commit message (may be multiple lines) with search highlighting
     for line in details.message.lines() {
-        lines.push(Line::from(Span::styled(line.to_string(), Style::default())));
+        lines.push(Line::from(highlight_matches(line, search_term, Style::default(), highlight_style)));
     }
 
     // Add blank line before files
@@ -1025,6 +1071,7 @@ fn render_details_panel(
         .find(|s| scroll_offset > s.header_line_idx);
 
     // Apply scroll offset and handle sticky header
+    // Also apply selected match styling if the selected line is visible
     let visible_lines: Vec<Line> = if let Some(section) = sticky_header {
         // We're scrolled past a file header - show it as sticky
         let sticky_line = Line::from(vec![Span::styled(
@@ -1037,8 +1084,24 @@ fn render_details_panel(
         // Take height-1 content lines (sticky header takes 1 line)
         let content_lines: Vec<Line> = lines
             .into_iter()
+            .enumerate()
             .skip(scroll_offset)
             .take(inner.height.saturating_sub(1) as usize)
+            .map(|(idx, line)| {
+                if selected_match_line == Some(idx) && !search_term.is_empty() {
+                    // Re-highlight only the matched text with teal, keep other styling
+                    Line::from(
+                        line.spans
+                            .into_iter()
+                            .flat_map(|span| {
+                                highlight_matches(&span.content, search_term, span.style, selected_match_style)
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                } else {
+                    line
+                }
+            })
             .collect();
 
         std::iter::once(sticky_line).chain(content_lines).collect()
@@ -1046,8 +1109,24 @@ fn render_details_panel(
         // No sticky header needed - render normally
         lines
             .into_iter()
+            .enumerate()
             .skip(scroll_offset)
             .take(inner.height as usize)
+            .map(|(idx, line)| {
+                if selected_match_line == Some(idx) && !search_term.is_empty() {
+                    // Re-highlight only the matched text with teal, keep other styling
+                    Line::from(
+                        line.spans
+                            .into_iter()
+                            .flat_map(|span| {
+                                highlight_matches(&span.content, search_term, span.style, selected_match_style)
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                } else {
+                    line
+                }
+            })
             .collect()
     };
 

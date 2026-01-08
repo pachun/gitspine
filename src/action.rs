@@ -79,10 +79,15 @@ impl Action {
                 navigate_to_next_search_history_entry(state);
             }
             Action::Backspace => {
-                if state.search_term.is_empty() {
+                let search_term = if state.commit_details.is_some() {
+                    &mut state.details_search_term
+                } else {
+                    &mut state.search_term
+                };
+                if search_term.is_empty() {
                     cancel_search(state);
                 } else {
-                    state.search_term.pop();
+                    search_term.pop();
                     state.index_of_search_term_history_being_viewed = None;
                 }
             }
@@ -140,12 +145,17 @@ impl Action {
         match self {
             Action::Esc | Action::CtrlC | Action::CharQ => {
                 if state.commit_details.is_some() {
-                    // In details mode: clear search first, then close details
-                    if !state.search_term.is_empty() {
-                        state.search_term.clear();
+                    // In details mode: clear details search first, then close details
+                    if !state.details_search_term.is_empty() {
+                        state.details_search_term.clear();
+                        state.details_selected_match_line = None;
+                        state.details_selected_match_index = None;
                     } else {
                         state.commit_details = None;
                         state.details_scroll_offset = 0;
+                        state.details_search_term.clear();
+                        state.details_selected_match_line = None;
+                        state.details_selected_match_index = None;
                     }
                 } else if !state.jump_distance_string.is_empty() {
                     state.jump_distance_string.clear();
@@ -172,29 +182,32 @@ impl Action {
                     Some(state.index_of_topmost_visible_row);
             }
             Action::CharN => {
-                if !state.search_term.is_empty() {
-                    if state.commit_details.is_some() {
-                        find_next_match_in_details(state, repo);
-                    } else {
-                        find_next_match(state, repo);
+                if state.commit_details.is_some() {
+                    if !state.details_search_term.is_empty() {
+                        find_next_match_in_details(state, repo, terminal);
                     }
+                } else if !state.search_term.is_empty() {
+                    find_next_match(state, repo);
                 }
             }
             Action::ShiftN => {
-                if !state.search_term.is_empty() {
-                    if state.commit_details.is_some() {
-                        find_previous_match_in_details(state, repo);
-                    } else {
-                        find_previous_match(state, repo);
+                if state.commit_details.is_some() {
+                    if !state.details_search_term.is_empty() {
+                        find_previous_match_in_details(state, repo, terminal);
                     }
+                } else if !state.search_term.is_empty() {
+                    find_previous_match(state, repo);
                 }
             }
             Action::CharJ | Action::Down => {
                 let count = state.jump_distance_string.parse::<usize>().unwrap_or(1);
                 state.jump_distance_string.clear();
                 if state.commit_details.is_some() {
-                    // Scroll details panel down
-                    state.details_scroll_offset += count;
+                    // Scroll details panel down (clamped to content)
+                    let content_height = compute_details_content_height(state);
+                    let viewport_height = crate::viewport::details_panel_height(state, terminal);
+                    let max_scroll = content_height.saturating_sub(viewport_height);
+                    state.details_scroll_offset = (state.details_scroll_offset + count).min(max_scroll);
                 } else {
                     // Navigate commits
                     state.index_of_selected_row = (state.index_of_selected_row + count)
@@ -231,8 +244,10 @@ impl Action {
             }
             Action::ShiftG => {
                 if state.commit_details.is_some() {
-                    // Scroll to bottom of details (use a large number, render will clamp)
-                    state.details_scroll_offset = usize::MAX / 2;
+                    // Scroll to bottom of details
+                    let content_height = compute_details_content_height(state);
+                    let viewport_height = crate::viewport::details_panel_height(state, terminal);
+                    state.details_scroll_offset = content_height.saturating_sub(viewport_height);
                 } else {
                     if let Ok(line) = state.jump_distance_string.parse::<usize>() {
                         state.index_of_selected_row =
@@ -246,10 +261,12 @@ impl Action {
             Action::CharH => {
                 state.jump_distance_string.clear();
                 if state.commit_details.is_some() {
-                    // Close details panel (go "left")
+                    // Close details panel (go "left") - keep commit search intact
                     state.commit_details = None;
                     state.details_scroll_offset = 0;
-                    state.search_term.clear();
+                    state.details_search_term.clear();
+                    state.details_selected_match_line = None;
+                    state.details_selected_match_index = None;
                 } else {
                     // Go to HEAD commit
                     let head_sha = repo.head_sha();
@@ -298,8 +315,11 @@ impl Action {
                 state.jump_distance_string.clear();
                 let half_page = git_graph_height(state, terminal) / 2;
                 if state.commit_details.is_some() {
-                    // Half-page scroll down in details
-                    state.details_scroll_offset += half_page;
+                    // Half-page scroll down in details (clamped to content)
+                    let content_height = compute_details_content_height(state);
+                    let viewport_height = crate::viewport::details_panel_height(state, terminal);
+                    let max_scroll = content_height.saturating_sub(viewport_height);
+                    state.details_scroll_offset = (state.details_scroll_offset + half_page).min(max_scroll);
                 } else {
                     // Half-page down in commit list
                     state.index_of_selected_row = (state.index_of_selected_row + half_page)
@@ -517,36 +537,54 @@ impl Action {
 
 fn cancel_search(state: &mut State) {
     state.is_typing_search_term = false;
-    state.search_term.clear();
     state.index_of_search_term_history_being_viewed = None;
-    if let Some(pre) = state.index_of_selected_row_when_search_began {
-        state.index_of_selected_row = pre;
+
+    if state.commit_details.is_some() {
+        // In details view: clear details search term
+        state.details_search_term.clear();
+        state.details_selected_match_line = None;
+        state.details_selected_match_index = None;
+    } else {
+        // In commit list: clear search term and restore position
+        state.search_term.clear();
+        if let Some(pre) = state.index_of_selected_row_when_search_began {
+            state.index_of_selected_row = pre;
+        }
+        if let Some(pre) = state.index_of_topmost_visible_row_when_search_began {
+            state.index_of_topmost_visible_row = pre;
+        }
+        state.index_of_selected_row_when_search_began = None;
+        state.index_of_topmost_visible_row_when_search_began = None;
     }
-    if let Some(pre) = state.index_of_topmost_visible_row_when_search_began {
-        state.index_of_topmost_visible_row = pre;
-    }
-    state.index_of_selected_row_when_search_began = None;
-    state.index_of_topmost_visible_row_when_search_began = None;
 }
 
 fn confirm_search(state: &mut State, repo: &Repo) {
     state.is_typing_search_term = false;
     state.index_of_search_term_history_being_viewed = None;
-    let has_matches = repo
-        .commits
-        .iter()
-        .any(|c| c.matches(&state.search_term, &repo.branches, repo.head_sha()));
-    if has_matches {
-        if state.search_term_history.last() != Some(&state.search_term) {
-            state
-                .search_term_history
-                .push(state.search_term.clone());
+
+    if state.commit_details.is_some() {
+        // In details view: check for matches using details_search_term
+        let has_matches = !compute_details_match_lines(state, repo).is_empty();
+        if !has_matches {
+            state.details_search_term.clear();
         }
     } else {
-        state.search_term.clear();
+        // In commit list: check for matches using search_term
+        let has_matches = repo
+            .commits
+            .iter()
+            .any(|c| c.matches(&state.search_term, &repo.branches, repo.head_sha()));
+
+        if has_matches {
+            if state.search_term_history.last() != Some(&state.search_term) {
+                state.search_term_history.push(state.search_term.clone());
+            }
+        } else {
+            state.search_term.clear();
+        }
+        state.index_of_selected_row_when_search_began = None;
+        state.index_of_topmost_visible_row_when_search_began = None;
     }
-    state.index_of_selected_row_when_search_began = None;
-    state.index_of_topmost_visible_row_when_search_began = None;
 }
 
 fn navigate_to_previous_search_history_entry(state: &mut State) {
@@ -578,7 +616,11 @@ fn navigate_to_next_search_history_entry(state: &mut State) {
 }
 
 fn type_search_character(state: &mut State, c: char) {
-    state.search_term.push(c);
+    if state.commit_details.is_some() {
+        state.details_search_term.push(c);
+    } else {
+        state.search_term.push(c);
+    }
     state.index_of_search_term_history_being_viewed = None;
 }
 
@@ -636,55 +678,91 @@ fn find_previous_match(state: &mut State, repo: &Repo) {
     }
 }
 
-fn find_next_match_in_details(state: &mut State, repo: &Repo) {
+fn find_next_match_in_details(
+    state: &mut State,
+    repo: &Repo,
+    terminal: &Terminal<CrosstermBackend<Stdout>>,
+) {
     let match_lines = compute_details_match_lines(state, repo);
     if match_lines.is_empty() {
+        state.details_selected_match_line = None;
+        state.details_selected_match_index = None;
         return;
     }
 
-    // Find next match after current scroll position
-    let current = state.details_scroll_offset;
-    if let Some(&line) = match_lines.iter().find(|&&l| l > current) {
-        state.details_scroll_offset = line;
-    } else {
-        // Wrap to first match
-        state.details_scroll_offset = match_lines[0];
-    }
+    let viewport_height = crate::viewport::details_panel_height(state, terminal);
+
+    // Find next match after current selected line (or scroll position if no selection)
+    let current = state.details_selected_match_line.unwrap_or(state.details_scroll_offset);
+    let (index, line) = match_lines
+        .iter()
+        .enumerate()
+        .find(|&(_, l)| *l > current)
+        .map(|(i, &l)| (i, l))
+        .unwrap_or((0, match_lines[0])); // Wrap to first match
+
+    // Center the match on screen
+    state.details_scroll_offset = line.saturating_sub(viewport_height / 2);
+    state.details_selected_match_line = Some(line);
+    state.details_selected_match_index = Some(index);
 }
 
-fn find_previous_match_in_details(state: &mut State, repo: &Repo) {
+fn find_previous_match_in_details(
+    state: &mut State,
+    repo: &Repo,
+    terminal: &Terminal<CrosstermBackend<Stdout>>,
+) {
     let match_lines = compute_details_match_lines(state, repo);
     if match_lines.is_empty() {
+        state.details_selected_match_line = None;
+        state.details_selected_match_index = None;
         return;
     }
 
-    // Find previous match before current scroll position
-    let current = state.details_scroll_offset;
-    if let Some(&line) = match_lines.iter().rev().find(|&&l| l < current) {
-        state.details_scroll_offset = line;
-    } else {
-        // Wrap to last match
-        state.details_scroll_offset = *match_lines.last().unwrap();
-    }
+    let viewport_height = crate::viewport::details_panel_height(state, terminal);
+
+    // Find previous match before current selected line (or scroll position if no selection)
+    let current = state.details_selected_match_line.unwrap_or(state.details_scroll_offset);
+    let (index, line) = match_lines
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|&(_, l)| *l < current)
+        .map(|(i, &l)| (i, l))
+        .unwrap_or((match_lines.len() - 1, *match_lines.last().unwrap())); // Wrap to last match
+
+    // Center the match on screen
+    state.details_scroll_offset = line.saturating_sub(viewport_height / 2);
+    state.details_selected_match_line = Some(line);
+    state.details_selected_match_index = Some(index);
 }
 
 /// Compute which line indices in the details view contain search matches
-fn compute_details_match_lines(state: &State, _repo: &Repo) -> Vec<usize> {
+pub fn compute_details_match_lines(state: &State, _repo: &Repo) -> Vec<usize> {
     let Some(details) = &state.commit_details else {
         return vec![];
     };
-    if state.search_term.is_empty() {
+    if state.details_search_term.is_empty() {
         return vec![];
     }
 
-    let search_lower = state.search_term.to_lowercase();
+    let search_lower = state.details_search_term.to_lowercase();
     let mut match_lines = Vec::new();
     let mut line_idx = 0;
 
-    // Skip header lines (commit, author, date, blank, message lines, blank, files header)
-    line_idx += 4; // commit, author, date, blank
-    line_idx += details.message.lines().count();
-    line_idx += 2; // blank, files header
+    // Header lines (commit, author, date, blank)
+    line_idx += 4;
+
+    // Commit message lines - check each for matches
+    for msg_line in details.message.lines() {
+        if msg_line.to_lowercase().contains(&search_lower) {
+            match_lines.push(line_idx);
+        }
+        line_idx += 1;
+    }
+
+    // Blank line and files header
+    line_idx += 2;
 
     // File list
     for file in &details.files {
@@ -728,6 +806,53 @@ fn compute_details_match_lines(state: &State, _repo: &Repo) -> Vec<usize> {
     }
 
     match_lines
+}
+
+/// Compute the total number of lines in the details view content
+fn compute_details_content_height(state: &State) -> usize {
+    let Some(details) = &state.commit_details else {
+        return 0;
+    };
+
+    let mut line_count = 0;
+
+    // Header lines (commit, author, date, blank)
+    line_count += 4;
+
+    // Commit message lines
+    line_count += details.message.lines().count();
+
+    // Blank line and files header
+    line_count += 2;
+
+    // File list
+    line_count += details.files.len();
+
+    // Blank line before diffs
+    line_count += 1;
+
+    // Diff content
+    for file in &details.files {
+        if file.hunks.is_empty() {
+            continue;
+        }
+
+        // File separator
+        line_count += 1;
+
+        for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
+            // Blank line between hunks
+            if hunk_idx > 0 {
+                line_count += 1;
+            }
+            line_count += hunk.lines.len();
+        }
+
+        // Blank line after file
+        line_count += 1;
+    }
+
+    line_count
 }
 
 fn copy_sha_to_clipboard(state: &mut State, repo: &Repo) {
