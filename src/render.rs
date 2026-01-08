@@ -1216,7 +1216,7 @@ fn render_file_tree(
         ];
 
         if let Some(status) = node.status {
-            // It's a file - show status
+            // It's a file - color indicates status (no letter)
             let status_color = match status {
                 'A' => Color::Green,
                 'D' => Color::Red,
@@ -1224,8 +1224,7 @@ fn render_file_tree(
                 'R' => Color::Blue,
                 _ => Color::Gray,
             };
-            spans.push(Span::styled(format!("{} ", status), Style::default().fg(status_color)));
-            spans.extend(highlight_matches(&node.name, search_term, Style::default(), highlight_style));
+            spans.extend(highlight_matches(&node.name, search_term, Style::default().fg(status_color), highlight_style));
 
             // Add +/- counts
             if node.additions > 0 || node.deletions > 0 {
