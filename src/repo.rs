@@ -261,6 +261,51 @@ impl Repo {
         Some(format!("https://{}/{}{}", host, path, commit_path))
     }
 
+    /// Get the display name of the remote host (github, gitlab, bitbucket, etc.)
+    pub fn remote_host_name(&self) -> Option<String> {
+        let git_repo = Repository::open(&self.path).ok()?;
+        let remote = git_repo.find_remote("origin").ok()?;
+        let url = remote.url()?;
+
+        // Extract host from URL
+        let host = if let Some(rest) = url.strip_prefix("git@") {
+            let colon_pos = rest.find(':')?;
+            &rest[..colon_pos]
+        } else if let Some(rest) = url.strip_prefix("https://") {
+            let slash_pos = rest.find('/')?;
+            &rest[..slash_pos]
+        } else {
+            return None;
+        };
+
+        // Return friendly name based on host
+        if host.contains("gitlab") {
+            Some("gitlab".to_string())
+        } else if host.contains("bitbucket") {
+            Some("bitbucket".to_string())
+        } else {
+            Some("github".to_string())
+        }
+    }
+
+    /// Check if a commit is reachable from any remote tracking branch
+    pub fn commit_is_on_remote(&self, _sha: Sha, commit_index: usize) -> bool {
+        // Commits are sorted newest-first (index 0 = newest)
+        // A commit is on the remote if it's at or after (older than) a remote branch
+        // i.e., commit_index >= branch_idx
+        for (branch_name, branch_sha) in &self.branches {
+            if branch_name.0.contains('/') {
+                // This is a remote branch - find its index
+                if let Some(branch_idx) = self.commits.iter().position(|c| c.sha == *branch_sha) {
+                    if commit_index >= branch_idx {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Load detailed information about a commit including file changes and diff content
     pub fn load_commit_details(&self, sha: Sha) -> Option<CommitDetails> {
         let git_repo = Repository::open(&self.path).ok()?;

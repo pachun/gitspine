@@ -1089,6 +1089,16 @@ fn copy_sha_to_clipboard(state: &mut State, repo: &Repo) {
 
 fn open_in_browser(state: &mut State, repo: &Repo) {
     let sha = repo.commits[state.index_of_selected_row].sha;
+
+    // Check if commit is on remote first
+    if !repo.commit_is_on_remote(sha, state.index_of_selected_row) {
+        state.flash_message = Some(FlashMessage {
+            message: "commit not on remote".to_string(),
+            shown_at: Instant::now(),
+        });
+        return;
+    }
+
     if let Some(url) = repo.commit_url(sha) {
         // Use 'open' on macOS to open the URL in the default browser
         if std::process::Command::new("open")

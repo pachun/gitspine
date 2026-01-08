@@ -716,6 +716,9 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         let selected_sha = repo.commits[state.index_of_selected_row].sha;
         let is_on_head = selected_sha == head_sha;
         let has_local_branches = repo.has_local_branches_at(selected_sha);
+        let commit_on_remote = repo.commit_is_on_remote(selected_sha, state.index_of_selected_row);
+        let remote_name = repo.remote_host_name().unwrap_or_else(|| "github".to_string());
+        let open_in_label = format!("open in {}", remote_name);
 
         // Other columns now have per-item active state: (key, desc, is_active)
         let other_columns: Vec<Vec<(&str, &str, bool)>> = vec![
@@ -733,8 +736,17 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             } else {
                 vec![("/", "search", true)]
             },
-            // Actions
-            vec![("y", "copy sha", true), ("o", "view in github", true), ("b", "create branch", true), ("c", "checkout", true), ("d", "delete branch", has_local_branches)],
+            // Branch operations
+            vec![
+                ("c", "checkout", true),
+                ("b", "create branch", true),
+                ("d", "delete branch", has_local_branches),
+            ],
+            // Commit operations
+            vec![
+                ("y", "copy sha", true),
+                ("o", &open_in_label, commit_on_remote),
+            ],
         ];
 
         // Calculate column widths
