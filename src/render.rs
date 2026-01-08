@@ -908,12 +908,14 @@ fn render_details_panel(
         // Top padding line
         lines.push(Line::from(Span::styled(" ".repeat(width), bg_style)));
 
-        // Middle line with filename
+        // Middle line with filename (centered)
         let filename_len = file.path.chars().count();
-        let padding = width.saturating_sub(filename_len + 1); // 1 = leading space
-        let mut header_spans = vec![Span::styled(" ", bg_style)];
+        let total_padding = width.saturating_sub(filename_len);
+        let left_padding = total_padding / 2;
+        let right_padding = total_padding - left_padding;
+        let mut header_spans = vec![Span::styled(" ".repeat(left_padding), bg_style)];
         header_spans.extend(highlight_matches(&file.path, search_term, filename_style, highlight_style));
-        header_spans.push(Span::styled(" ".repeat(padding), bg_style));
+        header_spans.push(Span::styled(" ".repeat(right_padding), bg_style));
         lines.push(Line::from(header_spans));
 
         // Bottom padding line
@@ -1086,7 +1088,9 @@ fn render_details_panel(
         let width = inner.width as usize;
 
         let filename_len = section.header_text.chars().count();
-        let padding = width.saturating_sub(filename_len + 1);
+        let total_padding = width.saturating_sub(filename_len);
+        let left_padding = total_padding / 2;
+        let right_padding = total_padding - left_padding;
 
         // Build sticky lines - shrink from bottom up
         // 3 lines: [top_pad, filename, bottom_pad]
@@ -1098,9 +1102,9 @@ fn render_details_panel(
         }
         if sticky_height >= 2 {
             sticky_lines.push(Line::from(vec![
-                Span::styled(" ", bg_style),
+                Span::styled(" ".repeat(left_padding), bg_style),
                 Span::styled(section.header_text.clone(), filename_style),
-                Span::styled(" ".repeat(padding), bg_style),
+                Span::styled(" ".repeat(right_padding), bg_style),
             ]));
         }
         if sticky_height >= 3 {
