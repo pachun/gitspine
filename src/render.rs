@@ -119,7 +119,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
     let main_chunks = if show_details {
         Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Fill(1)])
+            .constraints([Constraint::Length(5), Constraint::Fill(1)])
             .split(chunks[0])
     } else {
         Layout::default()
@@ -146,10 +146,10 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         .unwrap_or(0)
         .min(20);
 
-    // When showing details, adjust scroll to keep selected row visible in the small viewport
+    // When showing details, adjust scroll to keep selected row centered (2 above, 2 below)
     let effective_top = if show_details {
         let max_top = repo.commits.len().saturating_sub(visible_height);
-        state.index_of_selected_row.min(max_top)
+        state.index_of_selected_row.saturating_sub(2).min(max_top)
     } else {
         state.index_of_topmost_visible_row
     };
