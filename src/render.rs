@@ -931,10 +931,7 @@ fn render_details_panel(
 
             for diff_line in &hunk.lines {
                 let (prefix_style, line_bg) = match diff_line.origin {
-                    '+' => (
-                        Style::default().fg(Color::Green),
-                        Some(Color::Rgb(0, 35, 0)),
-                    ),
+                    '+' => (Style::default().fg(Color::Green), None),
                     '-' => (
                         Style::default().fg(Color::Red),
                         Some(Color::Rgb(35, 0, 0)),
