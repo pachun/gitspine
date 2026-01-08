@@ -862,20 +862,30 @@ fn render_details_panel(
         }
 
         // Track file header position before adding it
-        let header_text = format!("─── {} ───", file.path);
         file_sections.push(FileSection {
             header_line_idx: lines.len(),
-            header_text: header_text.clone(),
+            header_text: file.path.clone(),
         });
 
-        // File separator with search highlighting on the path
-        let header_style = Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::BOLD);
-        let mut header_spans = vec![Span::styled("─── ", header_style)];
-        header_spans.extend(highlight_matches(&file.path, search_term, header_style, highlight_style));
-        header_spans.push(Span::styled(" ───", header_style));
+        // File header - 3-line solid background bar
+        let bg_color = Color::Rgb(40, 40, 50);
+        let filename_style = Style::default().fg(Color::White).bg(bg_color).add_modifier(Modifier::BOLD);
+        let bg_style = Style::default().bg(bg_color);
+        let width = inner.width as usize;
+
+        // Top padding line
+        lines.push(Line::from(Span::styled(" ".repeat(width), bg_style)));
+
+        // Middle line with filename
+        let filename_len = file.path.chars().count();
+        let padding = width.saturating_sub(filename_len + 1); // 1 = leading space
+        let mut header_spans = vec![Span::styled(" ", bg_style)];
+        header_spans.extend(highlight_matches(&file.path, search_term, filename_style, highlight_style));
+        header_spans.push(Span::styled(" ".repeat(padding), bg_style));
         lines.push(Line::from(header_spans));
+
+        // Bottom padding line
+        lines.push(Line::from(Span::styled(" ".repeat(width), bg_style)));
 
         // Get cached highlighted lines for this file (empty vec if no cache)
         let cached_lines = highlight_cache
@@ -1010,29 +1020,83 @@ fn render_details_panel(
     }
 
     // Determine if we need a sticky header
-    // Find the file section we're scrolled into (where scroll_offset is past the header)
-    let sticky_header: Option<&FileSection> = file_sections
+    // Sticky appears as soon as header reaches the top of viewport
+    let current_section_idx = file_sections
         .iter()
-        .rev()
-        .find(|s| scroll_offset > s.header_line_idx);
+        .rposition(|s| scroll_offset >= s.header_line_idx);
+
+    // Calculate sticky height - shrinks as next header approaches (push-up effect)
+    let sticky_height: usize = if let Some(idx) = current_section_idx {
+        if idx + 1 < file_sections.len() {
+            let next_header_line = file_sections[idx + 1].header_line_idx;
+            let space_until_next = next_header_line.saturating_sub(scroll_offset);
+            space_until_next.min(3)
+        } else {
+            3 // Last section, full sticky
+        }
+    } else {
+        0 // No section scrolled past yet
+    };
+
+    let sticky_header: Option<&FileSection> = if sticky_height > 0 {
+        current_section_idx.map(|idx| &file_sections[idx])
+    } else {
+        None
+    };
 
     // Apply scroll offset and handle sticky header
     // Also apply selected match styling if the selected line is visible
     let visible_lines: Vec<Line> = if let Some(section) = sticky_header {
-        // We're scrolled past a file header - show it as sticky
-        let sticky_line = Line::from(vec![Span::styled(
-            section.header_text.clone(),
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        )]);
+        // Build sticky bar with variable height (shrinks as next header approaches)
+        let bg_color = Color::Rgb(40, 40, 50);
+        let filename_style = Style::default().fg(Color::White).bg(bg_color).add_modifier(Modifier::BOLD);
+        let bg_style = Style::default().bg(bg_color);
+        let width = inner.width as usize;
 
-        // Take height-1 content lines (sticky header takes 1 line)
+        let filename_len = section.header_text.chars().count();
+        let padding = width.saturating_sub(filename_len + 1);
+
+        // Build sticky lines - shrink from bottom up
+        // 3 lines: [top_pad, filename, bottom_pad]
+        // 2 lines: [top_pad, filename]
+        // 1 line:  [top_pad]
+        let mut sticky_lines: Vec<Line> = Vec::new();
+        if sticky_height >= 1 {
+            sticky_lines.push(Line::from(Span::styled(" ".repeat(width), bg_style)));
+        }
+        if sticky_height >= 2 {
+            sticky_lines.push(Line::from(vec![
+                Span::styled(" ", bg_style),
+                Span::styled(section.header_text.clone(), filename_style),
+                Span::styled(" ".repeat(padding), bg_style),
+            ]));
+        }
+        if sticky_height >= 3 {
+            sticky_lines.push(Line::from(Span::styled(" ".repeat(width), bg_style)));
+        }
+
+        // Calculate content start - when next header is approaching, show it intact
+        let content_start = if let Some(idx) = current_section_idx {
+            if idx + 1 < file_sections.len() {
+                let next_header_line = file_sections[idx + 1].header_line_idx;
+                if scroll_offset + 3 > next_header_line {
+                    // Next header would be cut off - show it intact instead
+                    next_header_line
+                } else {
+                    scroll_offset + 3
+                }
+            } else {
+                scroll_offset + 3
+            }
+        } else {
+            scroll_offset + 3
+        };
+
         let content_lines: Vec<Line> = lines
             .into_iter()
             .enumerate()
-            .skip(scroll_offset)
-            .take(inner.height.saturating_sub(1) as usize)
+            .skip(content_start)
+            .take(inner.height.saturating_sub(sticky_height as u16) as usize)
             .map(|(idx, line)| {
                 if selected_match_line == Some(idx) && !search_term.is_empty() {
                     // Re-highlight only the matched text with teal, keep other styling
@@ -1050,7 +1114,7 @@ fn render_details_panel(
             })
             .collect();
 
-        std::iter::once(sticky_line).chain(content_lines).collect()
+        sticky_lines.into_iter().chain(content_lines).collect()
     } else {
         // No sticky header needed - render normally
         lines
