@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use crate::highlight::HighlightCache;
 use crate::repo::{CommitDetails, Repo};
 
 pub struct FlashMessage {
@@ -26,6 +27,7 @@ pub struct State {
     pub tab_complete_index: usize,
     pub is_showing_help_panel: bool,
     pub commit_details: Option<CommitDetails>,
+    pub highlight_cache: Option<HighlightCache>,
     pub details_scroll_offset: usize,
     pub details_search_term: String, // Separate search term for details view
     pub details_selected_match_line: Option<usize>, // Line index of currently selected search match
@@ -62,6 +64,7 @@ impl State {
             tab_complete_index: 0,
             is_showing_help_panel: false,
             commit_details: None,
+            highlight_cache: None,
             details_scroll_offset: 0,
             details_search_term: String::new(),
             details_selected_match_line: None,

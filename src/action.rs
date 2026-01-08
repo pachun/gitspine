@@ -4,6 +4,7 @@ use std::time::Instant;
 use ratatui::Terminal;
 use ratatui::prelude::CrosstermBackend;
 
+use crate::highlight::Highlighter;
 use crate::repo::Repo;
 use crate::state::{FlashMessage, State};
 use crate::viewport::{center_view_on_selected_row, git_graph_height};
@@ -281,6 +282,11 @@ impl Action {
                 // Open details panel (go "right")
                 let sha = repo.commits[state.index_of_selected_row].sha;
                 state.commit_details = repo.load_commit_details(sha);
+                // Pre-compute syntax highlighting for all files
+                state.highlight_cache = state.commit_details.as_ref().map(|details| {
+                    let highlighter = Highlighter::new();
+                    highlighter.highlight_commit(details)
+                });
                 state.details_scroll_offset = 0;
             }
             Action::CharY => {

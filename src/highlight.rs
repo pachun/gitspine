@@ -5,6 +5,18 @@ use two_face::re_exports::syntect::{
 };
 use two_face::theme::EmbeddedLazyThemeSet;
 
+use crate::repo::CommitDetails;
+
+/// Cached syntax-highlighted lines for a file
+pub struct HighlightedFile {
+    pub lines: Vec<Vec<(Style, String)>>,
+}
+
+/// Cached syntax highlighting for all files in a commit
+pub struct HighlightCache {
+    pub files: Vec<HighlightedFile>,
+}
+
 pub struct Highlighter {
     syntax_set: SyntaxSet,
     theme_set: EmbeddedLazyThemeSet,
@@ -49,6 +61,33 @@ impl Highlighter {
     /// Get the extension from a file path
     pub fn extension_from_path(path: &str) -> &str {
         path.rsplit('.').next().unwrap_or("")
+    }
+
+    /// Pre-compute syntax highlighting for all files in a commit
+    pub fn highlight_commit(&self, details: &CommitDetails) -> HighlightCache {
+        let mut files = Vec::new();
+
+        for file in &details.files {
+            if file.hunks.is_empty() {
+                files.push(HighlightedFile { lines: Vec::new() });
+                continue;
+            }
+
+            let ext = Self::extension_from_path(&file.path);
+
+            // Collect all code content for this file
+            let code_lines: Vec<&str> = file
+                .hunks
+                .iter()
+                .flat_map(|hunk| hunk.lines.iter().map(|l| l.content.as_str()))
+                .collect();
+
+            // Highlight all lines together (preserves syntax state)
+            let highlighted = self.highlight_lines(&code_lines, ext);
+            files.push(HighlightedFile { lines: highlighted });
+        }
+
+        HighlightCache { files }
     }
 }
 

@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -8,16 +7,10 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use ratatui::Frame;
 
 use crate::action::compute_details_match_lines;
-use crate::highlight::Highlighter;
 use crate::repo::{BranchName, CommitDetails, Repo, Sha};
 use crate::state::State;
 use crate::utils::format_datetime;
 use crate::utils::{format_date, format_time, has_mixed_case};
-
-// Cache the highlighter since SyntaxSet/ThemeSet are expensive to load
-thread_local! {
-    static HIGHLIGHTER: RefCell<Highlighter> = RefCell::new(Highlighter::new());
-}
 
 /// Build reverse index: commit sha -> list of branch names pointing to it
 fn branches_at_commit(branches: &HashMap<BranchName, Sha>) -> HashMap<Sha, Vec<&BranchName>> {
@@ -371,7 +364,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
 
     // Render details panel if showing
     if let Some(details) = &state.commit_details {
-        render_details_panel(frame, main_chunks[1], details, state.details_scroll_offset, &state.details_search_term, state.details_selected_match_line);
+        render_details_panel(frame, main_chunks[1], details, state.highlight_cache.as_ref(), state.details_scroll_offset, &state.details_search_term, state.details_selected_match_line);
     }
 
     // Render search bar with right-aligned match counter
@@ -786,6 +779,7 @@ fn render_details_panel(
     frame: &mut Frame,
     area: ratatui::layout::Rect,
     details: &CommitDetails,
+    highlight_cache: Option<&crate::highlight::HighlightCache>,
     scroll_offset: usize,
     search_term: &str,
     selected_match_line: Option<usize>,
@@ -895,172 +889,162 @@ fn render_details_panel(
     }
     let mut file_sections: Vec<FileSection> = Vec::new();
 
-    // Add actual diff content with syntax highlighting
-    HIGHLIGHTER.with(|h| {
-        let highlighter = h.borrow();
+    // Add actual diff content using cached syntax highlighting
+    for (file_idx, file) in details.files.iter().enumerate() {
+        if file.hunks.is_empty() {
+            continue;
+        }
 
-        for file in &details.files {
-            if file.hunks.is_empty() {
-                continue;
+        // Track file header position before adding it
+        let header_text = format!("─── {} ───", file.path);
+        file_sections.push(FileSection {
+            header_line_idx: lines.len(),
+            header_text: header_text.clone(),
+        });
+
+        // File separator with search highlighting on the path
+        let header_style = Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD);
+        let mut header_spans = vec![Span::styled("─── ", header_style)];
+        header_spans.extend(highlight_matches(&file.path, search_term, header_style, highlight_style));
+        header_spans.push(Span::styled(" ───", header_style));
+        lines.push(Line::from(header_spans));
+
+        // Get cached highlighted lines for this file (empty vec if no cache)
+        let cached_lines = highlight_cache
+            .and_then(|c| c.files.get(file_idx))
+            .map(|f| &f.lines[..])
+            .unwrap_or(&[]);
+
+        // Now render with pre-highlighted content
+        let mut highlight_idx = 0;
+        for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
+            // Add blank line between hunks (but not before the first one)
+            if hunk_idx > 0 {
+                lines.push(Line::from(""));
             }
 
-            // Track file header position before adding it
-            let header_text = format!("─── {} ───", file.path);
-            file_sections.push(FileSection {
-                header_line_idx: lines.len(),
-                header_text: header_text.clone(),
-            });
+            // Diff lines with syntax highlighting and line numbers
+            let prefix_width: usize = 6; // "{origin}{4-char num} "
+            let content_width = inner.width.saturating_sub(prefix_width as u16) as usize;
 
-            // File separator with search highlighting on the path
-            let header_style = Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD);
-            let mut header_spans = vec![Span::styled("─── ", header_style)];
-            header_spans.extend(highlight_matches(&file.path, search_term, header_style, highlight_style));
-            header_spans.push(Span::styled(" ───", header_style));
-            lines.push(Line::from(header_spans));
+            for diff_line in &hunk.lines {
+                let (prefix_style, line_bg) = match diff_line.origin {
+                    '+' => (
+                        Style::default().fg(Color::Green),
+                        Some(Color::Rgb(0, 35, 0)),
+                    ),
+                    '-' => (
+                        Style::default().fg(Color::Red),
+                        Some(Color::Rgb(35, 0, 0)),
+                    ),
+                    _ => (Style::default().fg(Color::DarkGray), None),
+                };
 
-            let ext = Highlighter::extension_from_path(&file.path);
+                // Format: "{origin}{line_num} " - origin on left, then 4-char line num
+                let line_num = diff_line
+                    .new_line_no
+                    .map(|n| format!("{:>4}", n))
+                    .unwrap_or_else(|| "    ".to_string());
+                let prefix = format!("{}{} ", diff_line.origin, line_num);
+                let continuation_prefix = "      "; // 6 spaces for wrapped lines
 
-            // Collect all code content for this file to highlight together
-            // This preserves syntax state across lines (e.g., multi-line strings/comments)
-            let code_lines: Vec<&str> = file
-                .hunks
-                .iter()
-                .flat_map(|hunk| hunk.lines.iter().map(|l| l.content.as_str()))
-                .collect();
+                // Get highlighted content from cache (or fallback to plain text)
+                let empty_highlight: Vec<(two_face::re_exports::syntect::highlighting::Style, String)> = vec![];
+                let highlighted = cached_lines.get(highlight_idx).unwrap_or(&empty_highlight);
+                highlight_idx += 1;
 
-            // Batch highlight all lines together
-            let highlighted_lines = highlighter.highlight_lines(&code_lines, ext);
+                // Calculate total content length
+                let total_len: usize = highlighted.iter().map(|(_, t)| t.chars().count()).sum();
 
-            // Now render with pre-highlighted content
-            let mut highlight_idx = 0;
-            for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
-                // Add blank line between hunks (but not before the first one)
-                if hunk_idx > 0 {
-                    lines.push(Line::from(""));
-                }
+                // Check if this line contains a search match
+                let line_text: String = highlighted.iter().map(|(_, t)| t.as_str()).collect();
+                let has_match = !search_term.is_empty() && line_text.to_lowercase().contains(&search_term.to_lowercase());
 
-                // Diff lines with syntax highlighting and line numbers
-                let prefix_width: usize = 6; // "{origin}{4-char num} "
-                let content_width = inner.width.saturating_sub(prefix_width as u16) as usize;
-
-                for diff_line in &hunk.lines {
-                    let (prefix_style, line_bg) = match diff_line.origin {
-                        '+' => (
-                            Style::default().fg(Color::Green),
-                            Some(Color::Rgb(0, 35, 0)),
-                        ),
-                        '-' => (
-                            Style::default().fg(Color::Red),
-                            Some(Color::Rgb(35, 0, 0)),
-                        ),
-                        _ => (Style::default().fg(Color::DarkGray), None),
-                    };
-
-                    // Format: "{origin}{line_num} " - origin on left, then 4-char line num
-                    let line_num = diff_line
-                        .new_line_no
-                        .map(|n| format!("{:>4}", n))
-                        .unwrap_or_else(|| "    ".to_string());
-                    let prefix = format!("{}{} ", diff_line.origin, line_num);
-                    let continuation_prefix = "      "; // 6 spaces for wrapped lines
-
-                    // Get highlighted content
-                    let highlighted = &highlighted_lines[highlight_idx];
-                    highlight_idx += 1;
-
-                    // Calculate total content length
-                    let total_len: usize = highlighted.iter().map(|(_, t)| t.chars().count()).sum();
-
-                    // Check if this line contains a search match
-                    let line_text: String = highlighted.iter().map(|(_, t)| t.as_str()).collect();
-                    let has_match = !search_term.is_empty() && line_text.to_lowercase().contains(&search_term.to_lowercase());
-
-                    if content_width == 0 || total_len <= content_width {
-                        // Content fits on one line
-                        let mut spans = vec![Span::styled(prefix, prefix_style)];
-                        for (style, text) in highlighted {
-                            let mut ratatui_style = syntect_to_ratatui_style(style);
-                            if has_match && text.to_lowercase().contains(&search_term.to_lowercase()) {
-                                // Highlight matching spans
-                                ratatui_style = highlight_style;
-                            } else if let Some(bg) = line_bg {
-                                ratatui_style = ratatui_style.bg(bg);
-                            }
-                            spans.push(Span::styled(text.clone(), ratatui_style));
+                if content_width == 0 || total_len <= content_width {
+                    // Content fits on one line
+                    let mut spans = vec![Span::styled(prefix, prefix_style)];
+                    for (style, text) in highlighted {
+                        let mut ratatui_style = syntect_to_ratatui_style(style);
+                        if has_match && text.to_lowercase().contains(&search_term.to_lowercase()) {
+                            // Highlight matching spans
+                            ratatui_style = highlight_style;
+                        } else if let Some(bg) = line_bg {
+                            ratatui_style = ratatui_style.bg(bg);
                         }
-                        lines.push(Line::from(spans));
-                    } else {
-                        // Need to wrap - split spans across multiple lines
-                        let mut current_line_spans: Vec<Span> = vec![Span::styled(prefix, prefix_style)];
-                        let mut current_line_len: usize = 0;
-                        let mut is_first_line = true;
+                        spans.push(Span::styled(text.clone(), ratatui_style));
+                    }
+                    lines.push(Line::from(spans));
+                } else {
+                    // Need to wrap - split spans across multiple lines
+                    let mut current_line_spans: Vec<Span> = vec![Span::styled(prefix, prefix_style)];
+                    let mut current_line_len: usize = 0;
+                    let mut is_first_line = true;
 
-                        for (style, text) in highlighted {
-                            let mut ratatui_style = syntect_to_ratatui_style(style);
-                            if has_match && text.to_lowercase().contains(&search_term.to_lowercase()) {
-                                ratatui_style = highlight_style;
-                            } else if let Some(bg) = line_bg {
-                                ratatui_style = ratatui_style.bg(bg);
-                            }
-
-                            let mut remaining = text.as_str();
-                            while !remaining.is_empty() {
-                                let available = content_width.saturating_sub(current_line_len);
-                                if available == 0 {
-                                    // Line is full, push it and start new line
-                                    lines.push(Line::from(current_line_spans));
-                                    current_line_spans = vec![Span::styled(
-                                        continuation_prefix,
-                                        prefix_style,
-                                    )];
-                                    current_line_len = 0;
-                                    is_first_line = false;
-                                    continue;
-                                }
-
-                                let char_count = remaining.chars().count();
-                                if char_count <= available {
-                                    // Rest fits on current line
-                                    current_line_spans.push(Span::styled(remaining.to_string(), ratatui_style));
-                                    current_line_len += char_count;
-                                    break;
-                                } else {
-                                    // Split at available boundary
-                                    let split_point: usize = remaining
-                                        .char_indices()
-                                        .nth(available)
-                                        .map(|(i, _)| i)
-                                        .unwrap_or(remaining.len());
-                                    let (chunk, rest) = remaining.split_at(split_point);
-                                    current_line_spans.push(Span::styled(chunk.to_string(), ratatui_style));
-                                    remaining = rest;
-
-                                    // Push current line and start new one
-                                    lines.push(Line::from(current_line_spans));
-                                    current_line_spans = vec![Span::styled(
-                                        continuation_prefix,
-                                        prefix_style,
-                                    )];
-                                    current_line_len = 0;
-                                    is_first_line = false;
-                                }
-                            }
+                    for (style, text) in highlighted {
+                        let mut ratatui_style = syntect_to_ratatui_style(style);
+                        if has_match && text.to_lowercase().contains(&search_term.to_lowercase()) {
+                            ratatui_style = highlight_style;
+                        } else if let Some(bg) = line_bg {
+                            ratatui_style = ratatui_style.bg(bg);
                         }
 
-                        // Push any remaining content
-                        if current_line_spans.len() > 1 || (current_line_spans.len() == 1 && !is_first_line) {
-                            lines.push(Line::from(current_line_spans));
+                        let mut remaining = text.as_str();
+                        while !remaining.is_empty() {
+                            let available = content_width.saturating_sub(current_line_len);
+                            if available == 0 {
+                                // Line is full, push it and start new line
+                                lines.push(Line::from(current_line_spans));
+                                current_line_spans = vec![Span::styled(
+                                    continuation_prefix,
+                                    prefix_style,
+                                )];
+                                current_line_len = 0;
+                                is_first_line = false;
+                                continue;
+                            }
+
+                            let char_count = remaining.chars().count();
+                            if char_count <= available {
+                                // Rest fits on current line
+                                current_line_spans.push(Span::styled(remaining.to_string(), ratatui_style));
+                                current_line_len += char_count;
+                                break;
+                            } else {
+                                // Split at available boundary
+                                let split_point: usize = remaining
+                                    .char_indices()
+                                    .nth(available)
+                                    .map(|(i, _)| i)
+                                    .unwrap_or(remaining.len());
+                                let (chunk, rest) = remaining.split_at(split_point);
+                                current_line_spans.push(Span::styled(chunk.to_string(), ratatui_style));
+                                remaining = rest;
+
+                                // Push current line and start new one
+                                lines.push(Line::from(current_line_spans));
+                                current_line_spans = vec![Span::styled(
+                                    continuation_prefix,
+                                    prefix_style,
+                                )];
+                                current_line_len = 0;
+                                is_first_line = false;
+                            }
                         }
+                    }
+
+                    // Push any remaining content
+                    if current_line_spans.len() > 1 || (current_line_spans.len() == 1 && !is_first_line) {
+                        lines.push(Line::from(current_line_spans));
                     }
                 }
             }
-
-            // Blank line after each file
-            lines.push(Line::from(""));
         }
-    });
+
+        // Blank line after each file
+        lines.push(Line::from(""));
+    }
 
     // Determine if we need a sticky header
     // Find the file section we're scrolled into (where scroll_offset is past the header)
