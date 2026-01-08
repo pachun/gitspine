@@ -174,14 +174,17 @@ pub fn build(commits: &[Commit]) -> Vec<Vec<(char, Option<usize>)>> {
             lanes[commit_lane] = None;
         }
 
-        // Handle merge commits (multiple parents) - only add if not already tracked
-        for parent_id in commit.parent_shas.iter().skip(1) {
-            let already_tracked = lanes.iter().any(|lane| *lane == Some(*parent_id));
-            if !already_tracked {
-                match lanes.iter().position(|lane| lane.is_none()) {
-                    Some(pos) => lanes[pos] = Some(*parent_id),
-                    None => lanes.push(Some(*parent_id)),
+        // Handle merge commits (multiple parents)
+        // Use the same positions we calculated in temp_lanes for drawing
+        // This ensures the graph lines connect properly to subsequent commits
+        for (idx, &lane_idx) in additional_parent_lanes_new.iter().enumerate() {
+            let parent_id = commit.parent_shas.get(idx + 1); // +1 because skip(1)
+            if let Some(parent_id) = parent_id {
+                // Ensure lanes is long enough
+                while lanes.len() <= lane_idx {
+                    lanes.push(None);
                 }
+                lanes[lane_idx] = Some(*parent_id);
             }
         }
 
