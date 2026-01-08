@@ -1308,7 +1308,7 @@ fn render_file_tree(
 ) {
     for (i, node) in nodes.iter().enumerate() {
         let is_last = i == nodes.len() - 1;
-        let connector = if is_last { "└── " } else { "├── " };
+        let connector = if is_last { "└ " } else { "├ " };
 
         let mut spans = vec![
             Span::styled(prefix.to_string(), Style::default().fg(Color::DarkGray)),
@@ -1360,9 +1360,9 @@ fn render_file_tree(
         // Recurse into children with updated prefix
         if !node.children.is_empty() {
             let child_prefix = if is_last {
-                format!("{}    ", prefix)
+                format!("{}  ", prefix)
             } else {
-                format!("{}│   ", prefix)
+                format!("{}│ ", prefix)
             };
             render_file_tree(&node.children, &child_prefix, lines, search_term, highlight_style);
         }
