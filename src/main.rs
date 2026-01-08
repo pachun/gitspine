@@ -36,6 +36,17 @@ fn initialize_terminal() -> Terminal<CrosstermBackend<Stdout>> {
 
 fn main() {
     let path_to_repo = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
+
+    // Debug mode: print graph and exit
+    if std::env::var("GG_DEBUG").is_ok() {
+        let repo = Repo::open(&path_to_repo);
+        for (i, (commit, graph_line)) in repo.commits.iter().zip(repo.graph.iter()).enumerate().take(60) {
+            let graph_str: String = graph_line.iter().map(|(c, _)| *c).collect();
+            println!("{:3} {} {} {}", i, &commit.sha.to_string()[..7], graph_str, &commit.message[..commit.message.len().min(40)]);
+        }
+        return;
+    }
+
     let mut repo = Repo::open(&path_to_repo);
     let mut terminal = initialize_terminal();
     let _ = execute!(std::io::stdout(), SetTitle(&repo.name));
