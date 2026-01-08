@@ -841,6 +841,38 @@ fn render_details_panel(
     // Add blank line before files
     lines.push(Line::from(""));
 
+    // Add changes summary
+    let total_additions: usize = details.files.iter().map(|f| f.additions).sum();
+    let total_deletions: usize = details.files.iter().map(|f| f.deletions).sum();
+    let file_count = details.files.len();
+    let files_word = if file_count == 1 { "file" } else { "files" };
+
+    let mut summary_spans = vec![
+        Span::styled(
+            format!("{} {} changed  ", file_count, files_word),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ];
+    if total_additions > 0 {
+        summary_spans.push(Span::styled(
+            format!("+{}", total_additions),
+            Style::default().fg(Color::Green),
+        ));
+    }
+    if total_deletions > 0 {
+        if total_additions > 0 {
+            summary_spans.push(Span::styled(" ", Style::default()));
+        }
+        summary_spans.push(Span::styled(
+            format!("-{}", total_deletions),
+            Style::default().fg(Color::Red),
+        ));
+    }
+    lines.push(Line::from(summary_spans));
+
+    // Add blank line before file tree
+    lines.push(Line::from(""));
+
     // Build and render file tree
     let file_tree = build_file_tree(&details.files);
     render_file_tree(&file_tree, "", &mut lines, search_term, highlight_style);
