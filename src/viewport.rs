@@ -6,7 +6,12 @@ use ratatui::Terminal;
 use crate::repo::Repo;
 use crate::state::State;
 
+// Layout constants
 pub const HELP_PANEL_HEIGHT: u16 = 4;
+pub const DETAILS_COMMIT_LIST_HEIGHT: u16 = 5;
+pub const FILE_HEADER_HEIGHT: usize = 3;
+pub const SUMMARY_HEADER_HEIGHT: usize = 3;
+pub const DETAILS_HEADER_LINES: usize = 3;
 
 pub fn git_graph_height(state: &State, terminal: &Terminal<CrosstermBackend<Stdout>>) -> usize {
     let mut height = terminal.size().unwrap().height;
@@ -18,11 +23,10 @@ pub fn git_graph_height(state: &State, terminal: &Terminal<CrosstermBackend<Stdo
 }
 
 /// Height of the details panel when showing commit details
-/// Layout: 3 rows for commits at top, rest for details
 pub fn details_panel_height(state: &State, terminal: &Terminal<CrosstermBackend<Stdout>>) -> usize {
     let total = git_graph_height(state, terminal);
-    // Subtract 3 rows for commit list, 1 for border
-    total.saturating_sub(4)
+    // Subtract commit list height + 1 for border
+    total.saturating_sub(DETAILS_COMMIT_LIST_HEIGHT as usize + 1)
 }
 
 pub fn center_view_on_selected_row(

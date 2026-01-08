@@ -10,6 +10,7 @@ use crate::action::compute_details_match_lines;
 use crate::repo::{BranchName, CommitDetails, Repo, Sha};
 use crate::state::State;
 use crate::utils::{format_date, format_time, has_mixed_case};
+use crate::viewport::{DETAILS_COMMIT_LIST_HEIGHT, FILE_HEADER_HEIGHT};
 
 /// Build reverse index: commit sha -> list of branch names pointing to it
 fn branches_at_commit(branches: &HashMap<BranchName, Sha>) -> HashMap<Sha, Vec<&BranchName>> {
@@ -119,7 +120,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
     let main_chunks = if show_details {
         Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(5), Constraint::Fill(1)])
+            .constraints([Constraint::Length(DETAILS_COMMIT_LIST_HEIGHT), Constraint::Fill(1)])
             .split(chunks[0])
     } else {
         Layout::default()
@@ -684,7 +685,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             // Navigation
             vec![
                 ("j/k", "↑/↓", true),
-                ("^d/^u", "½ page", true),
+                ("^d/u", "↑/↓ ½ page", true),
                 ("g", "top", true),
                 ("G", "bottom", true),
                 ("h", if show_details { "back" } else { "goto head" }, if show_details { true } else { !is_on_head }),
@@ -841,37 +842,59 @@ fn render_details_panel(
     // Add blank line before files
     lines.push(Line::from(""));
 
-    // Add changes summary
+    // Add changes summary header (3 lines tall)
     let total_additions: usize = details.files.iter().map(|f| f.additions).sum();
     let total_deletions: usize = details.files.iter().map(|f| f.deletions).sum();
     let file_count = details.files.len();
     let files_word = if file_count == 1 { "file" } else { "files" };
 
+    let bg_color = Color::Rgb(40, 40, 50);
+    let bg_style = Style::default().bg(bg_color);
+
+    // Build the content to calculate width
+    let mut content = format!("{} {} changed  ", file_count, files_word);
+    if total_additions > 0 {
+        content.push_str(&format!("+{}", total_additions));
+    }
+    if total_deletions > 0 {
+        if total_additions > 0 {
+            content.push(' ');
+        }
+        content.push_str(&format!("-{}", total_deletions));
+    }
+    let header_width = content.len() + 6; // 3 spaces padding on each side
+
+    // Top padding line
+    lines.push(Line::from(Span::styled(" ".repeat(header_width), bg_style)));
+
+    // Middle line with content
     let mut summary_spans = vec![
+        Span::styled("   ", bg_style),
         Span::styled(
             format!("{} {} changed  ", file_count, files_word),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::White).bg(bg_color),
         ),
     ];
     if total_additions > 0 {
         summary_spans.push(Span::styled(
             format!("+{}", total_additions),
-            Style::default().fg(Color::Green),
+            Style::default().fg(Color::Green).bg(bg_color),
         ));
     }
     if total_deletions > 0 {
         if total_additions > 0 {
-            summary_spans.push(Span::styled(" ", Style::default()));
+            summary_spans.push(Span::styled(" ", bg_style));
         }
         summary_spans.push(Span::styled(
             format!("-{}", total_deletions),
-            Style::default().fg(Color::Red),
+            Style::default().fg(Color::Red).bg(bg_color),
         ));
     }
+    summary_spans.push(Span::styled("   ", bg_style));
     lines.push(Line::from(summary_spans));
 
-    // Add blank line before file tree
-    lines.push(Line::from(""));
+    // Bottom padding line
+    lines.push(Line::from(Span::styled(" ".repeat(header_width), bg_style)));
 
     // Build and render file tree
     let file_tree = build_file_tree(&details.files);
@@ -1064,9 +1087,9 @@ fn render_details_panel(
         if idx + 1 < file_sections.len() {
             let next_header_line = file_sections[idx + 1].header_line_idx;
             let space_until_next = next_header_line.saturating_sub(scroll_offset);
-            space_until_next.min(3)
+            space_until_next.min(FILE_HEADER_HEIGHT)
         } else {
-            3 // Last section, full sticky
+            FILE_HEADER_HEIGHT // Last section, full sticky
         }
     } else {
         0 // No section scrolled past yet
@@ -1107,7 +1130,7 @@ fn render_details_panel(
                 Span::styled(" ".repeat(right_padding), bg_style),
             ]));
         }
-        if sticky_height >= 3 {
+        if sticky_height >= FILE_HEADER_HEIGHT {
             sticky_lines.push(Line::from(Span::styled(" ".repeat(width), bg_style)));
         }
 
@@ -1115,17 +1138,17 @@ fn render_details_panel(
         let content_start = if let Some(idx) = current_section_idx {
             if idx + 1 < file_sections.len() {
                 let next_header_line = file_sections[idx + 1].header_line_idx;
-                if scroll_offset + 3 > next_header_line {
+                if scroll_offset + FILE_HEADER_HEIGHT > next_header_line {
                     // Next header would be cut off - show it intact instead
                     next_header_line
                 } else {
-                    scroll_offset + 3
+                    scroll_offset + FILE_HEADER_HEIGHT
                 }
             } else {
-                scroll_offset + 3
+                scroll_offset + FILE_HEADER_HEIGHT
             }
         } else {
-            scroll_offset + 3
+            scroll_offset + FILE_HEADER_HEIGHT
         };
 
         let content_lines: Vec<Line> = lines

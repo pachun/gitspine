@@ -7,7 +7,7 @@ use ratatui::prelude::CrosstermBackend;
 use crate::highlight::Highlighter;
 use crate::repo::Repo;
 use crate::state::{FlashMessage, State};
-use crate::viewport::{center_view_on_selected_row, git_graph_height};
+use crate::viewport::{center_view_on_selected_row, git_graph_height, DETAILS_HEADER_LINES, FILE_HEADER_HEIGHT, SUMMARY_HEADER_HEIGHT};
 
 /// Actions represent keypresses. The execute() method determines behavior based on UI state.
 pub enum Action {
@@ -834,17 +834,23 @@ fn compute_details_content_height(state: &State) -> usize {
 
     let mut line_count = 0;
 
-    // Header lines (commit, author, date, blank)
-    line_count += 4;
+    // First lines: message + metadata
+    line_count += DETAILS_HEADER_LINES;
 
-    // Commit message lines
-    line_count += details.message.lines().count();
+    // Additional message lines beyond the header
+    let msg_line_count = details.message.lines().count();
+    if msg_line_count > DETAILS_HEADER_LINES {
+        line_count += msg_line_count - DETAILS_HEADER_LINES;
+    }
 
-    // Blank line and files header
-    line_count += 2;
+    // Blank line before files section
+    line_count += 1;
 
-    // File list
-    line_count += details.files.len();
+    // Changes summary header (top padding, content, bottom padding)
+    line_count += SUMMARY_HEADER_HEIGHT;
+
+    // File tree - count all nodes (files + directories)
+    line_count += count_file_tree_nodes(&details.files);
 
     // Blank line before diffs
     line_count += 1;
@@ -855,8 +861,8 @@ fn compute_details_content_height(state: &State) -> usize {
             continue;
         }
 
-        // File separator
-        line_count += 1;
+        // File header (top padding, filename, bottom padding)
+        line_count += FILE_HEADER_HEIGHT;
 
         for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
             // Blank line between hunks
@@ -865,12 +871,31 @@ fn compute_details_content_height(state: &State) -> usize {
             }
             line_count += hunk.lines.len();
         }
-
-        // Blank line after file
-        line_count += 1;
     }
 
     line_count
+}
+
+/// Count total nodes in the file tree (files + directories)
+fn count_file_tree_nodes(files: &[crate::repo::FileChange]) -> usize {
+    use std::collections::HashSet;
+    let mut dirs: HashSet<String> = HashSet::new();
+
+    for file in files {
+        // Count all parent directories
+        let parts: Vec<&str> = file.path.split('/').collect();
+        let mut path = String::new();
+        for part in parts.iter().take(parts.len().saturating_sub(1)) {
+            if !path.is_empty() {
+                path.push('/');
+            }
+            path.push_str(part);
+            dirs.insert(path.clone());
+        }
+    }
+
+    // Total = number of files + number of unique directories
+    files.len() + dirs.len()
 }
 
 fn copy_sha_to_clipboard(state: &mut State, repo: &Repo) {
