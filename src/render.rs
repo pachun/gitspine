@@ -849,6 +849,13 @@ fn render_details_panel(
     // Add blank line before diffs
     lines.push(Line::from(""));
 
+    // Track file header positions for sticky headers
+    struct FileSection {
+        header_line_idx: usize,
+        header_text: String,
+    }
+    let mut file_sections: Vec<FileSection> = Vec::new();
+
     // Add actual diff content with syntax highlighting
     HIGHLIGHTER.with(|h| {
         let highlighter = h.borrow();
@@ -858,9 +865,16 @@ fn render_details_panel(
                 continue;
             }
 
+            // Track file header position before adding it
+            let header_text = format!("─── {} ───", file.path);
+            file_sections.push(FileSection {
+                header_line_idx: lines.len(),
+                header_text: header_text.clone(),
+            });
+
             // File separator
             lines.push(Line::from(vec![Span::styled(
-                format!("─── {} ───", file.path),
+                header_text,
                 Style::default()
                     .fg(Color::DarkGray)
                     .add_modifier(Modifier::BOLD),
@@ -888,6 +902,9 @@ fn render_details_panel(
                 }
 
                 // Diff lines with syntax highlighting and line numbers
+                let prefix_width: usize = 6; // "{origin}{4-char num} "
+                let content_width = inner.width.saturating_sub(prefix_width as u16) as usize;
+
                 for diff_line in &hunk.lines {
                     let (prefix_style, line_bg) = match diff_line.origin {
                         '+' => (
@@ -907,24 +924,87 @@ fn render_details_panel(
                         .map(|n| format!("{:>4}", n))
                         .unwrap_or_else(|| "    ".to_string());
                     let prefix = format!("{}{} ", diff_line.origin, line_num);
+                    let continuation_prefix = "      "; // 6 spaces for wrapped lines
 
-                    // Build spans: prefix + syntax-highlighted content
-                    let mut spans = vec![Span::styled(prefix, prefix_style)];
-
-                    // Use pre-highlighted content
+                    // Get highlighted content
                     let highlighted = &highlighted_lines[highlight_idx];
                     highlight_idx += 1;
 
-                    for (style, text) in highlighted {
-                        let mut ratatui_style = syntect_to_ratatui_style(style);
-                        // Apply background color for +/- lines
-                        if let Some(bg) = line_bg {
-                            ratatui_style = ratatui_style.bg(bg);
-                        }
-                        spans.push(Span::styled(text.clone(), ratatui_style));
-                    }
+                    // Calculate total content length
+                    let total_len: usize = highlighted.iter().map(|(_, t)| t.chars().count()).sum();
 
-                    lines.push(Line::from(spans));
+                    if content_width == 0 || total_len <= content_width {
+                        // Content fits on one line
+                        let mut spans = vec![Span::styled(prefix, prefix_style)];
+                        for (style, text) in highlighted {
+                            let mut ratatui_style = syntect_to_ratatui_style(style);
+                            if let Some(bg) = line_bg {
+                                ratatui_style = ratatui_style.bg(bg);
+                            }
+                            spans.push(Span::styled(text.clone(), ratatui_style));
+                        }
+                        lines.push(Line::from(spans));
+                    } else {
+                        // Need to wrap - split spans across multiple lines
+                        let mut current_line_spans: Vec<Span> = vec![Span::styled(prefix, prefix_style)];
+                        let mut current_line_len: usize = 0;
+                        let mut is_first_line = true;
+
+                        for (style, text) in highlighted {
+                            let mut ratatui_style = syntect_to_ratatui_style(style);
+                            if let Some(bg) = line_bg {
+                                ratatui_style = ratatui_style.bg(bg);
+                            }
+
+                            let mut remaining = text.as_str();
+                            while !remaining.is_empty() {
+                                let available = content_width.saturating_sub(current_line_len);
+                                if available == 0 {
+                                    // Line is full, push it and start new line
+                                    lines.push(Line::from(current_line_spans));
+                                    current_line_spans = vec![Span::styled(
+                                        continuation_prefix,
+                                        prefix_style,
+                                    )];
+                                    current_line_len = 0;
+                                    is_first_line = false;
+                                    continue;
+                                }
+
+                                let char_count = remaining.chars().count();
+                                if char_count <= available {
+                                    // Rest fits on current line
+                                    current_line_spans.push(Span::styled(remaining.to_string(), ratatui_style));
+                                    current_line_len += char_count;
+                                    break;
+                                } else {
+                                    // Split at available boundary
+                                    let split_point: usize = remaining
+                                        .char_indices()
+                                        .nth(available)
+                                        .map(|(i, _)| i)
+                                        .unwrap_or(remaining.len());
+                                    let (chunk, rest) = remaining.split_at(split_point);
+                                    current_line_spans.push(Span::styled(chunk.to_string(), ratatui_style));
+                                    remaining = rest;
+
+                                    // Push current line and start new one
+                                    lines.push(Line::from(current_line_spans));
+                                    current_line_spans = vec![Span::styled(
+                                        continuation_prefix,
+                                        prefix_style,
+                                    )];
+                                    current_line_len = 0;
+                                    is_first_line = false;
+                                }
+                            }
+                        }
+
+                        // Push any remaining content
+                        if current_line_spans.len() > 1 || (current_line_spans.len() == 1 && !is_first_line) {
+                            lines.push(Line::from(current_line_spans));
+                        }
+                    }
                 }
             }
 
@@ -933,12 +1013,39 @@ fn render_details_panel(
         }
     });
 
-    // Apply scroll offset - skip lines and take only what fits
-    let visible_lines: Vec<Line> = lines
-        .into_iter()
-        .skip(scroll_offset)
-        .take(inner.height as usize)
-        .collect();
+    // Determine if we need a sticky header
+    // Find the file section we're scrolled into (where scroll_offset is past the header)
+    let sticky_header: Option<&FileSection> = file_sections
+        .iter()
+        .rev()
+        .find(|s| scroll_offset > s.header_line_idx);
+
+    // Apply scroll offset and handle sticky header
+    let visible_lines: Vec<Line> = if let Some(section) = sticky_header {
+        // We're scrolled past a file header - show it as sticky
+        let sticky_line = Line::from(vec![Span::styled(
+            section.header_text.clone(),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )]);
+
+        // Take height-1 content lines (sticky header takes 1 line)
+        let content_lines: Vec<Line> = lines
+            .into_iter()
+            .skip(scroll_offset)
+            .take(inner.height.saturating_sub(1) as usize)
+            .collect();
+
+        std::iter::once(sticky_line).chain(content_lines).collect()
+    } else {
+        // No sticky header needed - render normally
+        lines
+            .into_iter()
+            .skip(scroll_offset)
+            .take(inner.height as usize)
+            .collect()
+    };
 
     let paragraph = Paragraph::new(visible_lines);
     frame.render_widget(paragraph, inner);
