@@ -897,13 +897,13 @@ fn render_details_panel(
         Span::styled("   ", bg_style),
         Span::styled(
             format!("{} {} changed  ", file_count, files_word),
-            Style::default().fg(Color::White).bg(bg_color),
+            Style::default().fg(Color::White).bg(bg_color).add_modifier(Modifier::BOLD),
         ),
     ];
     if total_additions > 0 {
         summary_spans.push(Span::styled(
             format!("+{}", total_additions),
-            Style::default().fg(Color::Green).bg(bg_color),
+            Style::default().fg(Color::Green).bg(bg_color).add_modifier(Modifier::BOLD),
         ));
     }
     if total_deletions > 0 {
@@ -912,7 +912,7 @@ fn render_details_panel(
         }
         summary_spans.push(Span::styled(
             format!("-{}", total_deletions),
-            Style::default().fg(Color::Red).bg(bg_color),
+            Style::default().fg(Color::Red).bg(bg_color).add_modifier(Modifier::BOLD),
         ));
     }
     summary_spans.push(Span::styled("   ", bg_style));
