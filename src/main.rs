@@ -44,21 +44,32 @@ fn main() {
 
     center_view_on_selected_row(&mut state, &terminal);
 
+    // Initial render
+    terminal
+        .draw(|frame| {
+            render::render(frame, &state, &repo);
+        })
+        .unwrap();
+
     loop {
         // Check for external git changes
+        let mut needs_render = false;
         if watcher_rx.try_recv().is_ok() {
             repo.refresh();
+            needs_render = true;
         }
 
-        adjust_viewport_after_terminal_resize(&mut state, &terminal, repo.commits.len());
-
-        terminal
-            .draw(|frame| {
-                render::render(frame, &state, &repo);
-            })
-            .unwrap();
-
+        // Poll for events (with timeout to allow watcher checks)
         if !event::poll(Duration::from_millis(100)).unwrap() {
+            // No event, but render if watcher triggered a refresh
+            if needs_render {
+                adjust_viewport_after_terminal_resize(&mut state, &terminal, repo.commits.len());
+                terminal
+                    .draw(|frame| {
+                        render::render(frame, &state, &repo);
+                    })
+                    .unwrap();
+            }
             continue;
         }
 
@@ -103,8 +114,19 @@ fn main() {
 
                 ensure_selected_row_is_visible(&mut state, &terminal);
             }
+            Event::Resize(_, _) => {
+                // Terminal resized, adjust viewport
+            }
             _ => {}
         }
+
+        // Render after processing event
+        adjust_viewport_after_terminal_resize(&mut state, &terminal, repo.commits.len());
+        terminal
+            .draw(|frame| {
+                render::render(frame, &state, &repo);
+            })
+            .unwrap();
     }
     ratatui::restore();
 }

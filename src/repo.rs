@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use git2::Repository;
 
+use crate::commit_graph;
 use crate::utils::{format_date, has_mixed_case};
 
 pub type Sha = git2::Oid;
@@ -119,6 +120,7 @@ pub struct Repo {
     pub commits: Vec<Commit>,
     pub branches: HashMap<BranchName, Sha>,
     pub head: Head,
+    pub graph: Vec<Vec<(char, Option<usize>)>>,
 }
 
 impl Repo {
@@ -133,12 +135,15 @@ impl Repo {
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_string();
+        let commits = Self::get_commits(&git_repo);
+        let graph = commit_graph::build(&commits);
         Repo {
             path: path.to_string(),
             name,
-            commits: Self::get_commits(&git_repo),
+            commits,
             branches: Self::get_branches(&git_repo),
             head: Self::get_head(&git_repo),
+            graph,
         }
     }
 
@@ -343,6 +348,7 @@ impl Repo {
             self.commits = Self::get_commits(&git_repo);
             self.branches = Self::get_branches(&git_repo);
             self.head = Self::get_head(&git_repo);
+            self.graph = commit_graph::build(&self.commits);
         }
     }
 

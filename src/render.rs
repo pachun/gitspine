@@ -8,7 +8,6 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use ratatui::Frame;
 
 use crate::action::compute_details_match_lines;
-use crate::commit_graph;
 use crate::highlight::Highlighter;
 use crate::repo::{BranchName, CommitDetails, Repo, Sha};
 use crate::state::State;
@@ -99,7 +98,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         .constraints(constraints)
         .split(padded_area);
 
-    let graph = commit_graph::build(&repo.commits);
+    let graph = &repo.graph;
     let show_details = state.commit_details.is_some();
 
     // Calculate graph column width based on widest graph (table provides cell spacing)
