@@ -99,6 +99,7 @@ fn main() {
                     (KeyCode::Char('o'), _) => Action::CharO,
                     (KeyCode::Char('l'), _) => Action::CharL,
                     (KeyCode::Char('b'), _) => Action::CharB,
+                    (KeyCode::Char('c'), _) => Action::CharC,
                     (KeyCode::Char('d'), _) => Action::CharD,
                     (KeyCode::Char(c), _) if c.is_ascii_digit() => Action::Digit(c),
                     (KeyCode::Char(c), _) => Action::Char(c),

@@ -174,6 +174,25 @@ impl Repo {
         Ok(())
     }
 
+    pub fn checkout_sha(&mut self, sha: Sha) -> Result<(), String> {
+        let git_repo = Repository::open(&self.path).map_err(|e| e.message().to_string())?;
+        git_repo
+            .set_head_detached(sha)
+            .map_err(|e| e.message().to_string())?;
+        self.refresh();
+        Ok(())
+    }
+
+    pub fn checkout_branch(&mut self, branch_name: &str) -> Result<(), String> {
+        let git_repo = Repository::open(&self.path).map_err(|e| e.message().to_string())?;
+        let refname = format!("refs/heads/{}", branch_name);
+        git_repo
+            .set_head(&refname)
+            .map_err(|e| e.message().to_string())?;
+        self.refresh();
+        Ok(())
+    }
+
     /// Check if there are any local (non-remote) branches pointing to the given sha
     pub fn has_local_branches_at(&self, sha: Sha) -> bool {
         !self.local_branches_at(sha).is_empty()

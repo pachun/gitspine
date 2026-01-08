@@ -32,6 +32,7 @@ pub enum Action {
     CharO,
     CharL,
     CharB,
+    CharC,
     CharD,
     CtrlD,
     CtrlU,
@@ -55,6 +56,9 @@ impl Action {
             false
         } else if state.is_deleting_branch {
             self.execute_branch_deletion_mode(state, repo);
+            false
+        } else if state.is_checking_out {
+            self.execute_checkout_mode(state, repo);
             false
         } else {
             self.execute_normal_mode(state, repo, terminal)
@@ -107,6 +111,7 @@ impl Action {
             | Action::CharO
             | Action::CharL
             | Action::CharB
+            | Action::CharC
             | Action::CharD => {
                 let c = match self {
                     Action::CharSlash => '/',
@@ -122,6 +127,7 @@ impl Action {
                     Action::CharO => 'o',
                     Action::CharL => 'l',
                     Action::CharB => 'b',
+                    Action::CharC => 'c',
                     Action::CharD => 'd',
                     _ => unreachable!(),
                 };
@@ -144,7 +150,7 @@ impl Action {
     fn execute_normal_mode(
         &self,
         state: &mut State,
-        repo: &Repo,
+        repo: &mut Repo,
         terminal: &Terminal<CrosstermBackend<Stdout>>,
     ) -> bool {
         match self {
@@ -307,6 +313,32 @@ impl Action {
                 state.is_creating_branch = true;
                 state.branch_name.clear();
             }
+            Action::CharC => {
+                state.jump_distance_string.clear();
+                let selected_sha = repo.commits[state.index_of_selected_row].sha;
+                if repo.has_local_branches_at(selected_sha) {
+                    // Branches exist - prompt user
+                    state.flash_message = None;
+                    state.is_checking_out = true;
+                    state.checkout_branch_name.clear();
+                } else {
+                    // No branches - checkout SHA directly
+                    match repo.checkout_sha(selected_sha) {
+                        Ok(()) => {
+                            state.flash_message = Some(FlashMessage {
+                                message: format!("checked out {}", &selected_sha.to_string()[..7]),
+                                shown_at: Instant::now(),
+                            });
+                        }
+                        Err(e) => {
+                            state.flash_message = Some(FlashMessage {
+                                message: e,
+                                shown_at: Instant::now(),
+                            });
+                        }
+                    }
+                }
+            }
             Action::CharD => {
                 state.jump_distance_string.clear();
                 let selected_sha = repo.commits[state.index_of_selected_row].sha;
@@ -405,6 +437,7 @@ impl Action {
             | Action::CharO
             | Action::CharL
             | Action::CharB
+            | Action::CharC
             | Action::CharD => {
                 let c = match self {
                     Action::CharSlash => '/',
@@ -420,6 +453,7 @@ impl Action {
                     Action::CharO => 'o',
                     Action::CharL => 'l',
                     Action::CharB => 'b',
+                    Action::CharC => 'c',
                     Action::CharD => 'd',
                     _ => unreachable!(),
                 };
@@ -514,6 +548,7 @@ impl Action {
             | Action::CharO
             | Action::CharL
             | Action::CharB
+            | Action::CharC
             | Action::CharD => {
                 state.tab_complete_base = None;
                 state.tab_complete_index = 0;
@@ -531,6 +566,7 @@ impl Action {
                     Action::CharO => 'o',
                     Action::CharL => 'l',
                     Action::CharB => 'b',
+                    Action::CharC => 'c',
                     Action::CharD => 'd',
                     _ => unreachable!(),
                 };
@@ -545,6 +581,141 @@ impl Action {
                 state.tab_complete_base = None;
                 state.tab_complete_index = 0;
                 state.delete_branch_name.push(' ');
+            }
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::None => {}
+        }
+    }
+
+    fn execute_checkout_mode(&self, state: &mut State, repo: &mut Repo) {
+        match self {
+            Action::Esc | Action::CtrlC => {
+                state.is_checking_out = false;
+                state.checkout_branch_name.clear();
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+            }
+            Action::Enter => {
+                let selected_sha = repo.commits[state.index_of_selected_row].sha;
+
+                if state.checkout_branch_name.is_empty() {
+                    // Empty input - checkout SHA directly (detached HEAD)
+                    match repo.checkout_sha(selected_sha) {
+                        Ok(()) => {
+                            state.flash_message = Some(FlashMessage {
+                                message: format!("checked out {}", &selected_sha.to_string()[..7]),
+                                shown_at: Instant::now(),
+                            });
+                        }
+                        Err(e) => {
+                            state.flash_message = Some(FlashMessage {
+                                message: e,
+                                shown_at: Instant::now(),
+                            });
+                        }
+                    }
+                } else {
+                    // Branch name typed - checkout that branch
+                    let branch_exists_on_commit = repo
+                        .branches
+                        .iter()
+                        .any(|(name, sha)| name.0 == state.checkout_branch_name && *sha == selected_sha);
+
+                    if branch_exists_on_commit {
+                        match repo.checkout_branch(&state.checkout_branch_name) {
+                            Ok(()) => {
+                                state.flash_message = Some(FlashMessage {
+                                    message: format!("checked out {}", state.checkout_branch_name),
+                                    shown_at: Instant::now(),
+                                });
+                            }
+                            Err(e) => {
+                                state.flash_message = Some(FlashMessage {
+                                    message: e,
+                                    shown_at: Instant::now(),
+                                });
+                            }
+                        }
+                    } else {
+                        state.flash_message = Some(FlashMessage {
+                            message: format!("no '{}' branch", state.checkout_branch_name),
+                            shown_at: Instant::now(),
+                        });
+                    }
+                }
+
+                state.is_checking_out = false;
+                state.checkout_branch_name.clear();
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+            }
+            Action::Tab => {
+                let selected_sha = repo.commits[state.index_of_selected_row].sha;
+                let local_branches = repo.local_branches_at(selected_sha);
+                let (completed, new_base, new_index) = tab_complete_branch(
+                    &state.checkout_branch_name,
+                    &local_branches,
+                    &state.tab_complete_base,
+                    state.tab_complete_index,
+                );
+                state.checkout_branch_name = completed;
+                state.tab_complete_base = new_base;
+                state.tab_complete_index = new_index;
+            }
+            Action::Backspace => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+                if state.checkout_branch_name.is_empty() {
+                    state.is_checking_out = false;
+                } else {
+                    state.checkout_branch_name.pop();
+                }
+            }
+            Action::CharSlash
+            | Action::CharQ
+            | Action::CharN
+            | Action::ShiftN
+            | Action::CharJ
+            | Action::CharK
+            | Action::CharG
+            | Action::ShiftG
+            | Action::CharH
+            | Action::CharY
+            | Action::CharO
+            | Action::CharL
+            | Action::CharB
+            | Action::CharC
+            | Action::CharD => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+                let c = match self {
+                    Action::CharSlash => '/',
+                    Action::CharQ => 'q',
+                    Action::CharN => 'n',
+                    Action::ShiftN => 'N',
+                    Action::CharJ => 'j',
+                    Action::CharK => 'k',
+                    Action::CharG => 'g',
+                    Action::ShiftG => 'G',
+                    Action::CharH => 'h',
+                    Action::CharY => 'y',
+                    Action::CharO => 'o',
+                    Action::CharL => 'l',
+                    Action::CharB => 'b',
+                    Action::CharC => 'c',
+                    Action::CharD => 'd',
+                    _ => unreachable!(),
+                };
+                state.checkout_branch_name.push(c);
+            }
+            Action::Digit(c) | Action::Char(c) => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+                state.checkout_branch_name.push(*c);
+            }
+            Action::Space => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+                state.checkout_branch_name.push(' ');
             }
             Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::None => {}
         }

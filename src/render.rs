@@ -380,6 +380,8 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         Color::Cyan
     } else if state.is_deleting_branch {
         Color::Red
+    } else if state.is_checking_out {
+        Color::Green
     } else if search_active {
         Color::White
     } else {
@@ -434,6 +436,29 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
 
         let hint = Paragraph::new(Line::from(vec![Span::styled(
             "enter → delete   esc → cancel",
+            Style::default().fg(Color::DarkGray),
+        )]))
+        .alignment(ratatui::layout::Alignment::Right);
+        frame.render_widget(hint, search_inner);
+    } else if state.is_checking_out {
+        // Checkout mode: green input with cursor and grey preview
+        let selected_sha = repo.commits[state.index_of_selected_row].sha;
+        let local_branches = repo.local_branches_at(selected_sha);
+        let preview = get_tab_preview(&state.checkout_branch_name, &local_branches);
+
+        let mut spans = vec![
+            Span::styled("checkout: ", Style::default().fg(Color::Green)),
+            Span::styled(&state.checkout_branch_name, Style::default().fg(Color::Green)),
+            Span::styled("█", Style::default().fg(Color::Green)),
+        ];
+        if let Some(preview_text) = preview {
+            spans.push(Span::styled(preview_text, Style::default().fg(Color::DarkGray)));
+        }
+        let checkout_input = Paragraph::new(Line::from(spans));
+        frame.render_widget(checkout_input, search_inner);
+
+        let hint = Paragraph::new(Line::from(vec![Span::styled(
+            "enter → detached   tab → complete   esc → cancel",
             Style::default().fg(Color::DarkGray),
         )]))
         .alignment(ratatui::layout::Alignment::Right);
@@ -642,7 +667,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
 
         // Grey out most of help panel during typing modes (except first column)
         let in_typing_mode =
-            state.is_typing_search_term || state.is_creating_branch || state.is_deleting_branch;
+            state.is_typing_search_term || state.is_creating_branch || state.is_deleting_branch || state.is_checking_out;
         let help_style = Style::default().fg(Color::DarkGray);
 
         // Define columns: each column is a vec of (key, description) pairs
@@ -697,7 +722,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                 vec![("/", "search", true)]
             },
             // Actions
-            vec![("y", "copy sha", true), ("o", "view in github", true), ("b", "create branch", true), ("d", "delete branch", has_local_branches)],
+            vec![("y", "copy sha", true), ("o", "view in github", true), ("b", "create branch", true), ("c", "checkout", true), ("d", "delete branch", has_local_branches)],
         ];
 
         // Calculate column widths
