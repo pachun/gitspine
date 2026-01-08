@@ -852,7 +852,13 @@ fn render_details_panel(
         let meta_len = meta.chars().count();
         let padding = available_width.saturating_sub(msg_len + meta_len + 1);
 
-        let mut spans = highlight_matches(msg, search_term, Style::default(), highlight_style);
+        // First line (subject) is bold
+        let msg_style = if i == 0 {
+            Style::default().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let mut spans = highlight_matches(msg, search_term, msg_style, highlight_style);
         spans.push(Span::raw(" ".repeat(padding.max(1))));
         spans.push(Span::styled(meta.clone(), Style::default().fg(Color::DarkGray)));
 
