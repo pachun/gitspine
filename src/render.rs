@@ -154,12 +154,20 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         .unwrap_or(0)
         .min(20);
 
+    // When showing details, adjust scroll to keep selected row visible in the small viewport
+    let effective_top = if show_details {
+        let max_top = repo.commits.len().saturating_sub(visible_height);
+        state.index_of_selected_row.min(max_top)
+    } else {
+        state.index_of_topmost_visible_row
+    };
+
     let rows: Vec<Row> = repo
         .commits
         .iter()
         .zip(graph.iter())
         .enumerate()
-        .skip(state.index_of_topmost_visible_row)
+        .skip(effective_top)
         .take(visible_height)
         .map(|(i, (c, g))| {
             // Line number display: marker for selected, relative for others
@@ -360,7 +368,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
 
     // Render details panel if showing
     if let Some(details) = &state.commit_details {
-        render_details_panel(frame, main_chunks[1], details, state.details_scroll_offset);
+        render_details_panel(frame, main_chunks[1], details, state.details_scroll_offset, &state.search_term);
     }
 
     // Render search bar with right-aligned match counter
@@ -611,13 +619,20 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         // Define columns: each column is a vec of (key, description) pairs
         // New section = new column. Items flow top-to-bottom within column.
 
-        // First column: quit/cancel actions
+        // First column: quit/cancel/back actions
         // In typing mode: q quit (greyed), ^c/esc cancel (active)
+        // In details mode: all show "back"
         // In browse mode: q clears search, ^c/esc quit
         // In normal mode: all three quit
         // First column has per-item active state (key, desc, is_active)
         let first_column: Vec<(&str, &str, bool)> = if in_typing_mode {
             vec![("q", "quit", false), ("^c", "cancel", true), ("esc", "cancel", true)]
+        } else if show_details {
+            if !state.search_term.is_empty() {
+                vec![("q", "back", true), ("^c", "back", true), ("esc", "clear search", true)]
+            } else {
+                vec![("q", "back", true), ("^c", "back", true), ("esc", "back", true)]
+            }
         } else if !state.search_term.is_empty() {
             vec![("q", "clear search", true), ("^c", "quit", true), ("esc", "quit", true)]
         } else {
@@ -636,7 +651,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                 ("j/k", "↑/↓", true),
                 ("g", "top", true),
                 ("G", "bottom", true),
-                ("h", "goto head", !is_on_head),
+                ("h", if show_details { "back" } else { "goto head" }, if show_details { true } else { !is_on_head }),
             ],
             // Navigation continued
             vec![("^d", "½ page ↓", true), ("^u", "½ page ↑", true)],
@@ -730,7 +745,9 @@ fn render_details_panel(
     area: ratatui::layout::Rect,
     details: &CommitDetails,
     scroll_offset: usize,
+    search_term: &str,
 ) {
+    let highlight_style = Style::default().bg(Color::Yellow).fg(Color::Black);
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(Color::DarkGray));
@@ -797,8 +814,8 @@ fn render_details_panel(
             Span::styled(" ", Style::default()),
             Span::styled(file.status.to_string(), Style::default().fg(status_color)),
             Span::styled(" ", Style::default()),
-            Span::styled(&file.path, Style::default()),
         ];
+        spans.extend(highlight_matches(&file.path, search_term, Style::default(), highlight_style));
 
         // Add +/- counts if available
         if file.additions > 0 || file.deletions > 0 {
@@ -849,13 +866,14 @@ fn render_details_panel(
                 header_text: header_text.clone(),
             });
 
-            // File separator
-            lines.push(Line::from(vec![Span::styled(
-                header_text,
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD),
-            )]));
+            // File separator with search highlighting on the path
+            let header_style = Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD);
+            let mut header_spans = vec![Span::styled("─── ", header_style)];
+            header_spans.extend(highlight_matches(&file.path, search_term, header_style, highlight_style));
+            header_spans.push(Span::styled(" ───", header_style));
+            lines.push(Line::from(header_spans));
 
             let ext = Highlighter::extension_from_path(&file.path);
 
@@ -910,12 +928,19 @@ fn render_details_panel(
                     // Calculate total content length
                     let total_len: usize = highlighted.iter().map(|(_, t)| t.chars().count()).sum();
 
+                    // Check if this line contains a search match
+                    let line_text: String = highlighted.iter().map(|(_, t)| t.as_str()).collect();
+                    let has_match = !search_term.is_empty() && line_text.to_lowercase().contains(&search_term.to_lowercase());
+
                     if content_width == 0 || total_len <= content_width {
                         // Content fits on one line
                         let mut spans = vec![Span::styled(prefix, prefix_style)];
                         for (style, text) in highlighted {
                             let mut ratatui_style = syntect_to_ratatui_style(style);
-                            if let Some(bg) = line_bg {
+                            if has_match && text.to_lowercase().contains(&search_term.to_lowercase()) {
+                                // Highlight matching spans
+                                ratatui_style = highlight_style;
+                            } else if let Some(bg) = line_bg {
                                 ratatui_style = ratatui_style.bg(bg);
                             }
                             spans.push(Span::styled(text.clone(), ratatui_style));
@@ -929,7 +954,9 @@ fn render_details_panel(
 
                         for (style, text) in highlighted {
                             let mut ratatui_style = syntect_to_ratatui_style(style);
-                            if let Some(bg) = line_bg {
+                            if has_match && text.to_lowercase().contains(&search_term.to_lowercase()) {
+                                ratatui_style = highlight_style;
+                            } else if let Some(bg) = line_bg {
                                 ratatui_style = ratatui_style.bg(bg);
                             }
 

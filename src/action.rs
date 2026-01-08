@@ -140,7 +140,13 @@ impl Action {
         match self {
             Action::Esc | Action::CtrlC | Action::CharQ => {
                 if state.commit_details.is_some() {
-                    state.commit_details = None;
+                    // In details mode: clear search first, then close details
+                    if !state.search_term.is_empty() {
+                        state.search_term.clear();
+                    } else {
+                        state.commit_details = None;
+                        state.details_scroll_offset = 0;
+                    }
                 } else if !state.jump_distance_string.is_empty() {
                     state.jump_distance_string.clear();
                 } else if state.search_term.is_empty() {
@@ -167,12 +173,20 @@ impl Action {
             }
             Action::CharN => {
                 if !state.search_term.is_empty() {
-                    find_next_match(state, repo);
+                    if state.commit_details.is_some() {
+                        find_next_match_in_details(state, repo);
+                    } else {
+                        find_next_match(state, repo);
+                    }
                 }
             }
             Action::ShiftN => {
                 if !state.search_term.is_empty() {
-                    find_previous_match(state, repo);
+                    if state.commit_details.is_some() {
+                        find_previous_match_in_details(state, repo);
+                    } else {
+                        find_previous_match(state, repo);
+                    }
                 }
             }
             Action::CharJ | Action::Down => {
@@ -234,6 +248,8 @@ impl Action {
                 if state.commit_details.is_some() {
                     // Close details panel (go "left")
                     state.commit_details = None;
+                    state.details_scroll_offset = 0;
+                    state.search_term.clear();
                 } else {
                     // Go to HEAD commit
                     let head_sha = repo.head_sha();
@@ -618,6 +634,100 @@ fn find_previous_match(state: &mut State, repo: &Repo) {
         // Wrap around to end
         state.index_of_selected_row = idx;
     }
+}
+
+fn find_next_match_in_details(state: &mut State, repo: &Repo) {
+    let match_lines = compute_details_match_lines(state, repo);
+    if match_lines.is_empty() {
+        return;
+    }
+
+    // Find next match after current scroll position
+    let current = state.details_scroll_offset;
+    if let Some(&line) = match_lines.iter().find(|&&l| l > current) {
+        state.details_scroll_offset = line;
+    } else {
+        // Wrap to first match
+        state.details_scroll_offset = match_lines[0];
+    }
+}
+
+fn find_previous_match_in_details(state: &mut State, repo: &Repo) {
+    let match_lines = compute_details_match_lines(state, repo);
+    if match_lines.is_empty() {
+        return;
+    }
+
+    // Find previous match before current scroll position
+    let current = state.details_scroll_offset;
+    if let Some(&line) = match_lines.iter().rev().find(|&&l| l < current) {
+        state.details_scroll_offset = line;
+    } else {
+        // Wrap to last match
+        state.details_scroll_offset = *match_lines.last().unwrap();
+    }
+}
+
+/// Compute which line indices in the details view contain search matches
+fn compute_details_match_lines(state: &State, _repo: &Repo) -> Vec<usize> {
+    let Some(details) = &state.commit_details else {
+        return vec![];
+    };
+    if state.search_term.is_empty() {
+        return vec![];
+    }
+
+    let search_lower = state.search_term.to_lowercase();
+    let mut match_lines = Vec::new();
+    let mut line_idx = 0;
+
+    // Skip header lines (commit, author, date, blank, message lines, blank, files header)
+    line_idx += 4; // commit, author, date, blank
+    line_idx += details.message.lines().count();
+    line_idx += 2; // blank, files header
+
+    // File list
+    for file in &details.files {
+        if file.path.to_lowercase().contains(&search_lower) {
+            match_lines.push(line_idx);
+        }
+        line_idx += 1;
+    }
+
+    // Blank line before diffs
+    line_idx += 1;
+
+    // Diff content
+    for file in &details.files {
+        if file.hunks.is_empty() {
+            continue;
+        }
+
+        // File separator
+        if file.path.to_lowercase().contains(&search_lower) {
+            match_lines.push(line_idx);
+        }
+        line_idx += 1;
+
+        for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
+            // Blank line between hunks
+            if hunk_idx > 0 {
+                line_idx += 1;
+            }
+
+            for diff_line in &hunk.lines {
+                if diff_line.content.to_lowercase().contains(&search_lower) {
+                    match_lines.push(line_idx);
+                }
+                line_idx += 1;
+            }
+        }
+
+        // Blank line after file
+        line_idx += 1;
+    }
+
+    match_lines
 }
 
 fn copy_sha_to_clipboard(state: &mut State, repo: &Repo) {
