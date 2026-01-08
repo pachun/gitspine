@@ -123,16 +123,15 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         1
     };
 
-    // Split main area horizontally if showing details
-    // Left side just has graph, so give more room to details
+    // Split main area vertically if showing details (commits on top, diff below)
     let main_chunks = if show_details {
         Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length((graph_width + 2) as u16), Constraint::Fill(1)])
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Fill(1)])
             .split(chunks[0])
     } else {
         Layout::default()
-            .direction(Direction::Horizontal)
+            .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(100)])
             .split(chunks[0])
     };
@@ -190,153 +189,118 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                 .collect();
 
             // Build message cell with branch indicators and highlighting
-            // (only when not showing details panel)
-            let message_spans: Vec<Span> = if show_details {
-                Vec::new()
-            } else {
-                let mut spans: Vec<Span> = Vec::new();
+            let mut message_spans: Vec<Span> = Vec::new();
 
-                // Add branch indicators if any branches point to this commit
-                let is_head_commit = c.sha == head_sha;
-                let commit_branches = branches_at_commit_map.get(&c.sha);
+            // Add branch indicators if any branches point to this commit
+            let is_head_commit = c.sha == head_sha;
+            let commit_branches = branches_at_commit_map.get(&c.sha);
 
-                if is_head_commit || commit_branches.is_some() {
-                    // Find this commit's lane color from the graph (where ● is)
-                    let commit_lane = g
-                        .iter()
-                        .find(|(ch, _)| *ch == '●')
-                        .and_then(|(_, lane)| *lane)
-                        .unwrap_or(0);
+            if is_head_commit || commit_branches.is_some() {
+                // Find this commit's lane color from the graph (where ● is)
+                let commit_lane = g
+                    .iter()
+                    .find(|(ch, _)| *ch == '●')
+                    .and_then(|(_, lane)| *lane)
+                    .unwrap_or(0);
 
-                    spans.push(Span::styled("(", Style::default().fg(Color::Yellow).bold()));
+                message_spans.push(Span::styled("(", Style::default().fg(Color::Yellow).bold()));
 
-                    let mut first = true;
+                let mut first = true;
 
-                    // Show HEAD first if this is the head commit
-                    if is_head_commit {
-                        if let Some(head_branch) = head_branch_name {
-                            // HEAD points to a branch: "HEAD → branch_name"
-                            spans.extend(highlight_matches(
-                                "HEAD",
-                                &state.search_term,
-                                Style::default().fg(Color::Cyan).bold(),
-                                highlight_style,
-                            ));
-                            spans.push(Span::styled(
-                                " → ",
-                                Style::default().fg(Color::Yellow).bold(),
-                            ));
-                            let branch_color = lane_colors[commit_lane % lane_colors.len()];
-                            spans.extend(highlight_matches(
-                                &head_branch.0,
-                                &state.search_term,
-                                Style::default().fg(branch_color).bold(),
-                                highlight_style,
-                            ));
-                        } else {
-                            // Detached HEAD
-                            spans.extend(highlight_matches(
-                                "HEAD",
-                                &state.search_term,
-                                Style::default().fg(Color::Cyan).bold(),
-                                highlight_style,
-                            ));
-                        }
-                        first = false;
+                // Show HEAD first if this is the head commit
+                if is_head_commit {
+                    if let Some(head_branch) = head_branch_name {
+                        // HEAD points to a branch: "HEAD → branch_name"
+                        message_spans.extend(highlight_matches(
+                            "HEAD",
+                            &state.search_term,
+                            Style::default().fg(Color::Cyan).bold(),
+                            highlight_style,
+                        ));
+                        message_spans.push(Span::styled(
+                            " → ",
+                            Style::default().fg(Color::Yellow).bold(),
+                        ));
+                        let branch_color = lane_colors[commit_lane % lane_colors.len()];
+                        message_spans.extend(highlight_matches(
+                            &head_branch.0,
+                            &state.search_term,
+                            Style::default().fg(branch_color).bold(),
+                            highlight_style,
+                        ));
+                    } else {
+                        // Detached HEAD
+                        message_spans.extend(highlight_matches(
+                            "HEAD",
+                            &state.search_term,
+                            Style::default().fg(Color::Cyan).bold(),
+                            highlight_style,
+                        ));
                     }
-
-                    // Show other branches (not the HEAD branch)
-                    if let Some(branch_list) = commit_branches {
-                        for branch_name in branch_list {
-                            // Skip the HEAD branch, we already showed it above
-                            if head_branch_name == Some(branch_name) {
-                                continue;
-                            }
-                            if !first {
-                                spans.push(Span::styled(
-                                    ", ",
-                                    Style::default().fg(Color::Yellow).bold(),
-                                ));
-                            }
-                            let branch_color = lane_colors[commit_lane % lane_colors.len()];
-                            spans.extend(highlight_matches(
-                                &branch_name.0,
-                                &state.search_term,
-                                Style::default().fg(branch_color).bold(),
-                                highlight_style,
-                            ));
-                            first = false;
-                        }
-                    }
-
-                    spans.push(Span::styled(
-                        ") ",
-                        Style::default().fg(Color::Yellow).bold(),
-                    ));
+                    first = false;
                 }
 
-                spans.extend(highlight_matches(
-                    &c.message,
-                    &state.search_term,
-                    Style::default(),
-                    highlight_style,
+                // Show other branches (not the HEAD branch)
+                if let Some(branch_list) = commit_branches {
+                    for branch_name in branch_list {
+                        // Skip the HEAD branch, we already showed it above
+                        if head_branch_name == Some(branch_name) {
+                            continue;
+                        }
+                        if !first {
+                            message_spans.push(Span::styled(
+                                ", ",
+                                Style::default().fg(Color::Yellow).bold(),
+                            ));
+                        }
+                        let branch_color = lane_colors[commit_lane % lane_colors.len()];
+                        message_spans.extend(highlight_matches(
+                            &branch_name.0,
+                            &state.search_term,
+                            Style::default().fg(branch_color).bold(),
+                            highlight_style,
+                        ));
+                        first = false;
+                    }
+                }
+
+                message_spans.push(Span::styled(
+                    ") ",
+                    Style::default().fg(Color::Yellow).bold(),
                 ));
-                spans
-            };
+            }
+
+            message_spans.extend(highlight_matches(
+                &c.message,
+                &state.search_term,
+                Style::default(),
+                highlight_style,
+            ));
 
             // Derive display values from raw data
             let date = format_date(c.timestamp);
             let time = format_time(c.timestamp);
             let short_sha = c.sha.to_string()[..7].to_string();
 
-            // Build row cells - when showing details, only show graph (no line numbers)
-            let cells: Vec<Cell> = if show_details {
-                vec![
-                    Cell::from(""), // Left padding
-                    Cell::from(Line::from(graph_spans)),
-                    Cell::from(""), // Right padding
-                ]
-            } else {
-                vec![
-                    Cell::from(""),                                     // Left padding
-                    Cell::from(Span::styled(line_num, line_num_style)), // Line number gutter
-                    Cell::from(Line::from(graph_spans)),
-                    Cell::from(Line::from(message_spans)),
-                    Cell::from(Line::from(highlight_matches(
-                        &date,
-                        &state.search_term,
-                        if i == state.index_of_selected_row {
-                            Style::default().bold()
-                        } else {
-                            Style::default().fg(Color::Gray)
-                        },
-                        highlight_style,
-                    ))),
-                    Cell::from(
-                        Line::from(highlight_matches(
-                            &time,
-                            &state.search_term,
-                            if i == state.index_of_selected_row {
-                                Style::default().fg(Color::Gray)
-                            } else {
-                                Style::default().fg(Color::DarkGray)
-                            },
-                            highlight_style,
-                        ))
-                        .alignment(ratatui::layout::Alignment::Right),
-                    ),
-                    Cell::from(Line::from(highlight_matches(
-                        &c.author,
-                        &state.search_term,
-                        if i == state.index_of_selected_row {
-                            Style::default().bold()
-                        } else {
-                            Style::default().fg(Color::Gray)
-                        },
-                        highlight_style,
-                    ))),
-                    Cell::from(Line::from(highlight_matches(
-                        &short_sha,
+            // Build row cells - always show full rows
+            let cells: Vec<Cell> = vec![
+                Cell::from(""),                                     // Left padding
+                Cell::from(Span::styled(line_num, line_num_style)), // Line number gutter
+                Cell::from(Line::from(graph_spans)),
+                Cell::from(Line::from(message_spans)),
+                Cell::from(Line::from(highlight_matches(
+                    &date,
+                    &state.search_term,
+                    if i == state.index_of_selected_row {
+                        Style::default().bold()
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    },
+                    highlight_style,
+                ))),
+                Cell::from(
+                    Line::from(highlight_matches(
+                        &time,
                         &state.search_term,
                         if i == state.index_of_selected_row {
                             Style::default().fg(Color::Gray)
@@ -344,10 +308,31 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                             Style::default().fg(Color::DarkGray)
                         },
                         highlight_style,
-                    ))),
-                    Cell::from(""), // Right padding
-                ]
-            };
+                    ))
+                    .alignment(ratatui::layout::Alignment::Right),
+                ),
+                Cell::from(Line::from(highlight_matches(
+                    &c.author,
+                    &state.search_term,
+                    if i == state.index_of_selected_row {
+                        Style::default().bold()
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    },
+                    highlight_style,
+                ))),
+                Cell::from(Line::from(highlight_matches(
+                    &short_sha,
+                    &state.search_term,
+                    if i == state.index_of_selected_row {
+                        Style::default().fg(Color::Gray)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    },
+                    highlight_style,
+                ))),
+                Cell::from(""), // Right padding
+            ];
             let row = Row::new(cells);
             if i == state.index_of_selected_row {
                 row.style(Style::default().bg(Color::DarkGray))
@@ -357,26 +342,18 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         })
         .collect();
 
-    // Build widths - when showing details, only graph column (no line numbers)
-    let widths: Vec<Constraint> = if show_details {
-        vec![
-            Constraint::Length(0), // left padding
-            Constraint::Fill(1),   // graph takes remaining space
-            Constraint::Length(0), // right padding
-        ]
-    } else {
-        vec![
-            Constraint::Length(0), // left padding
-            Constraint::Length(gutter_width as u16), // line number gutter
-            Constraint::Length(graph_width as u16),
-            Constraint::Fill(1),                     // message takes remaining space
-            Constraint::Length(12),                  // date
-            Constraint::Length(8),                   // time
-            Constraint::Length(author_width as u16), // author
-            Constraint::Length(7),                   // sha
-            Constraint::Length(0), // right padding
-        ]
-    };
+    // Build widths - always use full columns
+    let widths: Vec<Constraint> = vec![
+        Constraint::Length(0), // left padding
+        Constraint::Length(gutter_width as u16), // line number gutter
+        Constraint::Length(graph_width as u16),
+        Constraint::Fill(1),                     // message takes remaining space
+        Constraint::Length(12),                  // date
+        Constraint::Length(8),                   // time
+        Constraint::Length(author_width as u16), // author
+        Constraint::Length(7),                   // sha
+        Constraint::Length(0), // right padding
+    ];
 
     let table = Table::new(rows, widths).column_spacing(1);
     frame.render_widget(table, table_area);
@@ -755,7 +732,7 @@ fn render_details_panel(
     scroll_offset: usize,
 ) {
     let block = Block::default()
-        .borders(Borders::LEFT)
+        .borders(Borders::TOP)
         .border_style(Style::default().fg(Color::DarkGray));
     let inner = block.inner(area);
     frame.render_widget(block, area);
