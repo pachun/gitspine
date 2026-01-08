@@ -14,6 +14,7 @@ pub enum Action {
     Esc,
     CtrlC,
     Enter,
+    Space,
     Tab,
     Up,
     Down,
@@ -131,6 +132,9 @@ impl Action {
             }
             Action::Char(c) => {
                 type_search_character(state, *c);
+            }
+            Action::Space => {
+                type_search_character(state, ' ');
             }
             Action::Tab | Action::CtrlD | Action::CtrlU | Action::None => {}
         }
@@ -277,7 +281,7 @@ impl Action {
                     }
                 }
             }
-            Action::CharL => {
+            Action::CharL | Action::Enter | Action::Space => {
                 state.jump_distance_string.clear();
                 // Open details panel (go "right")
                 let sha = repo.commits[state.index_of_selected_row].sha;
@@ -348,7 +352,7 @@ impl Action {
                 state.jump_distance_string.clear();
                 state.is_showing_help_panel = !state.is_showing_help_panel;
             }
-            Action::Tab | Action::Enter | Action::Char(_) | Action::None => {}
+            Action::Tab | Action::Char(_) | Action::None => {}
         }
         false
     }
@@ -423,6 +427,9 @@ impl Action {
             }
             Action::Digit(c) | Action::Char(c) => {
                 state.branch_name.push(*c);
+            }
+            Action::Space => {
+                state.branch_name.push(' ');
             }
             Action::Tab | Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::None => {}
         }
@@ -533,6 +540,11 @@ impl Action {
                 state.tab_complete_base = None;
                 state.tab_complete_index = 0;
                 state.delete_branch_name.push(*c);
+            }
+            Action::Space => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+                state.delete_branch_name.push(' ');
             }
             Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::None => {}
         }
