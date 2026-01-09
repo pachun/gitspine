@@ -1017,7 +1017,7 @@ fn compute_details_content_height(state: &State) -> usize {
     // Blank line before files section
     line_count += 1;
 
-    // Changes summary header (top padding, content, bottom padding)
+    // Changes summary header
     line_count += SUMMARY_HEADER_HEIGHT;
 
     // File tree - count all nodes (files + directories)
@@ -1032,7 +1032,7 @@ fn compute_details_content_height(state: &State) -> usize {
             continue;
         }
 
-        // File header (top padding, filename, bottom padding)
+        // File header
         line_count += FILE_HEADER_HEIGHT;
 
         for (hunk_idx, hunk) in file.hunks.iter().enumerate() {

@@ -9,8 +9,8 @@ use crate::state::State;
 // Layout constants
 pub const HELP_PANEL_HEIGHT: u16 = 4;
 pub const DETAILS_COMMIT_LIST_HEIGHT: u16 = 5;
-pub const FILE_HEADER_HEIGHT: usize = 3;
-pub const SUMMARY_HEADER_HEIGHT: usize = 3;
+pub const FILE_HEADER_HEIGHT: usize = 1;
+pub const SUMMARY_HEADER_HEIGHT: usize = 1;
 pub const DETAILS_HEADER_LINES: usize = 3;
 
 pub fn git_graph_height(state: &State, terminal: &Terminal<CrosstermBackend<Stdout>>) -> usize {

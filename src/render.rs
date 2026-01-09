@@ -838,7 +838,7 @@ fn render_details_panel(
     let selected_match_style = Style::default().bg(Color::Cyan).fg(Color::Black);
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(Style::default().fg(Color::White));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -897,34 +897,16 @@ fn render_details_panel(
     // Add blank line before files
     lines.push(Line::from(""));
 
-    // Add changes summary header (3 lines tall)
+    // Add changes summary header
     let total_additions: usize = details.files.iter().map(|f| f.additions).sum();
     let total_deletions: usize = details.files.iter().map(|f| f.deletions).sum();
     let file_count = details.files.len();
     let files_word = if file_count == 1 { "file" } else { "files" };
 
     let bg_color = Color::DarkGray;
-    let bg_style = Style::default().bg(bg_color);
 
-    // Build the content to calculate width
-    let mut content = format!("{} {} changed  ", file_count, files_word);
-    if total_additions > 0 {
-        content.push_str(&format!("+{}", total_additions));
-    }
-    if total_deletions > 0 {
-        if total_additions > 0 {
-            content.push(' ');
-        }
-        content.push_str(&format!("-{}", total_deletions));
-    }
-    let header_width = content.len() + 6; // 3 spaces padding on each side
-
-    // Top padding line
-    lines.push(Line::from(Span::styled(" ".repeat(header_width), bg_style)));
-
-    // Middle line with content
+    // Single line header, left-aligned
     let mut summary_spans = vec![
-        Span::styled("   ", bg_style),
         Span::styled(
             format!("{} {} changed  ", file_count, files_word),
             Style::default().fg(Color::White).bg(bg_color).add_modifier(Modifier::BOLD),
@@ -938,18 +920,14 @@ fn render_details_panel(
     }
     if total_deletions > 0 {
         if total_additions > 0 {
-            summary_spans.push(Span::styled(" ", bg_style));
+            summary_spans.push(Span::styled(" ", Style::default().bg(bg_color)));
         }
         summary_spans.push(Span::styled(
             format!("-{}", total_deletions),
             Style::default().fg(Color::Red).bg(bg_color).add_modifier(Modifier::BOLD),
         ));
     }
-    summary_spans.push(Span::styled("   ", bg_style));
     lines.push(Line::from(summary_spans));
-
-    // Bottom padding line
-    lines.push(Line::from(Span::styled(" ".repeat(header_width), bg_style)));
 
     // Build and render file tree
     let file_tree = build_file_tree(&details.files);
@@ -977,27 +955,12 @@ fn render_details_panel(
             header_text: file.path.clone(),
         });
 
-        // File header - 3-line solid background bar
+        // File header - single line, left-aligned
         let bg_color = Color::DarkGray;
         let filename_style = Style::default().fg(Color::White).bg(bg_color).add_modifier(Modifier::BOLD);
-        let bg_style = Style::default().bg(bg_color);
-        let width = inner.width as usize;
 
-        // Top padding line
-        lines.push(Line::from(Span::styled(" ".repeat(width), bg_style)));
-
-        // Middle line with filename (centered)
-        let filename_len = file.path.chars().count();
-        let total_padding = width.saturating_sub(filename_len);
-        let left_padding = total_padding / 2;
-        let right_padding = total_padding - left_padding;
-        let mut header_spans = vec![Span::styled(" ".repeat(left_padding), bg_style)];
-        header_spans.extend(highlight_matches(&file.path, search_term, filename_style, highlight_style));
-        header_spans.push(Span::styled(" ".repeat(right_padding), bg_style));
+        let header_spans = highlight_matches(&file.path, search_term, filename_style, highlight_style);
         lines.push(Line::from(header_spans));
-
-        // Bottom padding line
-        lines.push(Line::from(Span::styled(" ".repeat(width), bg_style)));
 
         // Get cached highlighted lines for this file (empty vec if no cache)
         let cached_lines = highlight_cache
@@ -1159,35 +1122,13 @@ fn render_details_panel(
     // Apply scroll offset and handle sticky header
     // Also apply selected match styling if the selected line is visible
     let visible_lines: Vec<Line> = if let Some(section) = sticky_header {
-        // Build sticky bar with variable height (shrinks as next header approaches)
+        // Build sticky header - single line, left-aligned
         let bg_color = Color::DarkGray;
         let filename_style = Style::default().fg(Color::White).bg(bg_color).add_modifier(Modifier::BOLD);
-        let bg_style = Style::default().bg(bg_color);
-        let width = inner.width as usize;
 
-        let filename_len = section.header_text.chars().count();
-        let total_padding = width.saturating_sub(filename_len);
-        let left_padding = total_padding / 2;
-        let right_padding = total_padding - left_padding;
-
-        // Build sticky lines - shrink from bottom up
-        // 3 lines: [top_pad, filename, bottom_pad]
-        // 2 lines: [top_pad, filename]
-        // 1 line:  [top_pad]
-        let mut sticky_lines: Vec<Line> = Vec::new();
-        if sticky_height >= 1 {
-            sticky_lines.push(Line::from(Span::styled(" ".repeat(width), bg_style)));
-        }
-        if sticky_height >= 2 {
-            sticky_lines.push(Line::from(vec![
-                Span::styled(" ".repeat(left_padding), bg_style),
-                Span::styled(section.header_text.clone(), filename_style),
-                Span::styled(" ".repeat(right_padding), bg_style),
-            ]));
-        }
-        if sticky_height >= FILE_HEADER_HEIGHT {
-            sticky_lines.push(Line::from(Span::styled(" ".repeat(width), bg_style)));
-        }
+        let sticky_lines: Vec<Line> = vec![
+            Line::from(Span::styled(section.header_text.clone(), filename_style))
+        ];
 
         // Calculate content start - when next header is approaching, show it intact
         let content_start = if let Some(idx) = current_section_idx {
