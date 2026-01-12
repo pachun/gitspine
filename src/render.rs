@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use ratatui::Frame;
 
 use crate::action::compute_details_match_lines;
+use crate::license::{self, LicenseData};
 use crate::repo::{BranchName, CommitDetails, Repo, Sha, WorktreeFile, FileStatus};
 use crate::state::{CommitViewPanel, CommitViewState, State};
 use crate::utils::{format_date, format_time, has_mixed_case};
@@ -76,7 +77,7 @@ fn highlight_matches(
     spans
 }
 
-pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
+pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseData) {
     // If commit view is active, render that instead
     if let Some(commit_view) = &state.commit_view {
         render_commit_view(frame, commit_view, state);
@@ -826,6 +827,25 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             }
             x_offset += col_width + col_spacing;
         }
+
+        // License status in bottom right
+        let (status_text, is_licensed) = license::status_line(license);
+        let status_style = if is_licensed {
+            Style::default().fg(Color::Green)
+        } else {
+            Style::default().fg(Color::Yellow)
+        };
+        let status_len = status_text.chars().count() as u16;
+        let status_x = help_inner.x + help_inner.width.saturating_sub(status_len);
+        let status_y = help_inner.y + help_inner.height.saturating_sub(1);
+        let status_area = ratatui::layout::Rect {
+            x: status_x,
+            y: status_y,
+            width: status_len,
+            height: 1,
+        };
+        let status_widget = Paragraph::new(Span::styled(status_text, status_style));
+        frame.render_widget(status_widget, status_area);
     }
 }
 
