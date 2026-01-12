@@ -40,6 +40,7 @@ pub enum Action {
     CtrlU,
     ShiftS,
     ShiftU,
+    ShiftL,
     Digit(char),
     Char(char), // For characters without special normal-mode behavior
     None,
@@ -301,7 +302,7 @@ impl Action {
     fn execute_typing_mode(
         &self,
         state: &mut State,
-        repo: &mut Repo,
+        repo: &Repo,
         _terminal: &Terminal<CrosstermBackend<Stdout>>,
     ) -> bool {
         match self {
@@ -375,7 +376,7 @@ impl Action {
             Action::Space => {
                 type_search_character(state, ' ');
             }
-            Action::Tab | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
+            Action::Tab | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::ShiftL | Action::None => {}
         }
         false // typing mode never quits
     }
@@ -539,6 +540,16 @@ impl Action {
             Action::CharO => {
                 state.jump_distance_string.clear();
                 open_in_browser(state, repo);
+            }
+            Action::ShiftL => {
+                state.jump_distance_string.clear();
+                // Open purchase page
+                let url = "https://castlelabs.lemonsqueezy.com/checkout/buy/bae436c6-4d94-4630-987b-77e51bae2e43";
+                let _ = open::that(url);
+                state.flash_message = Some(FlashMessage {
+                    message: "opening checkout - use --activate <KEY> after purchase".to_string(),
+                    shown_at: Instant::now(),
+                });
             }
             Action::CharB => {
                 state.jump_distance_string.clear();
@@ -743,7 +754,7 @@ impl Action {
             Action::Space => {
                 state.branch_name.push(' ');
             }
-            Action::Tab | Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
+            Action::Tab | Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::ShiftL | Action::None => {}
         }
     }
 
@@ -860,7 +871,7 @@ impl Action {
                 state.tab_complete_index = 0;
                 state.delete_branch_name.push(' ');
             }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::ShiftL | Action::None => {}
         }
     }
 
@@ -995,7 +1006,7 @@ impl Action {
                 state.tab_complete_index = 0;
                 state.checkout_branch_name.push(' ');
             }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::ShiftL | Action::None => {}
         }
     }
 }
@@ -1025,7 +1036,7 @@ fn cancel_search(state: &mut State) {
     }
 }
 
-fn confirm_search(state: &mut State, repo: &mut Repo) {
+fn confirm_search(state: &mut State, repo: &Repo) {
     state.is_typing_search_term = false;
     state.index_of_search_term_history_being_viewed = None;
 
@@ -1046,19 +1057,6 @@ fn confirm_search(state: &mut State, repo: &mut Repo) {
             if state.search_term_history.last() != Some(&state.search_term) {
                 state.search_term_history.push(state.search_term.clone());
             }
-        } else if repo.has_more_commits {
-            // No matches in loaded commits, search full history
-            if let Some(sha) = repo.search_full_history(&state.search_term) {
-                // Found a match - load all commits with flat graph and jump to it
-                if let Some(idx) = repo.load_all_flat(sha) {
-                    state.index_of_selected_row = idx;
-                    if state.search_term_history.last() != Some(&state.search_term) {
-                        state.search_term_history.push(state.search_term.clone());
-                    }
-                }
-            }
-            // Always clear search term after full-history search (can recall with ↑)
-            state.search_term.clear();
         } else {
             state.search_term.clear();
         }

@@ -1,6 +1,7 @@
 mod action;
 mod commit_graph;
 mod highlight;
+mod license;
 mod render;
 mod repo;
 mod state;
@@ -18,6 +19,7 @@ use ratatui::prelude::CrosstermBackend;
 use ratatui::Terminal;
 
 use action::Action;
+use license::LicenseData;
 use repo::{Repo, DEFAULT_COMMIT_LIMIT};
 use state::State;
 
@@ -78,7 +80,37 @@ fn initialize_terminal() -> Terminal<CrosstermBackend<Stdout>> {
 }
 
 fn main() {
+    // Load and initialize license
+    let mut license = LicenseData::load();
+    license.init_trial();
+
     let args: Vec<String> = std::env::args().collect();
+
+    // Handle --activate flag (before trial check so expired users can activate)
+    if args.len() >= 3 && args[1] == "--activate" {
+        match license.validate_license(&args[2]) {
+            Ok(()) => {
+                println!("License activated successfully!");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("Failed to activate license: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    license.maybe_revalidate();
+
+    // Check if user can use the app
+    if !license.can_use() {
+        eprintln!("Your trial has expired. Purchase a license at:");
+        eprintln!("https://castlelabs.lemonsqueezy.com/checkout/buy/bae436c6-4d94-4630-987b-77e51bae2e43");
+        eprintln!();
+        eprintln!("Then run: gg --activate <LICENSE_KEY>");
+        std::process::exit(1);
+    }
+
     let (path_to_repo, commit_limit) = parse_args(&args);
     let mut repo = Repo::open_with_limit(&path_to_repo, commit_limit);
     let mut terminal = initialize_terminal();
@@ -91,7 +123,7 @@ fn main() {
     // Initial render
     terminal
         .draw(|frame| {
-            render::render(frame, &state, &repo);
+            render::render(frame, &state, &repo, &license);
         })
         .unwrap();
 
@@ -110,7 +142,7 @@ fn main() {
                 adjust_viewport_after_terminal_resize(&mut state, &terminal, repo.commits.len());
                 terminal
                     .draw(|frame| {
-                        render::render(frame, &state, &repo);
+                        render::render(frame, &state, &repo, &license);
                     })
                     .unwrap();
             }
@@ -142,6 +174,7 @@ fn main() {
                     (KeyCode::Char('G'), _) => Action::ShiftG,
                     (KeyCode::Char('S'), _) => Action::ShiftS,
                     (KeyCode::Char('U'), _) => Action::ShiftU,
+                    (KeyCode::Char('L'), _) => Action::ShiftL,
                     (KeyCode::Char('h'), _) => Action::CharH,
                     (KeyCode::Char('y'), _) => Action::CharY,
                     (KeyCode::Char('o'), _) => Action::CharO,
@@ -182,7 +215,7 @@ fn main() {
         adjust_viewport_after_terminal_resize(&mut state, &terminal, repo.commits.len());
         terminal
             .draw(|frame| {
-                render::render(frame, &state, &repo);
+                render::render(frame, &state, &repo, &license);
             })
             .unwrap();
     }
