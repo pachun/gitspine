@@ -395,7 +395,11 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
     };
     let browse_mode = !state.is_typing_search_term && !active_search_term.is_empty();
     let search_active = state.is_typing_search_term || browse_mode;
-    let border_color = if state.is_creating_branch {
+    let border_color = if state.is_rebase_in_progress {
+        Color::Yellow
+    } else if state.is_selecting_rebase_branch || state.is_entering_rebase_target {
+        Color::Magenta
+    } else if state.is_creating_branch {
         Color::Cyan
     } else if state.is_deleting_branch {
         Color::Red
@@ -478,6 +482,66 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
 
         let hint = Paragraph::new(Line::from(vec![Span::styled(
             "empty → detached   tab → complete   esc → cancel",
+            Style::default().fg(Color::DarkGray),
+        )]))
+        .alignment(ratatui::layout::Alignment::Right);
+        frame.render_widget(hint, search_inner);
+    } else if state.is_rebase_in_progress {
+        // Rebase in progress - waiting for conflict resolution
+        let message = Paragraph::new(Line::from(vec![
+            Span::styled(
+                "rebase in progress - resolve conflicts, then ",
+                Style::default().fg(Color::Yellow),
+            ),
+            Span::styled("Enter", Style::default().fg(Color::White).bold()),
+            Span::styled(" to continue or ", Style::default().fg(Color::Yellow)),
+            Span::styled("Esc", Style::default().fg(Color::White).bold()),
+            Span::styled(" to abort", Style::default().fg(Color::Yellow)),
+        ]));
+        frame.render_widget(message, search_inner);
+    } else if state.is_selecting_rebase_branch {
+        // Branch selection mode for rebase
+        let selected_sha = repo.commits[state.index_of_selected_row].sha;
+        let local_branches = repo.local_branches_at(selected_sha);
+        let branch_count = local_branches.len();
+
+        let rebase_input = Paragraph::new(Line::from(vec![
+            Span::styled("branch to rebase: ", Style::default().fg(Color::Magenta)),
+            Span::styled(&state.rebase_branch, Style::default().fg(Color::Magenta).bold()),
+            Span::styled(
+                format!(" ({}/{})", local_branches.iter().position(|b| *b == state.rebase_branch).map(|i| i + 1).unwrap_or(1), branch_count),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+        frame.render_widget(rebase_input, search_inner);
+
+        let hint = Paragraph::new(Line::from(vec![Span::styled(
+            "tab → cycle   enter → select   esc → cancel",
+            Style::default().fg(Color::DarkGray),
+        )]))
+        .alignment(ratatui::layout::Alignment::Right);
+        frame.render_widget(hint, search_inner);
+    } else if state.is_entering_rebase_target {
+        // Target input mode for rebase
+        let all_branches: Vec<String> = repo.branches.keys().map(|n| n.0.clone()).collect();
+        let preview = get_tab_preview(&state.rebase_target, &all_branches);
+
+        let mut spans = vec![
+            Span::styled(
+                format!("rebase {} onto: ", state.rebase_branch),
+                Style::default().fg(Color::Magenta),
+            ),
+            Span::styled(&state.rebase_target, Style::default().fg(Color::Magenta)),
+            Span::styled("█", Style::default().fg(Color::Magenta)),
+        ];
+        if let Some(preview_text) = preview {
+            spans.push(Span::styled(preview_text, Style::default().fg(Color::DarkGray)));
+        }
+        let rebase_input = Paragraph::new(Line::from(spans));
+        frame.render_widget(rebase_input, search_inner);
+
+        let hint = Paragraph::new(Line::from(vec![Span::styled(
+            "tab → complete   enter → rebase   esc → cancel",
             Style::default().fg(Color::DarkGray),
         )]))
         .alignment(ratatui::layout::Alignment::Right);

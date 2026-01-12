@@ -191,6 +191,10 @@ impl Repo {
         self.head.sha(&self.branches)
     }
 
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
     pub fn create_branch(&mut self, name: &str, sha: Sha) -> Result<(), String> {
         let git_repo = Repository::open(&self.path).map_err(|e| e.message().to_string())?;
         let commit = git_repo

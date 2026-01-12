@@ -182,6 +182,7 @@ fn main() {
                     (KeyCode::Char('b'), _) => Action::CharB,
                     (KeyCode::Char('c'), _) => Action::CharC,
                     (KeyCode::Char('d'), _) => Action::CharD,
+                    (KeyCode::Char('r'), _) => Action::CharR,
                     (KeyCode::Char(c), _) if c.is_ascii_digit() => Action::Digit(c),
                     (KeyCode::Char(c), _) => Action::Char(c),
                     _ => Action::None,

@@ -36,6 +36,7 @@ pub enum Action {
     CharB,
     CharC,
     CharD,
+    CharR,
     CtrlD,
     CtrlU,
     ShiftS,
@@ -66,6 +67,15 @@ impl Action {
             false
         } else if state.is_checking_out {
             self.execute_checkout_mode(state, repo);
+            false
+        } else if state.is_rebase_in_progress {
+            self.execute_rebase_in_progress_mode(state, repo);
+            false
+        } else if state.is_selecting_rebase_branch {
+            self.execute_rebase_branch_selection_mode(state, repo);
+            false
+        } else if state.is_entering_rebase_target {
+            self.execute_rebase_target_mode(state, repo);
             false
         } else {
             self.execute_normal_mode(state, repo, terminal)
@@ -346,7 +356,8 @@ impl Action {
             | Action::CharL
             | Action::CharB
             | Action::CharC
-            | Action::CharD => {
+            | Action::CharD
+            | Action::CharR => {
                 let c = match self {
                     Action::CharSlash => '/',
                     Action::CharQ => 'q',
@@ -363,6 +374,7 @@ impl Action {
                     Action::CharB => 'b',
                     Action::CharC => 'c',
                     Action::CharD => 'd',
+                    Action::CharR => 'r',
                     _ => unreachable!(),
                 };
                 type_search_character(state, c);
@@ -597,6 +609,32 @@ impl Action {
                     });
                 }
             }
+            Action::CharR => {
+                state.jump_distance_string.clear();
+                let selected_sha = repo.commits[state.index_of_selected_row].sha;
+                let branches = repo.local_branches_at(selected_sha);
+                if branches.is_empty() {
+                    state.flash_message = Some(FlashMessage {
+                        message: "no local branch to rebase".to_string(),
+                        shown_at: Instant::now(),
+                    });
+                } else if branches.len() == 1 {
+                    // Only one branch - skip selection, go straight to target input
+                    state.rebase_branch = branches[0].clone();
+                    state.is_entering_rebase_target = true;
+                    state.rebase_target.clear();
+                    state.tab_complete_base = None;
+                    state.tab_complete_index = 0;
+                    state.flash_message = None;
+                } else {
+                    // Multiple branches - need to select one first
+                    state.is_selecting_rebase_branch = true;
+                    state.rebase_branch = branches[0].clone(); // Start with first
+                    state.tab_complete_base = None;
+                    state.tab_complete_index = 0;
+                    state.flash_message = None;
+                }
+            }
             Action::CtrlD => {
                 state.jump_distance_string.clear();
                 let half_page = git_graph_height(state, terminal) / 2;
@@ -727,7 +765,8 @@ impl Action {
             | Action::CharL
             | Action::CharB
             | Action::CharC
-            | Action::CharD => {
+            | Action::CharD
+            | Action::CharR => {
                 let c = match self {
                     Action::CharSlash => '/',
                     Action::CharQ => 'q',
@@ -744,6 +783,7 @@ impl Action {
                     Action::CharB => 'b',
                     Action::CharC => 'c',
                     Action::CharD => 'd',
+                    Action::CharR => 'r',
                     _ => unreachable!(),
                 };
                 state.branch_name.push(c);
@@ -838,7 +878,8 @@ impl Action {
             | Action::CharL
             | Action::CharB
             | Action::CharC
-            | Action::CharD => {
+            | Action::CharD
+            | Action::CharR => {
                 state.tab_complete_base = None;
                 state.tab_complete_index = 0;
                 let c = match self {
@@ -857,6 +898,7 @@ impl Action {
                     Action::CharB => 'b',
                     Action::CharC => 'c',
                     Action::CharD => 'd',
+                    Action::CharR => 'r',
                     _ => unreachable!(),
                 };
                 state.delete_branch_name.push(c);
@@ -973,7 +1015,8 @@ impl Action {
             | Action::CharL
             | Action::CharB
             | Action::CharC
-            | Action::CharD => {
+            | Action::CharD
+            | Action::CharR => {
                 state.tab_complete_base = None;
                 state.tab_complete_index = 0;
                 let c = match self {
@@ -992,6 +1035,7 @@ impl Action {
                     Action::CharB => 'b',
                     Action::CharC => 'c',
                     Action::CharD => 'd',
+                    Action::CharR => 'r',
                     _ => unreachable!(),
                 };
                 state.checkout_branch_name.push(c);
@@ -1007,6 +1051,233 @@ impl Action {
                 state.checkout_branch_name.push(' ');
             }
             Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::ShiftL | Action::None => {}
+        }
+    }
+
+    fn execute_rebase_branch_selection_mode(&self, state: &mut State, repo: &Repo) {
+        let selected_sha = repo.commits[state.index_of_selected_row].sha;
+        let branches = repo.local_branches_at(selected_sha);
+
+        match self {
+            Action::Esc | Action::CtrlC => {
+                state.is_selecting_rebase_branch = false;
+                state.rebase_branch.clear();
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+            }
+            Action::Enter => {
+                // Move to target input mode
+                state.is_selecting_rebase_branch = false;
+                state.is_entering_rebase_target = true;
+                state.rebase_target.clear();
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+            }
+            Action::Tab => {
+                // Cycle through branches on this commit
+                if !branches.is_empty() {
+                    let current_idx = branches.iter().position(|b| *b == state.rebase_branch).unwrap_or(0);
+                    let next_idx = (current_idx + 1) % branches.len();
+                    state.rebase_branch = branches[next_idx].clone();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn execute_rebase_target_mode(&self, state: &mut State, repo: &mut Repo) {
+        match self {
+            Action::Esc | Action::CtrlC => {
+                state.is_entering_rebase_target = false;
+                state.rebase_branch.clear();
+                state.rebase_target.clear();
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+            }
+            Action::Enter => {
+                if !state.rebase_target.is_empty() {
+                    execute_rebase(state, repo);
+                }
+                if !state.is_rebase_in_progress {
+                    // Only clear if we're not waiting for conflict resolution
+                    state.is_entering_rebase_target = false;
+                    state.rebase_branch.clear();
+                    state.rebase_target.clear();
+                    state.tab_complete_base = None;
+                    state.tab_complete_index = 0;
+                }
+            }
+            Action::Tab => {
+                // Tab complete against all branches
+                let all_branches: Vec<String> = repo.branches.keys().map(|n| n.0.clone()).collect();
+                let (completed, new_base, new_index) = tab_complete_branch(
+                    &state.rebase_target,
+                    &all_branches,
+                    &state.tab_complete_base,
+                    state.tab_complete_index,
+                );
+                state.rebase_target = completed;
+                state.tab_complete_base = new_base;
+                state.tab_complete_index = new_index;
+            }
+            Action::Backspace => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+                if state.rebase_target.is_empty() {
+                    state.is_entering_rebase_target = false;
+                    state.rebase_branch.clear();
+                } else {
+                    state.rebase_target.pop();
+                }
+            }
+            Action::CharSlash
+            | Action::CharQ
+            | Action::CharN
+            | Action::ShiftN
+            | Action::CharJ
+            | Action::CharK
+            | Action::CharG
+            | Action::ShiftG
+            | Action::CharH
+            | Action::CharY
+            | Action::CharO
+            | Action::CharL
+            | Action::CharB
+            | Action::CharC
+            | Action::CharD
+            | Action::CharR => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+                let c = match self {
+                    Action::CharSlash => '/',
+                    Action::CharQ => 'q',
+                    Action::CharN => 'n',
+                    Action::ShiftN => 'N',
+                    Action::CharJ => 'j',
+                    Action::CharK => 'k',
+                    Action::CharG => 'g',
+                    Action::ShiftG => 'G',
+                    Action::CharH => 'h',
+                    Action::CharY => 'y',
+                    Action::CharO => 'o',
+                    Action::CharL => 'l',
+                    Action::CharB => 'b',
+                    Action::CharC => 'c',
+                    Action::CharD => 'd',
+                    Action::CharR => 'r',
+                    _ => unreachable!(),
+                };
+                state.rebase_target.push(c);
+            }
+            Action::Digit(c) | Action::Char(c) => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+                state.rebase_target.push(*c);
+            }
+            Action::Space => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+                state.rebase_target.push(' ');
+            }
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::ShiftL | Action::None => {}
+        }
+    }
+
+    fn execute_rebase_in_progress_mode(&self, state: &mut State, repo: &mut Repo) {
+        match self {
+            Action::Enter => {
+                // Try to continue rebase
+                let output = std::process::Command::new("git")
+                    .args(["rebase", "--continue"])
+                    .current_dir(repo.path())
+                    .output();
+
+                match output {
+                    Ok(result) if result.status.success() => {
+                        state.is_rebase_in_progress = false;
+                        state.is_entering_rebase_target = false;
+                        state.rebase_branch.clear();
+                        state.rebase_target.clear();
+                        state.flash_message = Some(FlashMessage {
+                            message: "rebase complete".to_string(),
+                            shown_at: Instant::now(),
+                        });
+                        repo.refresh();
+                    }
+                    Ok(_) => {
+                        // Still has conflicts or other issue
+                        state.flash_message = Some(FlashMessage {
+                            message: "conflicts remain - resolve and press Enter".to_string(),
+                            shown_at: Instant::now(),
+                        });
+                    }
+                    Err(e) => {
+                        state.flash_message = Some(FlashMessage {
+                            message: format!("rebase --continue failed: {}", e),
+                            shown_at: Instant::now(),
+                        });
+                    }
+                }
+            }
+            Action::Esc | Action::CtrlC => {
+                // Abort rebase
+                let _ = std::process::Command::new("git")
+                    .args(["rebase", "--abort"])
+                    .current_dir(repo.path())
+                    .output();
+
+                state.is_rebase_in_progress = false;
+                state.is_entering_rebase_target = false;
+                state.rebase_branch.clear();
+                state.rebase_target.clear();
+                state.flash_message = Some(FlashMessage {
+                    message: "rebase aborted".to_string(),
+                    shown_at: Instant::now(),
+                });
+                repo.refresh();
+            }
+            _ => {}
+        }
+    }
+}
+
+fn execute_rebase(state: &mut State, repo: &mut Repo) {
+    // Use git CLI for rebase
+    let output = std::process::Command::new("git")
+        .args(["rebase", &state.rebase_target, &state.rebase_branch])
+        .current_dir(repo.path())
+        .output();
+
+    match output {
+        Ok(result) if result.status.success() => {
+            state.flash_message = Some(FlashMessage {
+                message: format!("rebased {} onto {}", state.rebase_branch, state.rebase_target),
+                shown_at: Instant::now(),
+            });
+            repo.refresh();
+        }
+        Ok(result) => {
+            // Check if rebase is in progress (conflicts)
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            if stderr.contains("CONFLICT") || stderr.contains("could not apply") {
+                state.is_rebase_in_progress = true;
+                state.is_entering_rebase_target = false;
+                state.flash_message = Some(FlashMessage {
+                    message: "conflicts - resolve then Enter to continue, Esc to abort".to_string(),
+                    shown_at: Instant::now(),
+                });
+            } else {
+                state.flash_message = Some(FlashMessage {
+                    message: format!("rebase failed: {}", stderr.lines().next().unwrap_or("unknown error")),
+                    shown_at: Instant::now(),
+                });
+            }
+        }
+        Err(e) => {
+            state.flash_message = Some(FlashMessage {
+                message: format!("rebase failed: {}", e),
+                shown_at: Instant::now(),
+            });
         }
     }
 }
