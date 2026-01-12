@@ -66,12 +66,14 @@ impl Commit {
     }
 }
 
+#[derive(Clone)]
 pub struct DiffLine {
     pub origin: char,             // '+', '-', ' ' (context)
     pub content: String,
     pub new_line_no: Option<u32>, // Line number in new file (for '+' and ' ' lines)
 }
 
+#[derive(Clone)]
 pub struct Hunk {
     pub lines: Vec<DiffLine>,
 }
@@ -96,6 +98,35 @@ pub struct CommitDetails {
 pub enum Head {
     Attached { branch_name: BranchName },
     Detached { sha: Sha },
+}
+
+// Staging/commit view types
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum FileStatus {
+    Untracked,
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+    Typechange,
+}
+
+/// A file in the worktree with potential staged and unstaged changes
+#[derive(Clone)]
+pub struct WorktreeFile {
+    pub path: String,
+    pub status: FileStatus,
+    pub unstaged_hunks: Vec<Hunk>,
+    pub staged_hunks: Vec<Hunk>,
+    pub additions: usize,
+    pub deletions: usize,
+}
+
+/// Current worktree status with all changed files
+pub struct WorktreeStatus {
+    pub unstaged_files: Vec<WorktreeFile>,
+    pub staged_files: Vec<WorktreeFile>,
 }
 
 impl Head {
@@ -480,5 +511,554 @@ impl Repo {
                 sha: git2::Oid::zero(),
             }
         }
+    }
+
+    /// Check if there are any staged or unstaged changes
+    pub fn has_changes(&self) -> bool {
+        let git_repo = match Repository::open(&self.path) {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+
+        let mut opts = git2::StatusOptions::new();
+        opts.include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .exclude_submodules(true);
+
+        if let Ok(statuses) = git_repo.statuses(Some(&mut opts)) {
+            !statuses.is_empty()
+        } else {
+            false
+        }
+    }
+
+    /// Load current worktree status (staged and unstaged changes)
+    pub fn load_worktree_status(&self) -> Option<WorktreeStatus> {
+        let git_repo = Repository::open(&self.path).ok()?;
+
+        let mut opts = git2::StatusOptions::new();
+        opts.include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .exclude_submodules(true);
+
+        let statuses = git_repo.statuses(Some(&mut opts)).ok()?;
+
+        let mut unstaged_files: Vec<WorktreeFile> = Vec::new();
+        let mut staged_files: Vec<WorktreeFile> = Vec::new();
+
+        for entry in statuses.iter() {
+            let path = entry.path().unwrap_or("").to_string();
+            let status = entry.status();
+
+            // Check for unstaged changes (worktree vs index)
+            if status.intersects(
+                git2::Status::WT_NEW
+                    | git2::Status::WT_MODIFIED
+                    | git2::Status::WT_DELETED
+                    | git2::Status::WT_TYPECHANGE
+                    | git2::Status::WT_RENAMED,
+            ) {
+                let file_status = if status.contains(git2::Status::WT_NEW) {
+                    FileStatus::Untracked
+                } else if status.contains(git2::Status::WT_MODIFIED) {
+                    FileStatus::Modified
+                } else if status.contains(git2::Status::WT_DELETED) {
+                    FileStatus::Deleted
+                } else if status.contains(git2::Status::WT_RENAMED) {
+                    FileStatus::Renamed
+                } else {
+                    FileStatus::Typechange
+                };
+
+                // Load hunks for this file (worktree vs index diff)
+                let (hunks, additions, deletions) =
+                    self.load_unstaged_hunks(&git_repo, &path).unwrap_or_default();
+
+                unstaged_files.push(WorktreeFile {
+                    path: path.clone(),
+                    status: file_status,
+                    unstaged_hunks: hunks,
+                    staged_hunks: Vec::new(),
+                    additions,
+                    deletions,
+                });
+            }
+
+            // Check for staged changes (index vs HEAD)
+            if status.intersects(
+                git2::Status::INDEX_NEW
+                    | git2::Status::INDEX_MODIFIED
+                    | git2::Status::INDEX_DELETED
+                    | git2::Status::INDEX_TYPECHANGE
+                    | git2::Status::INDEX_RENAMED,
+            ) {
+                let file_status = if status.contains(git2::Status::INDEX_NEW) {
+                    FileStatus::Added
+                } else if status.contains(git2::Status::INDEX_MODIFIED) {
+                    FileStatus::Modified
+                } else if status.contains(git2::Status::INDEX_DELETED) {
+                    FileStatus::Deleted
+                } else if status.contains(git2::Status::INDEX_RENAMED) {
+                    FileStatus::Renamed
+                } else {
+                    FileStatus::Typechange
+                };
+
+                // Load hunks for this file (index vs HEAD diff)
+                let (hunks, additions, deletions) =
+                    self.load_staged_hunks(&git_repo, &path).unwrap_or_default();
+
+                staged_files.push(WorktreeFile {
+                    path,
+                    status: file_status,
+                    unstaged_hunks: Vec::new(),
+                    staged_hunks: hunks,
+                    additions,
+                    deletions,
+                });
+            }
+        }
+
+        // Sort files alphabetically
+        unstaged_files.sort_by(|a, b| a.path.cmp(&b.path));
+        staged_files.sort_by(|a, b| a.path.cmp(&b.path));
+
+        Some(WorktreeStatus {
+            unstaged_files,
+            staged_files,
+        })
+    }
+
+    /// Load unstaged hunks for a file (worktree vs index)
+    fn load_unstaged_hunks(
+        &self,
+        git_repo: &Repository,
+        path: &str,
+    ) -> Option<(Vec<Hunk>, usize, usize)> {
+        let mut diff_opts = git2::DiffOptions::new();
+        diff_opts.pathspec(path);
+
+        let diff = git_repo
+            .diff_index_to_workdir(None, Some(&mut diff_opts))
+            .ok()?;
+
+        self.extract_hunks_from_diff(&diff)
+    }
+
+    /// Load staged hunks for a file (index vs HEAD)
+    fn load_staged_hunks(
+        &self,
+        git_repo: &Repository,
+        path: &str,
+    ) -> Option<(Vec<Hunk>, usize, usize)> {
+        let mut diff_opts = git2::DiffOptions::new();
+        diff_opts.pathspec(path);
+
+        let head_tree = git_repo
+            .head()
+            .ok()?
+            .peel_to_tree()
+            .ok();
+
+        let diff = git_repo
+            .diff_tree_to_index(head_tree.as_ref(), None, Some(&mut diff_opts))
+            .ok()?;
+
+        self.extract_hunks_from_diff(&diff)
+    }
+
+    /// Extract hunks from a diff
+    fn extract_hunks_from_diff(&self, diff: &git2::Diff) -> Option<(Vec<Hunk>, usize, usize)> {
+        let mut hunks = Vec::new();
+        let mut total_additions = 0;
+        let mut total_deletions = 0;
+
+        for delta_idx in 0..diff.deltas().len() {
+            if let Ok(patch) = git2::Patch::from_diff(diff, delta_idx) {
+                if let Some(patch) = patch {
+                    for hunk_idx in 0..patch.num_hunks() {
+                        let mut hunk = Hunk { lines: Vec::new() };
+
+                        if let Ok(line_count) = patch.num_lines_in_hunk(hunk_idx) {
+                            for line_idx in 0..line_count {
+                                if let Ok(line) = patch.line_in_hunk(hunk_idx, line_idx) {
+                                    let origin = line.origin();
+                                    let content =
+                                        String::from_utf8_lossy(line.content()).to_string();
+
+                                    match origin {
+                                        '+' => total_additions += 1,
+                                        '-' => total_deletions += 1,
+                                        _ => {}
+                                    }
+
+                                    if origin == '+' || origin == '-' || origin == ' ' {
+                                        hunk.lines.push(DiffLine {
+                                            origin,
+                                            content: content.trim_end_matches('\n').to_string(),
+                                            new_line_no: line.new_lineno(),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+
+                        if !hunk.lines.is_empty() {
+                            hunks.push(hunk);
+                        }
+                    }
+                }
+            }
+        }
+
+        Some((hunks, total_additions, total_deletions))
+    }
+
+    /// Stage a file (add to index)
+    pub fn stage_file(&self, path: &str) -> Result<(), String> {
+        let git_repo = Repository::open(&self.path).map_err(|e| e.message().to_string())?;
+        let mut index = git_repo.index().map_err(|e| e.message().to_string())?;
+
+        // Check if file exists in worktree
+        let full_path = std::path::Path::new(&self.path).join(path);
+        if full_path.exists() {
+            // File exists - add it
+            index
+                .add_path(std::path::Path::new(path))
+                .map_err(|e| e.message().to_string())?;
+        } else {
+            // File was deleted - remove from index
+            index
+                .remove_path(std::path::Path::new(path))
+                .map_err(|e| e.message().to_string())?;
+        }
+
+        index.write().map_err(|e| e.message().to_string())?;
+        Ok(())
+    }
+
+    /// Unstage a file (reset to HEAD)
+    pub fn unstage_file(&self, path: &str) -> Result<(), String> {
+        let git_repo = Repository::open(&self.path).map_err(|e| e.message().to_string())?;
+
+        // Get HEAD commit tree
+        let head = git_repo.head().map_err(|e| e.message().to_string())?;
+        let head_commit = head
+            .peel_to_commit()
+            .map_err(|e| e.message().to_string())?;
+        let head_tree = head_commit.tree().map_err(|e| e.message().to_string())?;
+
+        let mut index = git_repo.index().map_err(|e| e.message().to_string())?;
+
+        // Check if file exists in HEAD
+        if let Ok(entry) = head_tree.get_path(std::path::Path::new(path)) {
+            // File exists in HEAD - restore it to index
+            let blob = git_repo
+                .find_blob(entry.id())
+                .map_err(|e| e.message().to_string())?;
+            let mut index_entry = git2::IndexEntry {
+                ctime: git2::IndexTime::new(0, 0),
+                mtime: git2::IndexTime::new(0, 0),
+                dev: 0,
+                ino: 0,
+                mode: entry.filemode() as u32,
+                uid: 0,
+                gid: 0,
+                file_size: blob.content().len() as u32,
+                id: entry.id(),
+                flags: 0,
+                flags_extended: 0,
+                path: path.as_bytes().to_vec(),
+            };
+            index
+                .add(&mut index_entry)
+                .map_err(|e| e.message().to_string())?;
+        } else {
+            // File doesn't exist in HEAD - remove from index
+            index
+                .remove_path(std::path::Path::new(path))
+                .map_err(|e| e.message().to_string())?;
+        }
+
+        index.write().map_err(|e| e.message().to_string())?;
+        Ok(())
+    }
+
+    /// Create a commit with the current index
+    pub fn commit(&self, message: &str) -> Result<Sha, String> {
+        let git_repo = Repository::open(&self.path).map_err(|e| e.message().to_string())?;
+
+        // Get the index and write tree
+        let mut index = git_repo.index().map_err(|e| e.message().to_string())?;
+        let tree_id = index.write_tree().map_err(|e| e.message().to_string())?;
+        let tree = git_repo
+            .find_tree(tree_id)
+            .map_err(|e| e.message().to_string())?;
+
+        // Get HEAD as parent
+        let head = git_repo.head().map_err(|e| e.message().to_string())?;
+        let parent_commit = head
+            .peel_to_commit()
+            .map_err(|e| e.message().to_string())?;
+
+        // Get signature
+        let signature = git_repo
+            .signature()
+            .map_err(|e| e.message().to_string())?;
+
+        // Create commit
+        let commit_id = git_repo
+            .commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                message,
+                &tree,
+                &[&parent_commit],
+            )
+            .map_err(|e| e.message().to_string())?;
+
+        Ok(commit_id)
+    }
+
+    /// Amend the HEAD commit
+    pub fn amend_commit(&self, message: &str) -> Result<Sha, String> {
+        let git_repo = Repository::open(&self.path).map_err(|e| e.message().to_string())?;
+
+        // Get the index and write tree
+        let mut index = git_repo.index().map_err(|e| e.message().to_string())?;
+        let tree_id = index.write_tree().map_err(|e| e.message().to_string())?;
+        let tree = git_repo
+            .find_tree(tree_id)
+            .map_err(|e| e.message().to_string())?;
+
+        // Get HEAD commit
+        let head = git_repo.head().map_err(|e| e.message().to_string())?;
+        let head_commit = head
+            .peel_to_commit()
+            .map_err(|e| e.message().to_string())?;
+
+        // Amend commit
+        let commit_id = head_commit
+            .amend(
+                Some("HEAD"),
+                None, // keep author
+                None, // keep committer
+                None, // keep encoding
+                Some(message),
+                Some(&tree),
+            )
+            .map_err(|e| e.message().to_string())?;
+
+        Ok(commit_id)
+    }
+
+    /// Get the message from HEAD commit (for amend)
+    pub fn head_message(&self) -> Option<String> {
+        let git_repo = Repository::open(&self.path).ok()?;
+        let head = git_repo.head().ok()?;
+        let commit = head.peel_to_commit().ok()?;
+        commit.message().map(|s| s.to_string())
+    }
+
+    /// Stage a specific hunk from the worktree
+    pub fn stage_hunk(&self, path: &str, hunk: &Hunk) -> Result<(), String> {
+        let git_repo = Repository::open(&self.path).map_err(|e| e.message().to_string())?;
+        let mut index = git_repo.index().map_err(|e| e.message().to_string())?;
+
+        // Get current index content (what we'll apply the hunk to)
+        let index_content = self.get_index_content(&git_repo, path)?;
+
+        // Apply the hunk to the index content
+        let new_content = apply_hunk_to_content(&index_content, hunk)?;
+
+        // Write the new content to the index
+        let blob_id = git_repo
+            .blob(new_content.as_bytes())
+            .map_err(|e| e.message().to_string())?;
+
+        // Get file mode (default to regular file)
+        let mode = 0o100644u32;
+
+        let index_entry = git2::IndexEntry {
+            ctime: git2::IndexTime::new(0, 0),
+            mtime: git2::IndexTime::new(0, 0),
+            dev: 0,
+            ino: 0,
+            mode,
+            uid: 0,
+            gid: 0,
+            file_size: new_content.len() as u32,
+            id: blob_id,
+            flags: 0,
+            flags_extended: 0,
+            path: path.as_bytes().to_vec(),
+        };
+
+        index
+            .add(&index_entry)
+            .map_err(|e| e.message().to_string())?;
+        index.write().map_err(|e| e.message().to_string())?;
+
+        Ok(())
+    }
+
+    /// Unstage a specific hunk (revert index to HEAD for that hunk)
+    pub fn unstage_hunk(&self, path: &str, hunk: &Hunk) -> Result<(), String> {
+        let git_repo = Repository::open(&self.path).map_err(|e| e.message().to_string())?;
+        let mut index = git_repo.index().map_err(|e| e.message().to_string())?;
+
+        // Get current index content
+        let index_content = self.get_index_content(&git_repo, path)?;
+
+        // Reverse-apply the hunk (swap + and - lines)
+        let reversed_hunk = reverse_hunk(hunk);
+        let new_content = apply_hunk_to_content(&index_content, &reversed_hunk)?;
+
+        // Write the new content to the index
+        let blob_id = git_repo
+            .blob(new_content.as_bytes())
+            .map_err(|e| e.message().to_string())?;
+
+        let mode = 0o100644u32;
+
+        let index_entry = git2::IndexEntry {
+            ctime: git2::IndexTime::new(0, 0),
+            mtime: git2::IndexTime::new(0, 0),
+            dev: 0,
+            ino: 0,
+            mode,
+            uid: 0,
+            gid: 0,
+            file_size: new_content.len() as u32,
+            id: blob_id,
+            flags: 0,
+            flags_extended: 0,
+            path: path.as_bytes().to_vec(),
+        };
+
+        index
+            .add(&index_entry)
+            .map_err(|e| e.message().to_string())?;
+        index.write().map_err(|e| e.message().to_string())?;
+
+        Ok(())
+    }
+
+    /// Get file content from the index, or from HEAD if not in index, or empty if new
+    fn get_index_content(&self, git_repo: &Repository, path: &str) -> Result<String, String> {
+        let index = git_repo.index().map_err(|e| e.message().to_string())?;
+
+        // Try to get from index first
+        if let Some(entry) = index.get_path(std::path::Path::new(path), 0) {
+            let blob = git_repo
+                .find_blob(entry.id)
+                .map_err(|e| e.message().to_string())?;
+            return Ok(String::from_utf8_lossy(blob.content()).to_string());
+        }
+
+        // Try HEAD
+        if let Ok(head) = git_repo.head() {
+            if let Ok(tree) = head.peel_to_tree() {
+                if let Ok(entry) = tree.get_path(std::path::Path::new(path)) {
+                    let blob = git_repo
+                        .find_blob(entry.id())
+                        .map_err(|e| e.message().to_string())?;
+                    return Ok(String::from_utf8_lossy(blob.content()).to_string());
+                }
+            }
+        }
+
+        // File is new - return empty
+        Ok(String::new())
+    }
+}
+
+/// Apply a hunk to file content, returning the modified content
+fn apply_hunk_to_content(content: &str, hunk: &Hunk) -> Result<String, String> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut result: Vec<String> = Vec::new();
+
+    // Build the "old" lines pattern from the hunk (context and removed lines)
+    let mut old_pattern: Vec<&str> = Vec::new();
+    let mut new_lines: Vec<&str> = Vec::new();
+
+    for diff_line in &hunk.lines {
+        match diff_line.origin {
+            ' ' => {
+                old_pattern.push(&diff_line.content);
+                new_lines.push(&diff_line.content);
+            }
+            '-' => {
+                old_pattern.push(&diff_line.content);
+            }
+            '+' => {
+                new_lines.push(&diff_line.content);
+            }
+            _ => {}
+        }
+    }
+
+    if old_pattern.is_empty() && content.is_empty() {
+        // Adding to empty file - just return the new lines
+        return Ok(new_lines.join("\n") + if new_lines.is_empty() { "" } else { "\n" });
+    }
+
+    // Find where the old pattern matches in the content
+    let mut found = false;
+    let mut i = 0;
+
+    while i <= lines.len().saturating_sub(old_pattern.len()) {
+        let matches = old_pattern
+            .iter()
+            .enumerate()
+            .all(|(j, pat)| lines.get(i + j).map(|l| *l == *pat).unwrap_or(false));
+
+        if matches {
+            // Found the match - add lines before, then new lines, then continue after
+            for line in &lines[..i] {
+                result.push(line.to_string());
+            }
+            for line in &new_lines {
+                result.push(line.to_string());
+            }
+            for line in &lines[i + old_pattern.len()..] {
+                result.push(line.to_string());
+            }
+            found = true;
+            break;
+        }
+        i += 1;
+    }
+
+    if !found {
+        return Err("could not find hunk location in file".to_string());
+    }
+
+    // Join with newlines, preserve trailing newline if original had one
+    let mut output = result.join("\n");
+    if content.ends_with('\n') || (!content.is_empty() && !output.is_empty()) {
+        output.push('\n');
+    }
+
+    Ok(output)
+}
+
+/// Reverse a hunk (swap + and - lines) for unstaging
+fn reverse_hunk(hunk: &Hunk) -> Hunk {
+    Hunk {
+        lines: hunk
+            .lines
+            .iter()
+            .map(|line| DiffLine {
+                origin: match line.origin {
+                    '+' => '-',
+                    '-' => '+',
+                    c => c,
+                },
+                content: line.content.clone(),
+                new_line_no: line.new_line_no,
+            })
+            .collect(),
     }
 }

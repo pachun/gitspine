@@ -5,7 +5,7 @@ use two_face::re_exports::syntect::{
 };
 use two_face::theme::EmbeddedLazyThemeSet;
 
-use crate::repo::CommitDetails;
+use crate::repo::{CommitDetails, Hunk};
 
 /// Cached syntax-highlighted lines for a file
 pub struct HighlightedFile {
@@ -61,6 +61,22 @@ impl Highlighter {
     /// Get the extension from a file path
     pub fn extension_from_path(path: &str) -> &str {
         path.rsplit('.').next().unwrap_or("")
+    }
+
+    /// Highlight hunks for a single file (used by staging view)
+    pub fn highlight_hunks(&self, hunks: &[Hunk], file_path: &str) -> HighlightedFile {
+        if hunks.is_empty() {
+            return HighlightedFile { lines: Vec::new() };
+        }
+
+        let ext = Self::extension_from_path(file_path);
+        let code_lines: Vec<&str> = hunks
+            .iter()
+            .flat_map(|hunk| hunk.lines.iter().map(|l| l.content.as_str()))
+            .collect();
+
+        let highlighted = self.highlight_lines(&code_lines, ext);
+        HighlightedFile { lines: highlighted }
     }
 
     /// Pre-compute syntax highlighting for all files in a commit

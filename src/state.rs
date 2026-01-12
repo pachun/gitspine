@@ -1,11 +1,39 @@
 use std::time::Instant;
 
-use crate::highlight::HighlightCache;
-use crate::repo::{CommitDetails, Repo};
+use crate::highlight::{HighlightCache, HighlightedFile};
+use crate::repo::{CommitDetails, Repo, WorktreeFile};
 
 pub struct FlashMessage {
     pub message: String,
     pub shown_at: Instant,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum CommitViewPanel {
+    UnstagedFiles,
+    StagedFiles,
+}
+
+/// State for the staging/commit view
+pub struct CommitViewState {
+    pub active_panel: CommitViewPanel,
+    pub unstaged_files: Vec<WorktreeFile>,
+    pub staged_files: Vec<WorktreeFile>,
+    pub unstaged_selected: usize,
+    pub staged_selected: usize,
+    pub unstaged_scroll: usize,
+    pub staged_scroll: usize,
+    pub viewing_file: Option<String>,
+    pub diff_scroll: usize,
+    /// Cached syntax highlighting for the currently viewed file
+    pub staging_highlight: Option<StagingHighlight>,
+}
+
+/// Cached syntax highlighting for staging view (one file at a time)
+pub struct StagingHighlight {
+    pub file_path: String,
+    pub unstaged: HighlightedFile,
+    pub staged: HighlightedFile,
 }
 
 pub struct State {
@@ -34,6 +62,7 @@ pub struct State {
     pub details_search_term: String, // Separate search term for details view
     pub details_selected_match_line: Option<usize>, // Line index of currently selected search match
     pub details_selected_match_index: Option<usize>, // Index in the list of matches (for counter display)
+    pub commit_view: Option<CommitViewState>, // Staging/commit view state
 }
 
 impl State {
@@ -73,6 +102,7 @@ impl State {
             details_search_term: String::new(),
             details_selected_match_line: None,
             details_selected_match_index: None,
+            commit_view: None,
         }
     }
 }

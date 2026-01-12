@@ -7,8 +7,8 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use ratatui::Frame;
 
 use crate::action::compute_details_match_lines;
-use crate::repo::{BranchName, CommitDetails, Repo, Sha};
-use crate::state::State;
+use crate::repo::{BranchName, CommitDetails, Repo, Sha, WorktreeFile, FileStatus};
+use crate::state::{CommitViewPanel, CommitViewState, State};
 use crate::utils::{format_date, format_time, has_mixed_case};
 use crate::viewport::{DETAILS_COMMIT_LIST_HEIGHT, FILE_HEADER_HEIGHT};
 
@@ -77,6 +77,12 @@ fn highlight_matches(
 }
 
 pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
+    // If commit view is active, render that instead
+    if let Some(commit_view) = &state.commit_view {
+        render_commit_view(frame, commit_view, state);
+        return;
+    }
+
     // Compute derived values once for this render
     let head_sha = repo.head_sha();
     let branches_at_commit_map = branches_at_commit(&repo.branches);
@@ -1385,5 +1391,311 @@ fn render_file_tree(
             };
             render_file_tree(&node.children, &child_prefix, lines, search_term, highlight_style);
         }
+    }
+}
+
+/// Render the staging/commit view
+fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, _state: &State) {
+    let area = frame.area();
+
+    // Layout: Diff view fills space, file lists are fixed 8 lines (6 files + 2 border)
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),       // Diff view (fills remaining space)
+            Constraint::Length(8),    // File lists (6 lines + borders)
+        ])
+        .split(area);
+
+    let diff_area = main_chunks[0];
+    let lists_area = main_chunks[1];
+
+    // Split bottom area into unstaged (left) and staged (right)
+    let list_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(lists_area);
+
+    let unstaged_area = list_chunks[0];
+    let staged_area = list_chunks[1];
+
+    // Render diff view (top panel)
+    render_commit_diff_panel(frame, diff_area, commit_view);
+
+    // Render unstaged files list (bottom left) with key hints
+    render_file_list_panel(
+        frame,
+        unstaged_area,
+        "Unstaged",
+        &commit_view.unstaged_files,
+        commit_view.unstaged_selected,
+        commit_view.unstaged_scroll,
+        commit_view.active_panel == CommitViewPanel::UnstagedFiles,
+        Some("j/k:files  J/K:scroll  s:hunk  S:file"),
+    );
+
+    // Render staged files list (bottom right)
+    render_file_list_panel(
+        frame,
+        staged_area,
+        "Staged",
+        &commit_view.staged_files,
+        commit_view.staged_selected,
+        commit_view.staged_scroll,
+        commit_view.active_panel == CommitViewPanel::StagedFiles,
+        None,
+    );
+}
+
+/// Render the diff panel for the commit view
+fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, commit_view: &CommitViewState) {
+    let title = match &commit_view.viewing_file {
+        Some(path) => format!(" {} ", path),
+        None => " No file selected ".to_string(),
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::White));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Find the file we're viewing - prefer from active panel
+    let (file, is_unstaged) = commit_view.viewing_file.as_ref().and_then(|path| {
+        match commit_view.active_panel {
+            CommitViewPanel::UnstagedFiles => {
+                commit_view.unstaged_files.iter().find(|f| &f.path == path).map(|f| (f, true))
+                    .or_else(|| commit_view.staged_files.iter().find(|f| &f.path == path).map(|f| (f, false)))
+            }
+            CommitViewPanel::StagedFiles => {
+                commit_view.staged_files.iter().find(|f| &f.path == path).map(|f| (f, false))
+                    .or_else(|| commit_view.unstaged_files.iter().find(|f| &f.path == path).map(|f| (f, true)))
+            }
+        }
+    }).unzip();
+
+    let Some(file) = file else {
+        let hint = Paragraph::new("Select a file from the lists below to view its diff")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(hint, inner);
+        return;
+    };
+
+    let is_unstaged = is_unstaged.unwrap_or(true);
+    let action_label = if is_unstaged { "stage" } else { "unstage" };
+
+    // Determine which hunks to show based on panel
+    let hunks = if is_unstaged {
+        &file.unstaged_hunks
+    } else {
+        &file.staged_hunks
+    };
+
+    if hunks.is_empty() {
+        let msg = if is_unstaged {
+            "No unstaged changes"
+        } else {
+            "No staged changes"
+        };
+        let hint = Paragraph::new(msg).style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(hint, inner);
+        return;
+    }
+
+    // Find topmost visible hunk index
+    let topmost_hunk_idx = find_topmost_hunk_index(hunks, commit_view.diff_scroll);
+
+    // Get cached highlighted lines
+    let cached_lines = commit_view.staging_highlight.as_ref()
+        .filter(|h| commit_view.viewing_file.as_ref() == Some(&h.file_path))
+        .map(|h| if is_unstaged { &h.unstaged.lines[..] } else { &h.staged.lines[..] })
+        .unwrap_or(&[]);
+
+    // Build lines with line numbers and "stage"/"unstage" labels
+    let mut lines: Vec<Line> = Vec::new();
+    let width = inner.width as usize;
+    let mut highlight_idx = 0;
+
+    for (hunk_idx, hunk) in hunks.iter().enumerate() {
+        let is_topmost = hunk_idx == topmost_hunk_idx;
+
+        for (line_idx, diff_line) in hunk.lines.iter().enumerate() {
+            let (prefix_style, line_bg) = match diff_line.origin {
+                '+' => (Style::default().fg(Color::Green), None),
+                '-' => (Style::default().fg(Color::Red), Some(Color::Rgb(35, 0, 0))),
+                _ => (Style::default().fg(Color::DarkGray), None),
+            };
+
+            // Line number: "{origin}{4-char num} " format like commit details
+            let line_num = diff_line.new_line_no
+                .map(|n| format!("{:>4}", n))
+                .unwrap_or_else(|| "    ".to_string());
+            let prefix = format!("{}{} ", diff_line.origin, line_num);
+
+            // Get highlighted content from cache (or fallback to plain text)
+            let empty_highlight: Vec<(two_face::re_exports::syntect::highlighting::Style, String)> = vec![];
+            let highlighted = cached_lines.get(highlight_idx).unwrap_or(&empty_highlight);
+            highlight_idx += 1;
+
+            // Build spans with syntax highlighting
+            let mut spans = vec![Span::styled(prefix.clone(), prefix_style)];
+
+            if highlighted.is_empty() {
+                // No highlighting available, use plain text
+                let mut content_style = prefix_style;
+                if let Some(bg) = line_bg {
+                    content_style = content_style.bg(bg);
+                }
+                spans.push(Span::styled(diff_line.content.clone(), content_style));
+            } else {
+                for (style, text) in highlighted {
+                    let mut ratatui_style = syntect_to_ratatui_style(style);
+                    if let Some(bg) = line_bg {
+                        ratatui_style = ratatui_style.bg(bg);
+                    }
+                    spans.push(Span::styled(text.clone(), ratatui_style));
+                }
+            }
+
+            // First line of topmost hunk gets the action label right-aligned
+            if line_idx == 0 && is_topmost {
+                // Calculate content length
+                let content_len: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+                let label_len = action_label.len();
+                let padding = width.saturating_sub(content_len + label_len + 1);
+
+                spans.push(Span::raw(" ".repeat(padding)));
+                spans.push(Span::styled(action_label, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+            }
+
+            lines.push(Line::from(spans));
+        }
+
+        // Blank line between hunks
+        if hunk_idx < hunks.len() - 1 {
+            lines.push(Line::from(""));
+        }
+    }
+
+    // Apply scroll and render
+    let visible_lines: Vec<Line> = lines
+        .into_iter()
+        .skip(commit_view.diff_scroll)
+        .take(inner.height as usize)
+        .collect();
+
+    let paragraph = Paragraph::new(visible_lines);
+    frame.render_widget(paragraph, inner);
+}
+
+/// Find the index of the hunk that's visible at the given scroll position
+fn find_topmost_hunk_index(hunks: &[crate::repo::Hunk], scroll: usize) -> usize {
+    let mut line = 0;
+    for (idx, hunk) in hunks.iter().enumerate() {
+        let hunk_end = line + hunk.lines.len();
+        if scroll < hunk_end {
+            return idx;
+        }
+        line = hunk_end + 1; // +1 for blank line between hunks
+    }
+    hunks.len().saturating_sub(1)
+}
+
+/// Render a file list panel (unstaged or staged)
+fn render_file_list_panel(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    title: &str,
+    files: &[WorktreeFile],
+    selected: usize,
+    scroll: usize,
+    is_focused: bool,
+    key_hints: Option<&str>,
+) {
+    let border_color = if is_focused { Color::White } else { Color::DarkGray };
+    let count = files.len();
+    let title = format!(" {} ({}) ", title, count);
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Reserve space for key hints if provided
+    let (list_area, hints_area) = if key_hints.is_some() {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(inner);
+        (chunks[0], Some(chunks[1]))
+    } else {
+        (inner, None)
+    };
+
+    if files.is_empty() {
+        let hint = Paragraph::new("No files")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(hint, list_area);
+    } else {
+        // Build rows for the file list, applying scroll
+        let visible_height = list_area.height as usize;
+        let rows: Vec<Row> = files
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .take(visible_height)
+            .map(|(idx, file)| {
+                let is_selected = idx == selected;
+
+                // Color filename by status (no letter prefix)
+                let status_color = match file.status {
+                    FileStatus::Untracked => Color::White,
+                    FileStatus::Added => Color::Green,
+                    FileStatus::Modified => Color::Yellow,
+                    FileStatus::Deleted => Color::Red,
+                    _ => Color::White,
+                };
+
+                let path_style = if is_selected && is_focused {
+                    Style::default().bg(Color::DarkGray).fg(status_color)
+                } else {
+                    Style::default().fg(status_color)
+                };
+
+                // Build stats with colored +/- counts
+                let stats_spans = vec![
+                    Span::styled(format!("+{}", file.additions), Style::default().fg(Color::Green)),
+                    Span::raw(" "),
+                    Span::styled(format!("-{}", file.deletions), Style::default().fg(Color::Red)),
+                ];
+
+                Row::new(vec![
+                    Cell::from(Span::styled(file.path.clone(), path_style)),
+                    Cell::from(Line::from(stats_spans)),
+                ])
+            })
+            .collect();
+
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Percentage(75),   // Path
+                Constraint::Percentage(25),   // Stats
+            ],
+        );
+
+        frame.render_widget(table, list_area);
+    }
+
+    // Render key hints if provided
+    if let (Some(hints), Some(area)) = (key_hints, hints_area) {
+        let hints_widget = Paragraph::new(hints)
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(hints_widget, area);
     }
 }
