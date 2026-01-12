@@ -18,8 +18,51 @@ use ratatui::prelude::CrosstermBackend;
 use ratatui::Terminal;
 
 use action::Action;
-use repo::Repo;
+use repo::{Repo, DEFAULT_COMMIT_LIMIT};
 use state::State;
+
+/// Parse command line arguments
+/// Returns (repo_path, commit_limit)
+fn parse_args(args: &[String]) -> (String, Option<usize>) {
+    let mut path = ".".to_string();
+    let mut limit = Some(DEFAULT_COMMIT_LIMIT);
+    let mut i = 1;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--all" | "-a" => {
+                limit = None;
+                i += 1;
+            }
+            "-n" => {
+                if i + 1 < args.len() {
+                    if let Ok(n) = args[i + 1].parse::<usize>() {
+                        limit = Some(n);
+                    }
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            arg if arg.starts_with("-n") => {
+                // Handle -n1000 format
+                if let Ok(n) = arg[2..].parse::<usize>() {
+                    limit = Some(n);
+                }
+                i += 1;
+            }
+            arg if !arg.starts_with('-') => {
+                path = arg.to_string();
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    (path, limit)
+}
 use viewport::{
     adjust_viewport_after_terminal_resize, center_view_on_selected_row,
     ensure_selected_row_is_visible, update_selection_for_live_search,
@@ -35,8 +78,9 @@ fn initialize_terminal() -> Terminal<CrosstermBackend<Stdout>> {
 }
 
 fn main() {
-    let path_to_repo = std::env::args().nth(1).unwrap_or_else(|| ".".to_string());
-    let mut repo = Repo::open(&path_to_repo);
+    let args: Vec<String> = std::env::args().collect();
+    let (path_to_repo, commit_limit) = parse_args(&args);
+    let mut repo = Repo::open_with_limit(&path_to_repo, commit_limit);
     let mut terminal = initialize_terminal();
     let _ = execute!(std::io::stdout(), SetTitle(&repo.name));
     let mut state = State::new(&repo);
@@ -119,6 +163,14 @@ fn main() {
                 update_selection_for_live_search(&mut state, &repo, &terminal);
 
                 ensure_selected_row_is_visible(&mut state, &terminal);
+
+                // Infinite scroll: load more commits when near the bottom
+                if repo.has_more_commits {
+                    let near_bottom = state.index_of_selected_row + 100 >= repo.commits.len();
+                    if near_bottom {
+                        repo.load_more_commits();
+                    }
+                }
             }
             Event::Resize(_, _) => {
                 // Terminal resized, adjust viewport

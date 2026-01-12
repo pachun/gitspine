@@ -145,6 +145,9 @@ impl Head {
     }
 }
 
+/// Default number of commits to load initially
+pub const DEFAULT_COMMIT_LIMIT: usize = 2000;
+
 pub struct Repo {
     path: String,
     pub name: String,
@@ -152,10 +155,14 @@ pub struct Repo {
     pub branches: HashMap<BranchName, Sha>,
     pub head: Head,
     pub graph: Vec<Vec<(char, Option<usize>)>>,
+    /// Maximum commits to load (None = unlimited)
+    commit_limit: Option<usize>,
+    /// Whether there are more commits beyond what's loaded
+    pub has_more_commits: bool,
 }
 
 impl Repo {
-    pub fn open(path: &str) -> Self {
+    pub fn open_with_limit(path: &str, limit: Option<usize>) -> Self {
         let git_repo = Repository::open(path).unwrap_or_else(|err| {
             eprintln!("Failed to open repository: {}", err.message());
             std::process::exit(1);
@@ -166,7 +173,7 @@ impl Repo {
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_string();
-        let commits = Self::get_commits(&git_repo);
+        let (commits, has_more) = Self::get_commits(&git_repo, limit);
         let graph = commit_graph::build(&commits);
         Repo {
             path: path.to_string(),
@@ -175,6 +182,8 @@ impl Repo {
             branches: Self::get_branches(&git_repo),
             head: Self::get_head(&git_repo),
             graph,
+            commit_limit: limit,
+            has_more_commits: has_more,
         }
     }
 
@@ -440,14 +449,30 @@ impl Repo {
 
     pub fn refresh(&mut self) {
         if let Ok(git_repo) = Repository::open(&self.path) {
-            self.commits = Self::get_commits(&git_repo);
+            let (commits, has_more) = Self::get_commits(&git_repo, self.commit_limit);
+            self.commits = commits;
+            self.has_more_commits = has_more;
             self.branches = Self::get_branches(&git_repo);
             self.head = Self::get_head(&git_repo);
             self.graph = commit_graph::build(&self.commits);
         }
     }
 
-    fn get_commits(repo: &Repository) -> Vec<Commit> {
+    /// Load more commits (doubles the limit or removes it entirely)
+    pub fn load_more_commits(&mut self) {
+        if !self.has_more_commits {
+            return;
+        }
+        // Double the limit, or if already large, just load everything
+        self.commit_limit = match self.commit_limit {
+            Some(n) if n < 50000 => Some(n * 2),
+            _ => None, // Load all
+        };
+        self.refresh();
+    }
+
+    /// Get commits with optional limit. Returns (commits, has_more).
+    fn get_commits(repo: &Repository, limit: Option<usize>) -> (Vec<Commit>, bool) {
         let mut revwalk = repo.revwalk().expect("Failed to create revwalk");
         revwalk
             .set_sorting(git2::Sort::TIME | git2::Sort::TOPOLOGICAL)
@@ -459,7 +484,7 @@ impl Repo {
             .push_glob("refs/remotes/*")
             .expect("Failed to push remotes");
 
-        revwalk
+        let iter = revwalk
             .filter_map(|oid| oid.ok())
             .filter_map(|oid| repo.find_commit(oid).ok())
             .map(|commit| Commit {
@@ -468,8 +493,22 @@ impl Repo {
                 message: commit.summary().unwrap_or("").to_string(),
                 author: commit.author().name().unwrap_or("").to_string(),
                 timestamp: commit.time().seconds(),
-            })
-            .collect()
+            });
+
+        match limit {
+            Some(n) => {
+                // Take n+1 to check if there are more
+                let commits: Vec<Commit> = iter.take(n + 1).collect();
+                let has_more = commits.len() > n;
+                let commits = if has_more {
+                    commits.into_iter().take(n).collect()
+                } else {
+                    commits
+                };
+                (commits, has_more)
+            }
+            None => (iter.collect(), false),
+        }
     }
 
     fn get_branches(repo: &Repository) -> HashMap<BranchName, Sha> {
