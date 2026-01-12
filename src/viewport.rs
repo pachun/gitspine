@@ -74,12 +74,20 @@ pub fn adjust_viewport_after_terminal_resize(
     }
 }
 
+/// Threshold above which we skip live search (too slow)
+const LIVE_SEARCH_COMMIT_LIMIT: usize = 5000;
+
 pub fn update_selection_for_live_search(
     state: &mut State,
     repo: &Repo,
     _terminal: &Terminal<CrosstermBackend<Stdout>>,
 ) {
     if !state.is_typing_search_term {
+        return;
+    }
+
+    // Skip live search for large repos - wait for Enter
+    if repo.commits.len() > LIVE_SEARCH_COMMIT_LIMIT {
         return;
     }
 

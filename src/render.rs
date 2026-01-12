@@ -582,32 +582,41 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             }
         } else {
             // In commit list: show matching commits
-            let matches: Vec<usize> = repo
-                .commits
-                .iter()
-                .enumerate()
-                .filter_map(|(i, c)| {
-                    if c.matches(&state.search_term, &repo.branches, head_sha) {
-                        Some(i)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            let total = matches.len();
-            let current = matches
-                .iter()
-                .position(|&i| i == state.index_of_selected_row)
-                .map(|p| p + 1);
-
-            if total > 0 {
-                match current {
-                    Some(pos) => format!("[ {} / {} ]", pos, total),
-                    None => format!("[ {} matches ]", total),
+            // Skip expensive counting for large repos (>5000 commits)
+            if repo.commits.len() > 5000 {
+                if state.is_typing_search_term {
+                    "[ press Enter to search ]".to_string()
+                } else {
+                    String::new()
                 }
             } else {
-                "[ no matches ]".to_string()
+                let matches: Vec<usize> = repo
+                    .commits
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, c)| {
+                        if c.matches(&state.search_term, &repo.branches, head_sha) {
+                            Some(i)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                let total = matches.len();
+                let current = matches
+                    .iter()
+                    .position(|&i| i == state.index_of_selected_row)
+                    .map(|p| p + 1);
+
+                if total > 0 {
+                    match current {
+                        Some(pos) => format!("[ {} / {} ]", pos, total),
+                        None => format!("[ {} matches ]", total),
+                    }
+                } else {
+                    "[ no matches ]".to_string()
+                }
             }
         };
 

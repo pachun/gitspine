@@ -1,5 +1,10 @@
 use crate::repo::Commit;
 
+/// Simple flat graph - just dots, no lane tracking. O(n) and fast.
+pub fn build_flat(commits: &[Commit]) -> Vec<Vec<(char, Option<usize>)>> {
+    commits.iter().map(|_| vec![('●', Some(0))]).collect()
+}
+
 /// Each character in the graph has an associated lane index for coloring.
 /// Returns Vec of rows, each row is Vec of (char, lane_index).
 pub fn build(commits: &[Commit]) -> Vec<Vec<(char, Option<usize>)>> {

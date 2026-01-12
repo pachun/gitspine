@@ -301,7 +301,7 @@ impl Action {
     fn execute_typing_mode(
         &self,
         state: &mut State,
-        repo: &Repo,
+        repo: &mut Repo,
         _terminal: &Terminal<CrosstermBackend<Stdout>>,
     ) -> bool {
         match self {
@@ -1025,7 +1025,7 @@ fn cancel_search(state: &mut State) {
     }
 }
 
-fn confirm_search(state: &mut State, repo: &Repo) {
+fn confirm_search(state: &mut State, repo: &mut Repo) {
     state.is_typing_search_term = false;
     state.index_of_search_term_history_being_viewed = None;
 
@@ -1046,6 +1046,19 @@ fn confirm_search(state: &mut State, repo: &Repo) {
             if state.search_term_history.last() != Some(&state.search_term) {
                 state.search_term_history.push(state.search_term.clone());
             }
+        } else if repo.has_more_commits {
+            // No matches in loaded commits, search full history
+            if let Some(sha) = repo.search_full_history(&state.search_term) {
+                // Found a match - load all commits with flat graph and jump to it
+                if let Some(idx) = repo.load_all_flat(sha) {
+                    state.index_of_selected_row = idx;
+                    if state.search_term_history.last() != Some(&state.search_term) {
+                        state.search_term_history.push(state.search_term.clone());
+                    }
+                }
+            }
+            // Always clear search term after full-history search (can recall with ↑)
+            state.search_term.clear();
         } else {
             state.search_term.clear();
         }
