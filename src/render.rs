@@ -785,9 +785,8 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
         const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         let frame_idx = push_in_progress.spinner_frame % SPINNER_FRAMES.len();
         let spinner_char = SPINNER_FRAMES[frame_idx];
-        let spinner_text = format!("{} pushing {}...", spinner_char, push_in_progress.branch_name);
         let spinner = Paragraph::new(Line::from(vec![Span::styled(
-            spinner_text,
+            spinner_char.to_string(),
             Style::default().fg(Color::Cyan),
         )]))
         .alignment(ratatui::layout::Alignment::Right);
