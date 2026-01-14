@@ -24,14 +24,19 @@ use repo::{Repo, DEFAULT_COMMIT_LIMIT};
 use state::State;
 
 /// Parse command line arguments
-/// Returns (repo_path, commit_limit)
-fn parse_args(args: &[String]) -> (String, Option<usize>) {
+/// Returns (repo_path, commit_limit, debug_graph)
+fn parse_args(args: &[String]) -> (String, Option<usize>, bool) {
     let mut path = ".".to_string();
     let mut limit = Some(DEFAULT_COMMIT_LIMIT);
+    let mut debug_graph = false;
     let mut i = 1;
 
     while i < args.len() {
         match args[i].as_str() {
+            "--debug-graph" => {
+                debug_graph = true;
+                i += 1;
+            }
             "--all" | "-a" => {
                 limit = None;
                 i += 1;
@@ -63,7 +68,7 @@ fn parse_args(args: &[String]) -> (String, Option<usize>) {
         }
     }
 
-    (path, limit)
+    (path, limit, debug_graph)
 }
 use viewport::{
     adjust_viewport_after_terminal_resize, center_view_on_selected_row,
@@ -111,8 +116,21 @@ fn main() {
         std::process::exit(1);
     }
 
-    let (path_to_repo, commit_limit) = parse_args(&args);
-    let mut repo = Repo::open_with_limit(&path_to_repo, commit_limit);
+    let (path_to_repo, commit_limit, debug_graph) = parse_args(&args);
+    let repo = Repo::open_with_limit(&path_to_repo, commit_limit);
+
+    // Debug mode: print graph and exit
+    if debug_graph {
+        for (commit, graph_line) in repo.commits.iter().zip(repo.graph.iter()) {
+            let graph_str: String = graph_line.iter().map(|(ch, _)| ch).collect();
+            let message = commit.message.lines().next().unwrap_or("");
+            let short_sha = &commit.sha.to_string()[..7];
+            println!("{} {} {}", graph_str, short_sha, message);
+        }
+        std::process::exit(0);
+    }
+
+    let mut repo = repo;
     let mut terminal = initialize_terminal();
     let _ = execute!(std::io::stdout(), SetTitle(&repo.name));
     let mut state = State::new(&repo);
