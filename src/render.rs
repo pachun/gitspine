@@ -887,11 +887,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
                 ("p", "push", has_remote && has_local_branches),
             ],
             // Search
-            if has_active_search {
-                vec![("/", "search", true), ("n", "next", true), ("N", "prev", true)]
-            } else {
-                vec![("/", "search", true)]
-            },
+            vec![("/", "search", true), ("n", "next", has_active_search), ("N", "prev", has_active_search)],
             // Stage view
             vec![
                 ("tab", "stage view", has_changes),
