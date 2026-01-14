@@ -49,6 +49,20 @@ pub struct StagingHighlight {
     pub staged: HighlightedFile,
 }
 
+/// What type of discard is being confirmed
+#[derive(Clone)]
+pub enum DiscardType {
+    Hunk,
+    File { is_untracked: bool },
+}
+
+/// State for confirming a discard operation
+#[derive(Clone)]
+pub struct DiscardConfirmation {
+    pub discard_type: DiscardType,
+    pub file_path: String,
+}
+
 pub struct State {
     pub index_of_selected_row: usize,
     pub index_of_topmost_visible_row: usize,
@@ -82,6 +96,7 @@ pub struct State {
     pub details_selected_match_index: Option<usize>, // Index in the list of matches (for counter display)
     pub commit_view: Option<CommitViewState>, // Staging/commit view state
     pub is_confirming_revert: bool,
+    pub discard_confirmation: Option<DiscardConfirmation>,
     pub is_pushing: bool,
     pub push_branch_name: String,
     pub push_in_progress: Option<PushInProgress>,
@@ -131,6 +146,7 @@ impl State {
             details_selected_match_index: None,
             commit_view: None,
             is_confirming_revert: false,
+            discard_confirmation: None,
             is_pushing: false,
             push_branch_name: String::new(),
             push_in_progress: None,

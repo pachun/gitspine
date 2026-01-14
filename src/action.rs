@@ -96,6 +96,58 @@ impl Action {
         repo: &mut Repo,
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> bool {
+        // Handle discard confirmation mode
+        if let Some(confirmation) = state.discard_confirmation.clone() {
+            match self {
+                Action::CharY => {
+                    // Confirmed - perform the discard
+                    match &confirmation.discard_type {
+                        crate::state::DiscardType::Hunk => {
+                            // Find the hunk to discard
+                            if let Some(commit_view) = &state.commit_view {
+                                let hunk = find_topmost_visible_hunk(commit_view, true);
+                                if let Some(hunk) = hunk {
+                                    if let Err(e) = repo.discard_hunk(&confirmation.file_path, &hunk) {
+                                        state.flash_message = Some(FlashMessage {
+                                            message: format!("failed to discard hunk: {}", e),
+                                            shown_at: Instant::now(),
+                                        });
+                                    } else {
+                                        refresh_commit_view(state, repo);
+                                    }
+                                }
+                            }
+                        }
+                        crate::state::DiscardType::File { is_untracked } => {
+                            if let Err(e) = repo.discard_file(&confirmation.file_path, *is_untracked) {
+                                state.flash_message = Some(FlashMessage {
+                                    message: format!("failed to discard: {}", e),
+                                    shown_at: Instant::now(),
+                                });
+                            } else {
+                                let action = if *is_untracked { "deleted" } else { "discarded" };
+                                state.flash_message = Some(FlashMessage {
+                                    message: format!("{} {}", action, confirmation.file_path),
+                                    shown_at: Instant::now(),
+                                });
+                                refresh_commit_view(state, repo);
+                            }
+                        }
+                    }
+                    state.discard_confirmation = None;
+                }
+                Action::CharN | Action::Esc | Action::CtrlC => {
+                    // Cancelled
+                    state.discard_confirmation = None;
+                }
+                _ => {
+                    // Any other key cancels
+                    state.discard_confirmation = None;
+                }
+            }
+            return false;
+        }
+
         let commit_view = state.commit_view.as_mut().unwrap();
 
         match self {
@@ -298,6 +350,52 @@ impl Action {
                         } else {
                             refresh_commit_view(state, repo);
                         }
+                    }
+                }
+            }
+            Action::CharD => {
+                // Discard topmost visible hunk (only for unstaged files)
+                if commit_view.active_panel == CommitViewPanel::UnstagedFiles {
+                    if let Some(path) = &commit_view.viewing_file.clone() {
+                        // Check if file is untracked (can't discard individual hunks for untracked)
+                        let is_untracked = commit_view
+                            .unstaged_files
+                            .iter()
+                            .find(|f| &f.path == path)
+                            .map(|f| f.status == crate::repo::FileStatus::Untracked)
+                            .unwrap_or(false);
+
+                        if is_untracked {
+                            state.flash_message = Some(FlashMessage {
+                                message: "use D to delete untracked file".to_string(),
+                                shown_at: Instant::now(),
+                            });
+                        } else {
+                            // Set confirmation state
+                            state.discard_confirmation = Some(crate::state::DiscardConfirmation {
+                                discard_type: crate::state::DiscardType::Hunk,
+                                file_path: path.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            Action::Char('D') => {
+                // Discard entire file (only for unstaged files)
+                if commit_view.active_panel == CommitViewPanel::UnstagedFiles {
+                    if let Some(path) = &commit_view.viewing_file.clone() {
+                        let is_untracked = commit_view
+                            .unstaged_files
+                            .iter()
+                            .find(|f| &f.path == path)
+                            .map(|f| f.status == crate::repo::FileStatus::Untracked)
+                            .unwrap_or(false);
+
+                        // Set confirmation state
+                        state.discard_confirmation = Some(crate::state::DiscardConfirmation {
+                            discard_type: crate::state::DiscardType::File { is_untracked },
+                            file_path: path.clone(),
+                        });
                     }
                 }
             }

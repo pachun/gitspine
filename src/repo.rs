@@ -1028,6 +1028,53 @@ impl Repo {
         Ok(())
     }
 
+    /// Discard all changes to a file in the worktree
+    /// For untracked files, this deletes the file
+    /// For tracked files, this restores the file from the index
+    pub fn discard_file(&self, path: &str, is_untracked: bool) -> Result<(), String> {
+        let full_path = std::path::Path::new(&self.path).join(path);
+
+        if is_untracked {
+            // Delete the untracked file
+            std::fs::remove_file(&full_path)
+                .map_err(|e| format!("failed to delete file: {}", e))?;
+        } else {
+            // Restore from index using git checkout
+            let output = std::process::Command::new("git")
+                .args(["checkout", "--", path])
+                .current_dir(&self.path)
+                .output()
+                .map_err(|e| format!("failed to run git checkout: {}", e))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!("git checkout failed: {}", stderr.trim()));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Discard a single hunk from the worktree
+    /// This reverse-applies the hunk to the worktree file
+    pub fn discard_hunk(&self, path: &str, hunk: &Hunk) -> Result<(), String> {
+        let full_path = std::path::Path::new(&self.path).join(path);
+
+        // Read current worktree content
+        let worktree_content = std::fs::read_to_string(&full_path)
+            .map_err(|e| format!("failed to read file: {}", e))?;
+
+        // Reverse-apply the hunk (swap + and - lines to undo the change)
+        let reversed_hunk = reverse_hunk(hunk);
+        let new_content = apply_hunk_to_content(&worktree_content, &reversed_hunk)?;
+
+        // Write the new content back to the worktree
+        std::fs::write(&full_path, new_content)
+            .map_err(|e| format!("failed to write file: {}", e))?;
+
+        Ok(())
+    }
+
     /// Get file content from the index, or from HEAD if not in index, or empty if new
     fn get_index_content(&self, git_repo: &Repository, path: &str) -> Result<String, String> {
         let index = git_repo.index().map_err(|e| e.message().to_string())?;

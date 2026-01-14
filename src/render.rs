@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table};
 use ratatui::Frame;
 
 use crate::action::compute_details_match_lines;
@@ -1553,7 +1553,7 @@ fn render_file_tree(
 }
 
 /// Render the staging/commit view
-fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, _state: &State) {
+fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &State) {
     let area = frame.area();
 
     // Layout: Diff view fills space, file lists are fixed 8 lines (6 files + 2 border)
@@ -1608,6 +1608,63 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, _state: 
         commit_view.active_panel == CommitViewPanel::StagedFiles,
         Some(staged_hints),
     );
+
+    // Render discard confirmation dialog if active
+    if let Some(confirmation) = &state.discard_confirmation {
+        let (title, message) = match &confirmation.discard_type {
+            crate::state::DiscardType::Hunk => (
+                " Discard Hunk ",
+                format!("Discard this hunk from {}?", confirmation.file_path),
+            ),
+            crate::state::DiscardType::File { is_untracked } => {
+                if *is_untracked {
+                    (
+                        " Delete File ",
+                        format!("Delete untracked file {}?", confirmation.file_path),
+                    )
+                } else {
+                    (
+                        " Discard Changes ",
+                        format!("Discard all changes to {}?", confirmation.file_path),
+                    )
+                }
+            }
+        };
+
+        // Center the dialog
+        let dialog_width = 50u16.min(area.width.saturating_sub(4));
+        let dialog_height = 5u16;
+        let dialog_x = (area.width.saturating_sub(dialog_width)) / 2;
+        let dialog_y = (area.height.saturating_sub(dialog_height)) / 2;
+
+        let dialog_area = ratatui::layout::Rect::new(dialog_x, dialog_y, dialog_width, dialog_height);
+
+        // Clear the area behind the dialog
+        frame.render_widget(Clear, dialog_area);
+
+        let block = Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Red));
+
+        let inner = block.inner(dialog_area);
+        frame.render_widget(block, dialog_area);
+
+        // Render message and prompt
+        let text = vec![
+            Line::from(Span::styled(message, Style::default().fg(Color::White))),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("y", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                Span::raw(" yes   "),
+                Span::styled("n", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                Span::raw(" no"),
+            ]),
+        ];
+
+        let paragraph = Paragraph::new(text).alignment(ratatui::layout::Alignment::Center);
+        frame.render_widget(paragraph, inner);
+    }
 }
 
 /// Render the diff panel for the commit view
