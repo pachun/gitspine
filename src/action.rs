@@ -38,6 +38,7 @@ pub enum Action {
     CharD,
     CharR,
     ShiftR,
+    CharP,
     CtrlD,
     CtrlU,
     ShiftS,
@@ -80,6 +81,9 @@ impl Action {
             false
         } else if state.is_confirming_revert {
             self.execute_revert_confirmation_mode(state, repo);
+            false
+        } else if state.is_pushing {
+            self.execute_push_mode(state, repo);
             false
         } else {
             self.execute_normal_mode(state, repo, terminal)
@@ -413,7 +417,8 @@ impl Action {
             | Action::CharC
             | Action::CharD
             | Action::CharR
-            | Action::ShiftR => {
+            | Action::ShiftR
+            | Action::CharP => {
                 let c = match self {
                     Action::CharSlash => '/',
                     Action::CharQ => 'q',
@@ -432,6 +437,7 @@ impl Action {
                     Action::CharD => 'd',
                     Action::CharR => 'r',
                     Action::ShiftR => 'R',
+                    Action::CharP => 'p',
                     _ => unreachable!(),
                 };
                 type_search_character(state, c);
@@ -707,6 +713,31 @@ impl Action {
                     state.flash_message = None;
                 }
             }
+            Action::CharP => {
+                state.jump_distance_string.clear();
+                let selected_sha = repo.commits[state.index_of_selected_row].sha;
+                let has_local_branches = repo.has_local_branches_at(selected_sha);
+
+                if !repo.has_remote() {
+                    state.flash_message = Some(FlashMessage {
+                        message: "no remote configured".to_string(),
+                        shown_at: Instant::now(),
+                    });
+                } else if !has_local_branches {
+                    state.flash_message = Some(FlashMessage {
+                        message: "no local branch at this commit".to_string(),
+                        shown_at: Instant::now(),
+                    });
+                } else {
+                    // Enter push mode - pre-fill with first local branch at this commit
+                    let local_branches = repo.local_branches_at(selected_sha);
+                    state.is_pushing = true;
+                    state.push_branch_name = local_branches.first().cloned().unwrap_or_default();
+                    state.tab_complete_base = None;
+                    state.tab_complete_index = 0;
+                    state.flash_message = None;
+                }
+            }
             Action::CtrlD => {
                 state.jump_distance_string.clear();
                 let half_page = git_graph_height(state, terminal) / 2;
@@ -839,7 +870,8 @@ impl Action {
             | Action::CharC
             | Action::CharD
             | Action::CharR
-            | Action::ShiftR => {
+            | Action::ShiftR
+            | Action::CharP => {
                 let c = match self {
                     Action::CharSlash => '/',
                     Action::CharQ => 'q',
@@ -858,6 +890,7 @@ impl Action {
                     Action::CharD => 'd',
                     Action::CharR => 'r',
                     Action::ShiftR => 'R',
+                    Action::CharP => 'p',
                     _ => unreachable!(),
                 };
                 state.branch_name.push(c);
@@ -954,7 +987,8 @@ impl Action {
             | Action::CharC
             | Action::CharD
             | Action::CharR
-            | Action::ShiftR => {
+            | Action::ShiftR
+            | Action::CharP => {
                 state.tab_complete_base = None;
                 state.tab_complete_index = 0;
                 let c = match self {
@@ -975,6 +1009,7 @@ impl Action {
                     Action::CharD => 'd',
                     Action::CharR => 'r',
                     Action::ShiftR => 'R',
+                    Action::CharP => 'p',
                     _ => unreachable!(),
                 };
                 state.delete_branch_name.push(c);
@@ -1093,7 +1128,8 @@ impl Action {
             | Action::CharC
             | Action::CharD
             | Action::CharR
-            | Action::ShiftR => {
+            | Action::ShiftR
+            | Action::CharP => {
                 state.tab_complete_base = None;
                 state.tab_complete_index = 0;
                 let c = match self {
@@ -1114,6 +1150,7 @@ impl Action {
                     Action::CharD => 'd',
                     Action::CharR => 'r',
                     Action::ShiftR => 'R',
+                    Action::CharP => 'p',
                     _ => unreachable!(),
                 };
                 state.checkout_branch_name.push(c);
@@ -1224,7 +1261,8 @@ impl Action {
             | Action::CharC
             | Action::CharD
             | Action::CharR
-            | Action::ShiftR => {
+            | Action::ShiftR
+            | Action::CharP => {
                 state.tab_complete_base = None;
                 state.tab_complete_index = 0;
                 let c = match self {
@@ -1245,6 +1283,7 @@ impl Action {
                     Action::CharD => 'd',
                     Action::CharR => 'r',
                     Action::ShiftR => 'R',
+                    Action::CharP => 'p',
                     _ => unreachable!(),
                 };
                 state.rebase_target.push(c);
@@ -1317,6 +1356,146 @@ impl Action {
                 repo.refresh();
             }
             _ => {}
+        }
+    }
+
+    fn execute_push_mode(&self, state: &mut State, repo: &mut Repo) {
+        match self {
+            Action::Esc | Action::CtrlC => {
+                state.is_pushing = false;
+                state.push_branch_name.clear();
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+            }
+            Action::Enter => {
+                if state.push_branch_name.is_empty() {
+                    state.flash_message = Some(FlashMessage {
+                        message: "no branch name".to_string(),
+                        shown_at: Instant::now(),
+                    });
+                } else {
+                    let output = std::process::Command::new("git")
+                        .args(["push", "-u", "origin", &state.push_branch_name])
+                        .current_dir(repo.path())
+                        .output();
+
+                    match output {
+                        Ok(result) if result.status.success() => {
+                            repo.refresh();
+                            state.flash_message = Some(FlashMessage {
+                                message: format!("pushed {}", state.push_branch_name),
+                                shown_at: Instant::now(),
+                            });
+                        }
+                        Ok(result) => {
+                            let stderr = String::from_utf8_lossy(&result.stderr);
+                            state.flash_message = Some(FlashMessage {
+                                message: format!(
+                                    "push failed: {}",
+                                    stderr.lines().next().unwrap_or("unknown error")
+                                ),
+                                shown_at: Instant::now(),
+                            });
+                        }
+                        Err(e) => {
+                            state.flash_message = Some(FlashMessage {
+                                message: format!("push failed: {}", e),
+                                shown_at: Instant::now(),
+                            });
+                        }
+                    }
+                }
+
+                state.is_pushing = false;
+                state.push_branch_name.clear();
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+            }
+            Action::Tab => {
+                let selected_sha = repo.commits[state.index_of_selected_row].sha;
+                let local_branches = repo.local_branches_at(selected_sha);
+                let (completed, new_base, new_index) = tab_complete_branch(
+                    &state.push_branch_name,
+                    &local_branches,
+                    &state.tab_complete_base,
+                    state.tab_complete_index,
+                );
+                state.push_branch_name = completed;
+                state.tab_complete_base = new_base;
+                state.tab_complete_index = new_index;
+            }
+            Action::Backspace => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+                if state.push_branch_name.is_empty() {
+                    state.is_pushing = false;
+                } else {
+                    state.push_branch_name.pop();
+                }
+            }
+            Action::CharSlash
+            | Action::CharQ
+            | Action::CharN
+            | Action::ShiftN
+            | Action::CharJ
+            | Action::CharK
+            | Action::CharG
+            | Action::ShiftG
+            | Action::CharH
+            | Action::CharY
+            | Action::CharO
+            | Action::CharL
+            | Action::CharB
+            | Action::CharC
+            | Action::CharD
+            | Action::CharR
+            | Action::ShiftR
+            | Action::CharP => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+                let c = match self {
+                    Action::CharSlash => '/',
+                    Action::CharQ => 'q',
+                    Action::CharN => 'n',
+                    Action::ShiftN => 'N',
+                    Action::CharJ => 'j',
+                    Action::CharK => 'k',
+                    Action::CharG => 'g',
+                    Action::ShiftG => 'G',
+                    Action::CharH => 'h',
+                    Action::CharY => 'y',
+                    Action::CharO => 'o',
+                    Action::CharL => 'l',
+                    Action::CharB => 'b',
+                    Action::CharC => 'c',
+                    Action::CharD => 'd',
+                    Action::CharR => 'r',
+                    Action::ShiftR => 'R',
+                    Action::CharP => 'p',
+                    _ => unreachable!(),
+                };
+                state.push_branch_name.push(c);
+            }
+            Action::Digit(c) | Action::Char(c) => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+                state.push_branch_name.push(*c);
+            }
+            Action::Space => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+                state.push_branch_name.push(' ');
+            }
+            Action::Up
+            | Action::Down
+            | Action::CtrlD
+            | Action::CtrlU
+            | Action::ShiftJ
+            | Action::ShiftK
+            | Action::ShiftS
+            | Action::ShiftU
+            | Action::ShiftL
+            | Action::None => {}
         }
     }
 

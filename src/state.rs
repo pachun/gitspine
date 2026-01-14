@@ -69,6 +69,8 @@ pub struct State {
     pub details_selected_match_index: Option<usize>, // Index in the list of matches (for counter display)
     pub commit_view: Option<CommitViewState>, // Staging/commit view state
     pub is_confirming_revert: bool,
+    pub is_pushing: bool,
+    pub push_branch_name: String,
 }
 
 impl State {
@@ -115,6 +117,8 @@ impl State {
             details_selected_match_index: None,
             commit_view: None,
             is_confirming_revert: false,
+            is_pushing: false,
+            push_branch_name: String::new(),
         }
     }
 }

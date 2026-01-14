@@ -603,6 +603,15 @@ impl Repo {
         git_repo.graph_descendant_of(head_sha, sha).unwrap_or(false)
     }
 
+    /// Check if the repository has a remote named "origin"
+    pub fn has_remote(&self) -> bool {
+        let git_repo = match Repository::open(&self.path) {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        git_repo.find_remote("origin").is_ok()
+    }
+
     /// Load current worktree status (staged and unstaged changes)
     pub fn load_worktree_status(&self) -> Option<WorktreeStatus> {
         let git_repo = Repository::open(&self.path).ok()?;

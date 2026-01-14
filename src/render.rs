@@ -405,6 +405,8 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
         Color::Red
     } else if state.is_checking_out {
         Color::Green
+    } else if state.is_pushing {
+        Color::Blue
     } else if search_active {
         Color::White
     } else {
@@ -512,6 +514,29 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
 
         let hint = Paragraph::new(Line::from(vec![Span::styled(
             "empty → detached   tab → complete   esc → cancel",
+            Style::default().fg(Color::DarkGray),
+        )]))
+        .alignment(ratatui::layout::Alignment::Right);
+        frame.render_widget(hint, search_inner);
+    } else if state.is_pushing {
+        // Push mode: blue input with cursor and grey preview
+        let selected_sha = repo.commits[state.index_of_selected_row].sha;
+        let local_branches = repo.local_branches_at(selected_sha);
+        let preview = get_tab_preview(&state.push_branch_name, &local_branches);
+
+        let mut spans = vec![
+            Span::styled("push: ", Style::default().fg(Color::Blue)),
+            Span::styled(&state.push_branch_name, Style::default().fg(Color::Blue)),
+            Span::styled("█", Style::default().fg(Color::Blue)),
+        ];
+        if let Some(preview_text) = preview {
+            spans.push(Span::styled(preview_text, Style::default().fg(Color::DarkGray)));
+        }
+        let push_input = Paragraph::new(Line::from(spans));
+        frame.render_widget(push_input, search_inner);
+
+        let hint = Paragraph::new(Line::from(vec![Span::styled(
+            "tab → complete   enter → push   esc → cancel",
             Style::default().fg(Color::DarkGray),
         )]))
         .alignment(ratatui::layout::Alignment::Right);
@@ -780,7 +805,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
 
         // Grey out most of help panel during typing modes (except first column)
         let in_typing_mode =
-            state.is_typing_search_term || state.is_creating_branch || state.is_deleting_branch || state.is_checking_out;
+            state.is_typing_search_term || state.is_creating_branch || state.is_deleting_branch || state.is_checking_out || state.is_pushing;
         let help_style = Style::default().fg(Color::DarkGray);
 
         // Define columns: each column is a vec of (key, description) pairs
@@ -820,6 +845,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
         let commit_on_remote = repo.commit_is_on_remote(selected_sha, state.index_of_selected_row);
         let has_changes = repo.has_changes();
         let is_in_head_history = repo.is_ancestor_of_head(selected_sha);
+        let has_remote = repo.has_remote();
         let remote_name = repo.remote_host_name().unwrap_or_else(|| "github".to_string());
         let open_in_label = format!("open in {}", remote_name);
 
@@ -851,6 +877,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
                 ("y", "copy sha", true),
                 ("o", &open_in_label, commit_on_remote),
                 ("R", "revert", is_in_head_history),
+                ("p", "push", has_remote && has_local_branches),
             ],
             // Stage view
             vec![

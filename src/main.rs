@@ -202,6 +202,7 @@ fn main() {
                     (KeyCode::Char('d'), _) => Action::CharD,
                     (KeyCode::Char('r'), _) => Action::CharR,
                     (KeyCode::Char('R'), _) => Action::ShiftR,
+                    (KeyCode::Char('p'), _) => Action::CharP,
                     (KeyCode::Char(c), _) if c.is_ascii_digit() => Action::Digit(c),
                     (KeyCode::Char(c), _) => Action::Char(c),
                     _ => Action::None,
