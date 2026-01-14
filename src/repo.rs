@@ -581,28 +581,6 @@ impl Repo {
         }
     }
 
-    /// Check if a commit is an ancestor of HEAD (i.e., in HEAD's history)
-    pub fn is_ancestor_of_head(&self, sha: Sha) -> bool {
-        let head_sha = match &self.head {
-            Head::Attached { branch_name } => self.branches[branch_name],
-            Head::Detached { sha } => *sha,
-        };
-
-        // HEAD itself is in its own history
-        if sha == head_sha {
-            return true;
-        }
-
-        let git_repo = match Repository::open(&self.path) {
-            Ok(r) => r,
-            Err(_) => return false,
-        };
-
-        // A commit is an ancestor of HEAD if HEAD is a descendant of it
-        // graph_descendant_of(commit, ancestor) returns true if commit is a descendant of ancestor
-        git_repo.graph_descendant_of(head_sha, sha).unwrap_or(false)
-    }
-
     /// Load current worktree status (staged and unstaged changes)
     pub fn load_worktree_status(&self) -> Option<WorktreeStatus> {
         let git_repo = Repository::open(&self.path).ok()?;
