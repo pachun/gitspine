@@ -813,6 +813,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
                 ("c", "checkout", true),
                 ("b", "create branch", true),
                 ("d", "delete branch", has_local_branches),
+                ("r", "rebase", has_local_branches),
             ],
             // Other operations
             vec![
