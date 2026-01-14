@@ -136,6 +136,34 @@ fn main() {
     let mut state = State::new(&repo);
     let watcher_rx = watcher::watch_git_dir(&path_to_repo);
 
+    // If there are uncommitted changes, open staging view by default
+    if repo.has_changes() {
+        if let Some(status) = repo.load_worktree_status() {
+            let viewing_file = status
+                .unstaged_files
+                .first()
+                .or(status.staged_files.first())
+                .map(|f| f.path.clone());
+
+            state.commit_view = Some(state::CommitViewState {
+                active_panel: if !status.unstaged_files.is_empty() {
+                    state::CommitViewPanel::UnstagedFiles
+                } else {
+                    state::CommitViewPanel::StagedFiles
+                },
+                unstaged_files: status.unstaged_files,
+                staged_files: status.staged_files,
+                unstaged_selected: 0,
+                staged_selected: 0,
+                unstaged_scroll: 0,
+                staged_scroll: 0,
+                viewing_file,
+                diff_scroll: 0,
+                staging_highlight: None,
+            });
+        }
+    }
+
     center_view_on_selected_row(&mut state, &terminal);
 
     // Initial render
