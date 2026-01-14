@@ -808,7 +808,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
                 vec![("q", "back", true), ("^c", "back", true), ("esc", "back", true)]
             }
         } else if has_active_search {
-            vec![("q", "clear search", true), ("^c", "quit", true), ("esc", "quit", true)]
+            vec![("q", "clear search", true), ("^c", "clear search", true), ("esc", "clear search", true)]
         } else {
             vec![("q", "quit", true), ("^c", "quit", true), ("esc", "quit", true)]
         };
