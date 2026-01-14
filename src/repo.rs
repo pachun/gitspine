@@ -717,6 +717,9 @@ impl Repo {
     ) -> Option<(Vec<Hunk>, usize, usize)> {
         let mut diff_opts = git2::DiffOptions::new();
         diff_opts.pathspec(path);
+        // Include untracked files and their content in the diff
+        diff_opts.include_untracked(true);
+        diff_opts.show_untracked_content(true);
 
         let diff = git_repo
             .diff_index_to_workdir(None, Some(&mut diff_opts))
