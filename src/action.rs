@@ -95,7 +95,11 @@ impl Action {
                 // Close commit view
                 state.commit_view = None;
             }
-            Action::Tab | Action::CharH | Action::CharL => {
+            Action::Tab => {
+                // Close commit view (go back to graph)
+                state.commit_view = None;
+            }
+            Action::CharH | Action::CharL => {
                 // Toggle between Unstaged and Staged panels
                 commit_view.active_panel = match commit_view.active_panel {
                     CommitViewPanel::UnstagedFiles => CommitViewPanel::StagedFiles,

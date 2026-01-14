@@ -788,6 +788,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
         let is_on_head = selected_sha == head_sha;
         let has_local_branches = repo.has_local_branches_at(selected_sha);
         let commit_on_remote = repo.commit_is_on_remote(selected_sha, state.index_of_selected_row);
+        let has_changes = repo.has_changes();
         let remote_name = repo.remote_host_name().unwrap_or_else(|| "github".to_string());
         let open_in_label = format!("open in {}", remote_name);
 
@@ -813,10 +814,14 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
                 ("b", "create branch", true),
                 ("d", "delete branch", has_local_branches),
             ],
-            // Commit operations
+            // Other operations
             vec![
                 ("y", "copy sha", true),
                 ("o", &open_in_label, commit_on_remote),
+            ],
+            // Stage view
+            vec![
+                ("tab", "stage view", has_changes),
             ],
         ];
 
@@ -1515,7 +1520,7 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, _state: 
         commit_view.unstaged_selected,
         commit_view.unstaged_scroll,
         commit_view.active_panel == CommitViewPanel::UnstagedFiles,
-        Some("q:back  o:open  j/k:nav  J/K:scroll  s:hunk  S:file"),
+        Some("tab:back  o:open  j/k:nav  J/K:scroll  s:hunk  S:file"),
     );
 
     // Render staged files list (bottom right) with stage-specific hints
