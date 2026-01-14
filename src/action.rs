@@ -1374,36 +1374,47 @@ impl Action {
                         shown_at: Instant::now(),
                     });
                 } else {
-                    let output = std::process::Command::new("git")
-                        .args(["push", "-u", "origin", &state.push_branch_name])
-                        .current_dir(repo.path())
-                        .output();
+                    // Spawn push in background thread
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let branch_name = state.push_branch_name.clone();
+                    let repo_path = repo.path().to_string();
 
-                    match output {
-                        Ok(result) if result.status.success() => {
-                            repo.refresh();
-                            state.flash_message = Some(FlashMessage {
-                                message: format!("pushed {}", state.push_branch_name),
-                                shown_at: Instant::now(),
-                            });
-                        }
-                        Ok(result) => {
-                            let stderr = String::from_utf8_lossy(&result.stderr);
-                            state.flash_message = Some(FlashMessage {
-                                message: format!(
-                                    "push failed: {}",
-                                    stderr.lines().next().unwrap_or("unknown error")
-                                ),
-                                shown_at: Instant::now(),
-                            });
-                        }
-                        Err(e) => {
-                            state.flash_message = Some(FlashMessage {
+                    std::thread::spawn(move || {
+                        let output = std::process::Command::new("git")
+                            .args(["push", "-u", "origin", &branch_name])
+                            .current_dir(&repo_path)
+                            .output();
+
+                        let result = match output {
+                            Ok(result) if result.status.success() => {
+                                crate::state::PushResult {
+                                    success: true,
+                                    message: format!("pushed {}", branch_name),
+                                }
+                            }
+                            Ok(result) => {
+                                let stderr = String::from_utf8_lossy(&result.stderr);
+                                crate::state::PushResult {
+                                    success: false,
+                                    message: format!(
+                                        "push failed: {}",
+                                        stderr.lines().next().unwrap_or("unknown error")
+                                    ),
+                                }
+                            }
+                            Err(e) => crate::state::PushResult {
+                                success: false,
                                 message: format!("push failed: {}", e),
-                                shown_at: Instant::now(),
-                            });
-                        }
-                    }
+                            },
+                        };
+                        let _ = tx.send(result);
+                    });
+
+                    state.push_in_progress = Some(crate::state::PushInProgress {
+                        branch_name: state.push_branch_name.clone(),
+                        receiver: rx,
+                        spinner_frame: 0,
+                    });
                 }
 
                 state.is_pushing = false;

@@ -1,7 +1,21 @@
+use std::sync::mpsc::Receiver;
 use std::time::Instant;
 
 use crate::highlight::{HighlightCache, HighlightedFile};
 use crate::repo::{CommitDetails, Repo, WorktreeFile};
+
+/// Result of an async push operation
+pub struct PushResult {
+    pub success: bool,
+    pub message: String,
+}
+
+/// State for an in-progress push operation
+pub struct PushInProgress {
+    pub branch_name: String,
+    pub receiver: Receiver<PushResult>,
+    pub spinner_frame: usize,
+}
 
 pub struct FlashMessage {
     pub message: String,
@@ -71,6 +85,7 @@ pub struct State {
     pub is_confirming_revert: bool,
     pub is_pushing: bool,
     pub push_branch_name: String,
+    pub push_in_progress: Option<PushInProgress>,
 }
 
 impl State {
@@ -119,6 +134,7 @@ impl State {
             is_confirming_revert: false,
             is_pushing: false,
             push_branch_name: String::new(),
+            push_in_progress: None,
         }
     }
 }

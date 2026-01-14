@@ -181,9 +181,41 @@ fn main() {
             needs_render = true;
         }
 
+        // Check for push completion
+        if let Some(ref mut push_in_progress) = state.push_in_progress {
+            match push_in_progress.receiver.try_recv() {
+                Ok(result) => {
+                    // Push completed
+                    state.flash_message = Some(state::FlashMessage {
+                        message: result.message,
+                        shown_at: std::time::Instant::now(),
+                    });
+                    if result.success {
+                        repo.refresh();
+                    }
+                    state.push_in_progress = None;
+                    needs_render = true;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // Still in progress - animate spinner
+                    push_in_progress.spinner_frame = push_in_progress.spinner_frame.wrapping_add(1);
+                    needs_render = true;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // Thread died unexpectedly
+                    state.flash_message = Some(state::FlashMessage {
+                        message: "push failed: thread died".to_string(),
+                        shown_at: std::time::Instant::now(),
+                    });
+                    state.push_in_progress = None;
+                    needs_render = true;
+                }
+            }
+        }
+
         // Poll for events (with timeout to allow watcher checks)
         if !event::poll(Duration::from_millis(100)).unwrap() {
-            // No event, but render if watcher triggered a refresh
+            // No event, but render if watcher triggered a refresh or push in progress
             if needs_render {
                 adjust_viewport_after_terminal_resize(&mut state, &terminal, repo.commits.len());
                 terminal
