@@ -1506,7 +1506,7 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, _state: 
     // Render diff view (top panel)
     render_commit_diff_panel(frame, diff_area, commit_view);
 
-    // Render unstaged files list (bottom left) with key hints
+    // Render unstaged files list (bottom left) with shared navigation hints
     render_file_list_panel(
         frame,
         unstaged_area,
@@ -1515,10 +1515,15 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, _state: 
         commit_view.unstaged_selected,
         commit_view.unstaged_scroll,
         commit_view.active_panel == CommitViewPanel::UnstagedFiles,
-        Some("j/k:files  J/K:scroll  s:hunk  S:file  o:open"),
+        Some("q:back  o:open  j/k:nav  J/K:scroll  s:hunk  S:file"),
     );
 
-    // Render staged files list (bottom right)
+    // Render staged files list (bottom right) with stage-specific hints
+    let staged_hints = if commit_view.staged_files.is_empty() {
+        "u:hunk  U:file"
+    } else {
+        "u:hunk  U:file  c:commit"
+    };
     render_file_list_panel(
         frame,
         staged_area,
@@ -1527,7 +1532,7 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, _state: 
         commit_view.staged_selected,
         commit_view.staged_scroll,
         commit_view.active_panel == CommitViewPanel::StagedFiles,
-        Some("u:hunk  U:file  o:open"),
+        Some(staged_hints),
     );
 }
 
