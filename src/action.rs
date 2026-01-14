@@ -1800,7 +1800,7 @@ fn commit_with_editor(state: &mut State, repo: &mut Repo, amend: bool) -> bool {
 
     // Create temp file for commit message
     let temp_dir = std::env::temp_dir();
-    let temp_file = temp_dir.join("gg_commit_msg.txt");
+    let temp_file = temp_dir.join("gitspine_commit_msg.md");
 
     // Write initial message
     let initial_message = if amend {
