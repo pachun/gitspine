@@ -1865,14 +1865,33 @@ fn commit_with_editor(state: &mut State, repo: &mut Repo, amend: bool) -> bool {
                                 // Refresh repo state
                                 repo.refresh();
 
-                                // Close commit view
-                                state.commit_view = None;
-
                                 let action = if amend { "amended" } else { "committed" };
-                                state.flash_message = Some(FlashMessage {
-                                    message: format!("{} successfully", action),
-                                    shown_at: Instant::now(),
-                                });
+
+                                // Check if there are more unstaged changes
+                                if let Some(status) = repo.load_worktree_status() {
+                                    if !status.unstaged_files.is_empty() {
+                                        // Stay in staging view for incremental commits
+                                        refresh_commit_view(state, repo);
+                                        state.flash_message = Some(FlashMessage {
+                                            message: format!("{} successfully - more changes available", action),
+                                            shown_at: Instant::now(),
+                                        });
+                                    } else {
+                                        // No more unstaged changes, close commit view
+                                        state.commit_view = None;
+                                        state.flash_message = Some(FlashMessage {
+                                            message: format!("{} successfully", action),
+                                            shown_at: Instant::now(),
+                                        });
+                                    }
+                                } else {
+                                    // Couldn't load status, just close
+                                    state.commit_view = None;
+                                    state.flash_message = Some(FlashMessage {
+                                        message: format!("{} successfully", action),
+                                        shown_at: Instant::now(),
+                                    });
+                                }
                             }
                             Err(e) => {
                                 state.flash_message = Some(FlashMessage {
