@@ -859,12 +859,6 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
                 ("G", "bottom", true),
                 ("h", if show_details { "back" } else { "goto head" }, if show_details { true } else { !is_on_head }),
             ],
-            // Search
-            if has_active_search {
-                vec![("/", "search", true), ("n", "next", true), ("N", "prev", true)]
-            } else {
-                vec![("/", "search", true)]
-            },
             // Branch operations
             vec![
                 ("c", "checkout", true),
@@ -879,6 +873,12 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
                 ("R", "revert", is_in_head_history),
                 ("p", "push", has_remote && has_local_branches),
             ],
+            // Search
+            if has_active_search {
+                vec![("/", "search", true), ("n", "next", true), ("N", "prev", true)]
+            } else {
+                vec![("/", "search", true)]
+            },
             // Stage view
             vec![
                 ("tab", "stage view", has_changes),
