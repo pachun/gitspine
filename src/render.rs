@@ -401,7 +401,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
         Color::Magenta
     } else if state.is_creating_branch {
         Color::Cyan
-    } else if state.is_deleting_branch {
+    } else if state.is_deleting_branch || state.is_confirming_revert {
         Color::Red
     } else if state.is_checking_out {
         Color::Green
@@ -459,6 +459,36 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
 
         let hint = Paragraph::new(Line::from(vec![Span::styled(
             "enter → delete   esc → cancel",
+            Style::default().fg(Color::DarkGray),
+        )]))
+        .alignment(ratatui::layout::Alignment::Right);
+        frame.render_widget(hint, search_inner);
+    } else if state.is_confirming_revert {
+        // Revert confirmation mode
+        let selected_sha = repo.commits[state.index_of_selected_row].sha;
+        let short_sha = &selected_sha.to_string()[..7];
+        let message = repo.commits[state.index_of_selected_row]
+            .message
+            .lines()
+            .next()
+            .unwrap_or("");
+        // Truncate message if too long
+        let max_msg_len = 40;
+        let truncated_msg = if message.len() > max_msg_len {
+            format!("{}...", &message[..max_msg_len])
+        } else {
+            message.to_string()
+        };
+
+        let revert_prompt = Paragraph::new(Line::from(vec![
+            Span::styled("revert ", Style::default().fg(Color::Red)),
+            Span::styled(short_sha, Style::default().fg(Color::Red).bold()),
+            Span::styled(format!(" \"{}\"?", truncated_msg), Style::default().fg(Color::Red)),
+        ]));
+        frame.render_widget(revert_prompt, search_inner);
+
+        let hint = Paragraph::new(Line::from(vec![Span::styled(
+            "enter → revert   esc → cancel",
             Style::default().fg(Color::DarkGray),
         )]))
         .alignment(ratatui::layout::Alignment::Right);

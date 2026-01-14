@@ -78,6 +78,9 @@ impl Action {
         } else if state.is_entering_rebase_target {
             self.execute_rebase_target_mode(state, repo);
             false
+        } else if state.is_confirming_revert {
+            self.execute_revert_confirmation_mode(state, repo);
+            false
         } else {
             self.execute_normal_mode(state, repo, terminal)
         }
@@ -349,12 +352,12 @@ impl Action {
                         shown_at: Instant::now(),
                     });
                 } else {
-                    return commit_with_editor(state, repo, false);
+                    return commit_with_editor(state, repo, terminal, false);
                 }
             }
             Action::Char('a') => {
                 // Amend commit with external editor
-                return commit_with_editor(state, repo, true);
+                return commit_with_editor(state, repo, terminal, true);
             }
             _ => {}
         }
@@ -699,34 +702,9 @@ impl Action {
                         shown_at: Instant::now(),
                     });
                 } else {
-                    // Run git revert
-                    let output = std::process::Command::new("git")
-                        .args(["revert", "--no-edit", &selected_sha.to_string()])
-                        .current_dir(repo.path())
-                        .output();
-
-                    match output {
-                        Ok(result) if result.status.success() => {
-                            repo.refresh();
-                            state.flash_message = Some(FlashMessage {
-                                message: format!("reverted {}", &selected_sha.to_string()[..7]),
-                                shown_at: Instant::now(),
-                            });
-                        }
-                        Ok(result) => {
-                            let stderr = String::from_utf8_lossy(&result.stderr);
-                            state.flash_message = Some(FlashMessage {
-                                message: format!("revert failed: {}", stderr.lines().next().unwrap_or("unknown error")),
-                                shown_at: Instant::now(),
-                            });
-                        }
-                        Err(e) => {
-                            state.flash_message = Some(FlashMessage {
-                                message: format!("revert failed: {}", e),
-                                shown_at: Instant::now(),
-                            });
-                        }
-                    }
+                    // Enter revert confirmation mode
+                    state.is_confirming_revert = true;
+                    state.flash_message = None;
                 }
             }
             Action::CtrlD => {
@@ -1341,6 +1319,48 @@ impl Action {
             _ => {}
         }
     }
+
+    fn execute_revert_confirmation_mode(&self, state: &mut State, repo: &mut Repo) {
+        match self {
+            Action::Enter => {
+                // Execute the revert
+                let selected_sha = repo.commits[state.index_of_selected_row].sha;
+                let output = std::process::Command::new("git")
+                    .args(["revert", "--no-edit", &selected_sha.to_string()])
+                    .current_dir(repo.path())
+                    .output();
+
+                match output {
+                    Ok(result) if result.status.success() => {
+                        repo.refresh();
+                        state.flash_message = Some(FlashMessage {
+                            message: format!("reverted {}", &selected_sha.to_string()[..7]),
+                            shown_at: Instant::now(),
+                        });
+                    }
+                    Ok(result) => {
+                        let stderr = String::from_utf8_lossy(&result.stderr);
+                        state.flash_message = Some(FlashMessage {
+                            message: format!("revert failed: {}", stderr.lines().next().unwrap_or("unknown error")),
+                            shown_at: Instant::now(),
+                        });
+                    }
+                    Err(e) => {
+                        state.flash_message = Some(FlashMessage {
+                            message: format!("revert failed: {}", e),
+                            shown_at: Instant::now(),
+                        });
+                    }
+                }
+                state.is_confirming_revert = false;
+            }
+            Action::Esc | Action::CtrlC => {
+                // Cancel revert
+                state.is_confirming_revert = false;
+            }
+            _ => {}
+        }
+    }
 }
 
 fn execute_rebase(state: &mut State, repo: &mut Repo) {
@@ -1849,7 +1869,12 @@ fn common_prefix_of(strings: &[&String]) -> String {
 }
 
 /// Open external editor for commit message and create commit
-fn commit_with_editor(state: &mut State, repo: &mut Repo, amend: bool) -> bool {
+fn commit_with_editor(
+    state: &mut State,
+    repo: &mut Repo,
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    amend: bool,
+) -> bool {
     use std::fs;
     use std::process::Command;
 
@@ -1885,8 +1910,14 @@ fn commit_with_editor(state: &mut State, repo: &mut Repo, amend: bool) -> bool {
         .arg(&temp_file)
         .status();
 
-    // Reinitialize terminal
-    let _ = ratatui::init();
+    // Restore terminal state (raw mode + alternate screen)
+    let _ = crossterm::terminal::enable_raw_mode();
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::terminal::EnterAlternateScreen,
+    );
+    // Clear terminal's internal buffer to force full redraw
+    let _ = terminal.clear();
 
     match editor_result {
         Ok(status) if status.success() => {

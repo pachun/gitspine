@@ -68,6 +68,7 @@ pub struct State {
     pub details_selected_match_line: Option<usize>, // Line index of currently selected search match
     pub details_selected_match_index: Option<usize>, // Index in the list of matches (for counter display)
     pub commit_view: Option<CommitViewState>, // Staging/commit view state
+    pub is_confirming_revert: bool,
 }
 
 impl State {
@@ -113,6 +114,7 @@ impl State {
             details_selected_match_line: None,
             details_selected_match_index: None,
             commit_view: None,
+            is_confirming_revert: false,
         }
     }
 }
