@@ -758,13 +758,13 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
         )]));
         frame.render_widget(left_display, search_inner);
 
-        // Only show hotkey hint if no active flash message
+        // Only show hotkey hint if no active flash message and no push in progress
         let has_flash = state
             .flash_message
             .as_ref()
             .map(|m| m.shown_at.elapsed().as_secs() < 3)
             .unwrap_or(false);
-        if !has_flash {
+        if !has_flash && state.push_in_progress.is_none() {
             let hotkey_hint = if state.is_showing_help_panel {
                 "? → hide hotkeys"
             } else {

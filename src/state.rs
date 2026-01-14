@@ -12,7 +12,6 @@ pub struct PushResult {
 
 /// State for an in-progress push operation
 pub struct PushInProgress {
-    pub branch_name: String,
     pub receiver: Receiver<PushResult>,
     pub spinner_frame: usize,
 }

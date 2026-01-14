@@ -1411,7 +1411,6 @@ impl Action {
                     });
 
                     state.push_in_progress = Some(crate::state::PushInProgress {
-                        branch_name: state.push_branch_name.clone(),
                         receiver: rx,
                         spinner_frame: 0,
                     });
