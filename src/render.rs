@@ -97,7 +97,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
         vec![
             Constraint::Min(1),    // main table
             Constraint::Length(3), // search bar
-            Constraint::Length(4), // help panel
+            Constraint::Length(5), // help panel
         ]
     } else {
         vec![
