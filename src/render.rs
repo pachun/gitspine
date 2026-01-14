@@ -1520,7 +1520,7 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, _state: 
         commit_view.unstaged_selected,
         commit_view.unstaged_scroll,
         commit_view.active_panel == CommitViewPanel::UnstagedFiles,
-        Some("tab:back  o:open  j/k:nav  J/K:scroll  s:hunk  S:file"),
+        Some("tab:back  o:open  j/k:scroll  J/K:files  s:hunk  S:file"),
     );
 
     // Render staged files list (bottom right) with stage-specific hints

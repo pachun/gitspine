@@ -120,6 +120,16 @@ impl Action {
                 update_staging_highlight(state);
             }
             Action::CharJ | Action::Down => {
+                // Scroll diff down
+                let viewport = diff_viewport_height(terminal);
+                let max_scroll = compute_max_diff_scroll(commit_view, viewport);
+                commit_view.diff_scroll = (commit_view.diff_scroll + 1).min(max_scroll);
+            }
+            Action::CharK | Action::Up => {
+                // Scroll diff up
+                commit_view.diff_scroll = commit_view.diff_scroll.saturating_sub(1);
+            }
+            Action::ShiftJ => {
                 // Move to next file in active panel
                 let file_changed = match commit_view.active_panel {
                     CommitViewPanel::UnstagedFiles => {
@@ -159,7 +169,7 @@ impl Action {
                     update_staging_highlight(state);
                 }
             }
-            Action::CharK | Action::Up => {
+            Action::ShiftK => {
                 // Move to previous file in active panel
                 let file_changed = match commit_view.active_panel {
                     CommitViewPanel::UnstagedFiles => {
@@ -194,16 +204,6 @@ impl Action {
                 if file_changed {
                     update_staging_highlight(state);
                 }
-            }
-            Action::ShiftJ => {
-                // Scroll diff down
-                let viewport = diff_viewport_height(terminal);
-                let max_scroll = compute_max_diff_scroll(commit_view, viewport);
-                commit_view.diff_scroll = (commit_view.diff_scroll + 1).min(max_scroll);
-            }
-            Action::ShiftK => {
-                // Scroll diff up
-                commit_view.diff_scroll = commit_view.diff_scroll.saturating_sub(1);
             }
             Action::CharG => {
                 // Scroll diff to top
