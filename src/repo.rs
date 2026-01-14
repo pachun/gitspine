@@ -223,6 +223,9 @@ impl Repo {
         git_repo
             .set_head_detached(sha)
             .map_err(|e| e.message().to_string())?;
+        git_repo
+            .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .map_err(|e| e.message().to_string())?;
         self.refresh();
         Ok(())
     }
@@ -232,6 +235,9 @@ impl Repo {
         let refname = format!("refs/heads/{}", branch_name);
         git_repo
             .set_head(&refname)
+            .map_err(|e| e.message().to_string())?;
+        git_repo
+            .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
             .map_err(|e| e.message().to_string())?;
         self.refresh();
         Ok(())

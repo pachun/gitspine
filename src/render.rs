@@ -1568,7 +1568,7 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
     };
 
     let is_unstaged = is_unstaged.unwrap_or(true);
-    let action_label = if is_unstaged { "stage" } else { "unstage" };
+    let action_label = if is_unstaged { "(s)tage hunk" } else { "(u)nstage hunk" };
 
     // Determine which hunks to show based on panel
     let hunks = if is_unstaged {
@@ -1588,8 +1588,25 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
         return;
     }
 
-    // Find topmost visible hunk index
-    let topmost_hunk_idx = find_topmost_hunk_index(hunks, commit_view.diff_scroll);
+    // Build hunk boundary tracking for sticky header logic
+    let mut hunk_start_lines: Vec<usize> = Vec::new();
+    let mut current_line = 0;
+    for (hunk_idx, hunk) in hunks.iter().enumerate() {
+        hunk_start_lines.push(current_line);
+        current_line += hunk.lines.len();
+        if hunk_idx < hunks.len() - 1 {
+            current_line += 1; // blank line between hunks
+        }
+    }
+
+    // Find the current (active) hunk - the one containing the scroll position
+    let current_hunk_idx = hunk_start_lines
+        .iter()
+        .rposition(|&start| commit_view.diff_scroll >= start)
+        .unwrap_or(0);
+
+    // Check if we need a sticky header (first line of current hunk is scrolled off)
+    let needs_sticky = commit_view.diff_scroll > hunk_start_lines[current_hunk_idx];
 
     // Get cached highlighted lines
     let cached_lines = commit_view.staging_highlight.as_ref()
@@ -1603,7 +1620,7 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
     let mut highlight_idx = 0;
 
     for (hunk_idx, hunk) in hunks.iter().enumerate() {
-        let is_topmost = hunk_idx == topmost_hunk_idx;
+        let is_active_hunk = hunk_idx == current_hunk_idx;
 
         for (line_idx, diff_line) in hunk.lines.iter().enumerate() {
             let (prefix_style, line_bg) = match diff_line.origin {
@@ -1643,15 +1660,21 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
                 }
             }
 
-            // First line of topmost hunk gets the action label right-aligned
-            if line_idx == 0 && is_topmost {
+            // First line of each hunk gets the action label right-aligned
+            if line_idx == 0 {
                 // Calculate content length
                 let content_len: usize = spans.iter().map(|s| s.content.chars().count()).sum();
                 let label_len = action_label.len();
                 let padding = width.saturating_sub(content_len + label_len + 1);
 
                 spans.push(Span::raw(" ".repeat(padding)));
-                spans.push(Span::styled(action_label, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+                // Active hunk gets underlined to show it's the one that will be staged
+                let label_style = if is_active_hunk {
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+                spans.push(Span::styled(action_label, label_style));
             }
 
             lines.push(Line::from(spans));
@@ -1663,28 +1686,52 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
         }
     }
 
-    // Apply scroll and render
-    let visible_lines: Vec<Line> = lines
-        .into_iter()
-        .skip(commit_view.diff_scroll)
-        .take(inner.height as usize)
-        .collect();
+    // Apply scroll and render with sticky header if needed
+    let visible_lines: Vec<Line> = if needs_sticky {
+        // Build sticky header line - right-aligned action label with highlighted style
+        let label_style = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+        let padding = width.saturating_sub(action_label.len());
+        let sticky_line = Line::from(vec![
+            Span::raw(" ".repeat(padding)),
+            Span::styled(action_label, label_style),
+        ]);
+
+        // Calculate content start - skip past the sticky header's content line
+        // When next hunk is approaching, show it intact
+        let content_start = if current_hunk_idx + 1 < hunk_start_lines.len() {
+            let next_hunk_start = hunk_start_lines[current_hunk_idx + 1];
+            if commit_view.diff_scroll + 1 > next_hunk_start {
+                // Next hunk's first line would be cut off - show it intact
+                next_hunk_start
+            } else {
+                commit_view.diff_scroll + 1
+            }
+        } else {
+            commit_view.diff_scroll + 1
+        };
+
+        // Render sticky header + content (minus 1 line for sticky)
+        std::iter::once(sticky_line)
+            .chain(
+                lines
+                    .into_iter()
+                    .skip(content_start)
+                    .take(inner.height.saturating_sub(1) as usize)
+            )
+            .collect()
+    } else {
+        // No sticky header needed - render normally
+        lines
+            .into_iter()
+            .skip(commit_view.diff_scroll)
+            .take(inner.height as usize)
+            .collect()
+    };
 
     let paragraph = Paragraph::new(visible_lines);
     frame.render_widget(paragraph, inner);
-}
-
-/// Find the index of the hunk that's visible at the given scroll position
-fn find_topmost_hunk_index(hunks: &[crate::repo::Hunk], scroll: usize) -> usize {
-    let mut line = 0;
-    for (idx, hunk) in hunks.iter().enumerate() {
-        let hunk_end = line + hunk.lines.len();
-        if scroll < hunk_end {
-            return idx;
-        }
-        line = hunk_end + 1; // +1 for blank line between hunks
-    }
-    hunks.len().saturating_sub(1)
 }
 
 /// Render a file list panel (unstaged or staged)

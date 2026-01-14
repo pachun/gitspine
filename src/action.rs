@@ -193,8 +193,8 @@ impl Action {
             }
             Action::ShiftJ => {
                 // Scroll diff down
-                let max_scroll = compute_diff_content_height(commit_view)
-                    .saturating_sub(diff_viewport_height(terminal));
+                let viewport = diff_viewport_height(terminal);
+                let max_scroll = compute_max_diff_scroll(commit_view, viewport);
                 commit_view.diff_scroll = (commit_view.diff_scroll + 1).min(max_scroll);
             }
             Action::ShiftK => {
@@ -207,15 +207,15 @@ impl Action {
             }
             Action::ShiftG => {
                 // Scroll diff to bottom
-                let max_scroll = compute_diff_content_height(commit_view)
-                    .saturating_sub(diff_viewport_height(terminal));
+                let viewport = diff_viewport_height(terminal);
+                let max_scroll = compute_max_diff_scroll(commit_view, viewport);
                 commit_view.diff_scroll = max_scroll;
             }
             Action::CtrlD => {
                 // Half-page scroll down
                 let half_page = diff_viewport_height(terminal) / 2;
-                let max_scroll = compute_diff_content_height(commit_view)
-                    .saturating_sub(diff_viewport_height(terminal));
+                let viewport = diff_viewport_height(terminal);
+                let max_scroll = compute_max_diff_scroll(commit_view, viewport);
                 commit_view.diff_scroll = (commit_view.diff_scroll + half_page).min(max_scroll);
             }
             Action::CtrlU => {
@@ -1933,9 +1933,9 @@ fn diff_viewport_height(terminal: &Terminal<CrosstermBackend<Stdout>>) -> usize 
     (total_height * 60 / 100).saturating_sub(2)
 }
 
-/// Calculate the total content height of the diff view
-fn compute_diff_content_height(commit_view: &CommitViewState) -> usize {
-    let hunks = commit_view.viewing_file.as_ref().and_then(|path| {
+/// Get the hunks for the currently viewed file
+fn get_viewed_hunks(commit_view: &CommitViewState) -> Option<&Vec<crate::repo::Hunk>> {
+    commit_view.viewing_file.as_ref().and_then(|path| {
         commit_view
             .unstaged_files
             .iter()
@@ -1948,22 +1948,38 @@ fn compute_diff_content_height(commit_view: &CommitViewState) -> usize {
                     .find(|f| &f.path == path)
                     .map(|f| &f.staged_hunks)
             })
-    });
+    })
+}
 
-    let Some(hunks) = hunks else {
+/// Calculate the max scroll position for the diff view
+/// Allows scrolling to select any hunk AND see all content
+fn compute_max_diff_scroll(commit_view: &CommitViewState, viewport_height: usize) -> usize {
+    let Some(hunks) = get_viewed_hunks(commit_view) else {
         return 0;
     };
 
-    let mut total = 0;
+    if hunks.is_empty() {
+        return 0;
+    }
+
+    // Calculate total content height and last hunk start position
+    let mut total_lines = 0;
+    let mut last_hunk_start = 0;
     for (i, hunk) in hunks.iter().enumerate() {
-        // 1 header line + diff lines
-        total += 1 + hunk.lines.len();
-        // Blank line between hunks (except after the last)
+        if i == hunks.len() - 1 {
+            last_hunk_start = total_lines;
+        }
+        total_lines += hunk.lines.len();
         if i < hunks.len() - 1 {
-            total += 1;
+            total_lines += 1; // Blank line between hunks
         }
     }
-    total
+
+    // Max scroll is the greater of:
+    // 1. Last hunk start (so you can select any hunk)
+    // 2. Content height - viewport (so you can see all content)
+    let content_based_max = total_lines.saturating_sub(viewport_height);
+    last_hunk_start.max(content_based_max)
 }
 
 /// Find the hunk that's currently at the top of the visible diff area
