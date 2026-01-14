@@ -854,7 +854,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
             // Navigation
             vec![
                 ("j/k", "↑/↓", true),
-                ("^d/u", "↑/↓ ½ page", true),
+                ("^d/u", "½ page", true),
                 ("g", "top", true),
                 ("G", "bottom", true),
                 ("h", if show_details { "back" } else { "goto head" }, if show_details { true } else { !is_on_head }),
