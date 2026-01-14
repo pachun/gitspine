@@ -37,6 +37,7 @@ pub enum Action {
     CharC,
     CharD,
     CharR,
+    ShiftR,
     CtrlD,
     CtrlU,
     ShiftS,
@@ -408,7 +409,8 @@ impl Action {
             | Action::CharB
             | Action::CharC
             | Action::CharD
-            | Action::CharR => {
+            | Action::CharR
+            | Action::ShiftR => {
                 let c = match self {
                     Action::CharSlash => '/',
                     Action::CharQ => 'q',
@@ -426,6 +428,7 @@ impl Action {
                     Action::CharC => 'c',
                     Action::CharD => 'd',
                     Action::CharR => 'r',
+                    Action::ShiftR => 'R',
                     _ => unreachable!(),
                 };
                 type_search_character(state, c);
@@ -686,6 +689,46 @@ impl Action {
                     state.flash_message = None;
                 }
             }
+            Action::ShiftR => {
+                state.jump_distance_string.clear();
+                let selected_sha = repo.commits[state.index_of_selected_row].sha;
+
+                if !repo.is_ancestor_of_head(selected_sha) {
+                    state.flash_message = Some(FlashMessage {
+                        message: "can only revert commits in HEAD's history".to_string(),
+                        shown_at: Instant::now(),
+                    });
+                } else {
+                    // Run git revert
+                    let output = std::process::Command::new("git")
+                        .args(["revert", "--no-edit", &selected_sha.to_string()])
+                        .current_dir(repo.path())
+                        .output();
+
+                    match output {
+                        Ok(result) if result.status.success() => {
+                            repo.refresh();
+                            state.flash_message = Some(FlashMessage {
+                                message: format!("reverted {}", &selected_sha.to_string()[..7]),
+                                shown_at: Instant::now(),
+                            });
+                        }
+                        Ok(result) => {
+                            let stderr = String::from_utf8_lossy(&result.stderr);
+                            state.flash_message = Some(FlashMessage {
+                                message: format!("revert failed: {}", stderr.lines().next().unwrap_or("unknown error")),
+                                shown_at: Instant::now(),
+                            });
+                        }
+                        Err(e) => {
+                            state.flash_message = Some(FlashMessage {
+                                message: format!("revert failed: {}", e),
+                                shown_at: Instant::now(),
+                            });
+                        }
+                    }
+                }
+            }
             Action::CtrlD => {
                 state.jump_distance_string.clear();
                 let half_page = git_graph_height(state, terminal) / 2;
@@ -817,7 +860,8 @@ impl Action {
             | Action::CharB
             | Action::CharC
             | Action::CharD
-            | Action::CharR => {
+            | Action::CharR
+            | Action::ShiftR => {
                 let c = match self {
                     Action::CharSlash => '/',
                     Action::CharQ => 'q',
@@ -835,6 +879,7 @@ impl Action {
                     Action::CharC => 'c',
                     Action::CharD => 'd',
                     Action::CharR => 'r',
+                    Action::ShiftR => 'R',
                     _ => unreachable!(),
                 };
                 state.branch_name.push(c);
@@ -930,7 +975,8 @@ impl Action {
             | Action::CharB
             | Action::CharC
             | Action::CharD
-            | Action::CharR => {
+            | Action::CharR
+            | Action::ShiftR => {
                 state.tab_complete_base = None;
                 state.tab_complete_index = 0;
                 let c = match self {
@@ -950,6 +996,7 @@ impl Action {
                     Action::CharC => 'c',
                     Action::CharD => 'd',
                     Action::CharR => 'r',
+                    Action::ShiftR => 'R',
                     _ => unreachable!(),
                 };
                 state.delete_branch_name.push(c);
@@ -1067,7 +1114,8 @@ impl Action {
             | Action::CharB
             | Action::CharC
             | Action::CharD
-            | Action::CharR => {
+            | Action::CharR
+            | Action::ShiftR => {
                 state.tab_complete_base = None;
                 state.tab_complete_index = 0;
                 let c = match self {
@@ -1087,6 +1135,7 @@ impl Action {
                     Action::CharC => 'c',
                     Action::CharD => 'd',
                     Action::CharR => 'r',
+                    Action::ShiftR => 'R',
                     _ => unreachable!(),
                 };
                 state.checkout_branch_name.push(c);
@@ -1196,7 +1245,8 @@ impl Action {
             | Action::CharB
             | Action::CharC
             | Action::CharD
-            | Action::CharR => {
+            | Action::CharR
+            | Action::ShiftR => {
                 state.tab_complete_base = None;
                 state.tab_complete_index = 0;
                 let c = match self {
@@ -1216,6 +1266,7 @@ impl Action {
                     Action::CharC => 'c',
                     Action::CharD => 'd',
                     Action::CharR => 'r',
+                    Action::ShiftR => 'R',
                     _ => unreachable!(),
                 };
                 state.rebase_target.push(c);

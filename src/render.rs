@@ -789,6 +789,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
         let has_local_branches = repo.has_local_branches_at(selected_sha);
         let commit_on_remote = repo.commit_is_on_remote(selected_sha, state.index_of_selected_row);
         let has_changes = repo.has_changes();
+        let is_in_head_history = repo.is_ancestor_of_head(selected_sha);
         let remote_name = repo.remote_host_name().unwrap_or_else(|| "github".to_string());
         let open_in_label = format!("open in {}", remote_name);
 
@@ -819,6 +820,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseDa
             vec![
                 ("y", "copy sha", true),
                 ("o", &open_in_label, commit_on_remote),
+                ("R", "revert", is_in_head_history),
             ],
             // Stage view
             vec![
