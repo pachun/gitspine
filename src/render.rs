@@ -1515,7 +1515,7 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, _state: 
         commit_view.unstaged_selected,
         commit_view.unstaged_scroll,
         commit_view.active_panel == CommitViewPanel::UnstagedFiles,
-        Some("j/k:files  J/K:scroll  s:hunk  S:file"),
+        Some("j/k:files  J/K:scroll  s:hunk  S:file  o:open"),
     );
 
     // Render staged files list (bottom right)
@@ -1527,7 +1527,7 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, _state: 
         commit_view.staged_selected,
         commit_view.staged_scroll,
         commit_view.active_panel == CommitViewPanel::StagedFiles,
-        None,
+        Some("u:hunk  U:file  o:open"),
     );
 }
 

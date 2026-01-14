@@ -53,7 +53,7 @@ impl Action {
         &self,
         state: &mut State,
         repo: &mut Repo,
-        terminal: &Terminal<CrosstermBackend<Stdout>>,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> bool {
         if state.commit_view.is_some() {
             self.execute_commit_view_mode(state, repo, terminal)
@@ -86,7 +86,7 @@ impl Action {
         &self,
         state: &mut State,
         repo: &mut Repo,
-        terminal: &Terminal<CrosstermBackend<Stdout>>,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> bool {
         let commit_view = state.commit_view.as_mut().unwrap();
 
@@ -285,6 +285,53 @@ impl Action {
                             });
                         } else {
                             refresh_commit_view(state, repo);
+                        }
+                    }
+                }
+            }
+            Action::CharO => {
+                // Open currently viewed file in editor
+                if let Some(file_path) = &commit_view.viewing_file {
+                    let full_path = std::path::Path::new(repo.path()).join(file_path);
+
+                    // Get editor from environment
+                    let editor = std::env::var("EDITOR")
+                        .or_else(|_| std::env::var("VISUAL"))
+                        .unwrap_or_else(|_| "vi".to_string());
+
+                    // Suspend terminal for editor
+                    ratatui::restore();
+
+                    // Run editor
+                    let editor_result = std::process::Command::new(&editor)
+                        .arg(&full_path)
+                        .status();
+
+                    // Restore terminal state (raw mode + alternate screen)
+                    let _ = crossterm::terminal::enable_raw_mode();
+                    let _ = crossterm::execute!(
+                        std::io::stdout(),
+                        crossterm::terminal::EnterAlternateScreen,
+                    );
+                    // Clear terminal's internal buffer to force full redraw
+                    let _ = terminal.clear();
+
+                    match editor_result {
+                        Ok(status) if status.success() => {
+                            // Refresh to pick up any changes
+                            refresh_commit_view(state, repo);
+                        }
+                        Ok(_) => {
+                            state.flash_message = Some(FlashMessage {
+                                message: "editor exited with error".to_string(),
+                                shown_at: Instant::now(),
+                            });
+                        }
+                        Err(e) => {
+                            state.flash_message = Some(FlashMessage {
+                                message: format!("failed to open editor: {}", e),
+                                shown_at: Instant::now(),
+                            });
                         }
                     }
                 }

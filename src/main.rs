@@ -206,7 +206,7 @@ fn main() {
                     _ => Action::None,
                 };
 
-                let should_quit = action.execute(&mut state, &mut repo, &terminal);
+                let should_quit = action.execute(&mut state, &mut repo, &mut terminal);
                 if should_quit {
                     break;
                 }
