@@ -1578,7 +1578,7 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
     let staged_area = list_chunks[1];
 
     // Render diff view (top panel)
-    render_commit_diff_panel(frame, diff_area, commit_view);
+    render_commit_diff_panel(frame, diff_area, commit_view, state.is_rebase_in_progress);
 
     // Render unstaged files list (bottom left) with action hints
     render_file_list_panel(
@@ -1593,7 +1593,13 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
     );
 
     // Render staged files list (bottom right) with action hints
-    let staged_hints = if commit_view.staged_files.is_empty() {
+    let staged_hints = if state.is_rebase_in_progress {
+        if commit_view.unstaged_files.is_empty() {
+            "u:unstage  U:all  c:continue rebase"
+        } else {
+            "u:unstage  U:all"
+        }
+    } else if commit_view.staged_files.is_empty() {
         "u:unstage  U:all"
     } else {
         "u:unstage  U:all  c:commit"
@@ -1683,20 +1689,32 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
 }
 
 /// Render the diff panel for the commit view
-fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, commit_view: &CommitViewState) {
+fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, commit_view: &CommitViewState, is_rebase: bool) {
     let title = match &commit_view.viewing_file {
-        Some(path) => format!(" {} ", path),
+        Some(path) => {
+            if is_rebase {
+                format!(" {} (rebase conflict) ", path)
+            } else {
+                format!(" {} ", path)
+            }
+        }
         None => " No file selected ".to_string(),
     };
 
-    // Shared navigation hints on the right side of the title bar
-    let nav_hints = " tab:back  o:open  j/k:files  J/K:scroll ";
+    // Navigation hints - show abort hint during rebase
+    let nav_hints = if is_rebase {
+        " esc:abort rebase  o:open  j/k:files  J/K:scroll "
+    } else {
+        " tab:back  o:open  j/k:files  J/K:scroll "
+    };
+
+    let border_color = if is_rebase { Color::Yellow } else { Color::White };
 
     let block = Block::default()
         .title(title)
         .title_bottom(Line::from(Span::styled(nav_hints, Style::default().fg(Color::DarkGray))))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::White));
+        .border_style(Style::default().fg(border_color));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);

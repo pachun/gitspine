@@ -152,10 +152,40 @@ impl Action {
 
         match self {
             Action::Esc | Action::CtrlC | Action::CharQ => {
+                if state.is_rebase_in_progress {
+                    // Abort rebase
+                    let _ = std::process::Command::new("git")
+                        .args(["rebase", "--abort"])
+                        .current_dir(repo.path())
+                        .output();
+                    state.is_rebase_in_progress = false;
+                    state.rebase_branch.clear();
+                    state.rebase_target.clear();
+                    state.flash_message = Some(FlashMessage {
+                        message: "rebase aborted".to_string(),
+                        shown_at: Instant::now(),
+                    });
+                    repo.refresh();
+                }
                 // Close commit view
                 state.commit_view = None;
             }
             Action::Tab => {
+                if state.is_rebase_in_progress {
+                    // Abort rebase
+                    let _ = std::process::Command::new("git")
+                        .args(["rebase", "--abort"])
+                        .current_dir(repo.path())
+                        .output();
+                    state.is_rebase_in_progress = false;
+                    state.rebase_branch.clear();
+                    state.rebase_target.clear();
+                    state.flash_message = Some(FlashMessage {
+                        message: "rebase aborted".to_string(),
+                        shown_at: Instant::now(),
+                    });
+                    repo.refresh();
+                }
                 // Close commit view (go back to graph)
                 state.commit_view = None;
             }
@@ -443,19 +473,38 @@ impl Action {
                 }
             }
             Action::CharC => {
-                // Commit with external editor
-                if commit_view.staged_files.is_empty() {
-                    state.flash_message = Some(FlashMessage {
-                        message: "nothing staged to commit".to_string(),
-                        shown_at: Instant::now(),
-                    });
+                if state.is_rebase_in_progress {
+                    // Continue rebase
+                    if !commit_view.unstaged_files.is_empty() {
+                        state.flash_message = Some(FlashMessage {
+                            message: "stage all changes before continuing rebase".to_string(),
+                            shown_at: Instant::now(),
+                        });
+                    } else {
+                        continue_rebase(state, repo);
+                    }
                 } else {
-                    return commit_with_editor(state, repo, terminal, false);
+                    // Commit with external editor
+                    if commit_view.staged_files.is_empty() {
+                        state.flash_message = Some(FlashMessage {
+                            message: "nothing staged to commit".to_string(),
+                            shown_at: Instant::now(),
+                        });
+                    } else {
+                        return commit_with_editor(state, repo, terminal, false);
+                    }
                 }
             }
             Action::Char('a') => {
-                // Amend commit with external editor
-                return commit_with_editor(state, repo, terminal, true);
+                // Amend commit with external editor (disabled during rebase)
+                if state.is_rebase_in_progress {
+                    state.flash_message = Some(FlashMessage {
+                        message: "cannot amend during rebase".to_string(),
+                        shown_at: Instant::now(),
+                    });
+                } else {
+                    return commit_with_editor(state, repo, terminal, true);
+                }
             }
             _ => {}
         }
@@ -1667,10 +1716,8 @@ fn execute_rebase(state: &mut State, repo: &mut Repo) {
             if stderr.contains("CONFLICT") || stderr.contains("could not apply") {
                 state.is_rebase_in_progress = true;
                 state.is_entering_rebase_target = false;
-                state.flash_message = Some(FlashMessage {
-                    message: "conflicts - resolve then Enter to continue, Esc to abort".to_string(),
-                    shown_at: Instant::now(),
-                });
+                // Open staging view for conflict resolution
+                open_commit_view_for_conflicts(state, repo);
             } else {
                 state.flash_message = Some(FlashMessage {
                     message: format!("rebase failed: {}", stderr.lines().next().unwrap_or("unknown error")),
@@ -1681,6 +1728,83 @@ fn execute_rebase(state: &mut State, repo: &mut Repo) {
         Err(e) => {
             state.flash_message = Some(FlashMessage {
                 message: format!("rebase failed: {}", e),
+                shown_at: Instant::now(),
+            });
+        }
+    }
+}
+
+/// Opens the commit view for resolving rebase conflicts
+fn open_commit_view_for_conflicts(state: &mut State, repo: &mut Repo) {
+    repo.refresh();
+    if let Some(status) = repo.load_worktree_status() {
+        let viewing_file = status
+            .unstaged_files
+            .first()
+            .or(status.staged_files.first())
+            .map(|f| f.path.clone());
+
+        state.commit_view = Some(CommitViewState {
+            active_panel: if !status.unstaged_files.is_empty() {
+                CommitViewPanel::UnstagedFiles
+            } else {
+                CommitViewPanel::StagedFiles
+            },
+            unstaged_files: status.unstaged_files,
+            staged_files: status.staged_files,
+            unstaged_selected: 0,
+            staged_selected: 0,
+            unstaged_scroll: 0,
+            staged_scroll: 0,
+            viewing_file,
+            diff_scroll: 0,
+            staging_highlight: None,
+        });
+        update_staging_highlight(state);
+        state.commit_details = None;
+        state.flash_message = Some(FlashMessage {
+            message: "conflicts detected - resolve and stage, then (c) to continue".to_string(),
+            shown_at: Instant::now(),
+        });
+    }
+}
+
+/// Continues an in-progress rebase after conflicts have been resolved
+fn continue_rebase(state: &mut State, repo: &mut Repo) {
+    let output = std::process::Command::new("git")
+        .args(["rebase", "--continue"])
+        .current_dir(repo.path())
+        .output();
+
+    match output {
+        Ok(result) if result.status.success() => {
+            // Rebase step completed
+            state.is_rebase_in_progress = false;
+            state.rebase_branch.clear();
+            state.rebase_target.clear();
+            state.commit_view = None;
+            state.flash_message = Some(FlashMessage {
+                message: "rebase complete".to_string(),
+                shown_at: Instant::now(),
+            });
+            repo.refresh();
+        }
+        Ok(result) => {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            // Check if there are more conflicts (another commit in the rebase)
+            if stderr.contains("CONFLICT") || stderr.contains("could not apply") {
+                // Refresh the commit view for the new conflicts
+                open_commit_view_for_conflicts(state, repo);
+            } else {
+                state.flash_message = Some(FlashMessage {
+                    message: format!("rebase --continue failed: {}", stderr.lines().next().unwrap_or("unknown error")),
+                    shown_at: Instant::now(),
+                });
+            }
+        }
+        Err(e) => {
+            state.flash_message = Some(FlashMessage {
+                message: format!("rebase --continue failed: {}", e),
                 shown_at: Instant::now(),
             });
         }
