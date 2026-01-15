@@ -2037,19 +2037,49 @@ fn count_file_tree_nodes(files: &[crate::repo::FileChange]) -> usize {
 fn copy_sha_to_clipboard(state: &mut State, repo: &Repo) {
     let full_sha = repo.commits[state.index_of_selected_row].sha.to_string();
     let short_sha = &full_sha[..7];
-    if let Ok(mut child) = std::process::Command::new("pbcopy")
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-    {
-        if let Some(stdin) = child.stdin.as_mut() {
-            let _ = stdin.write_all(full_sha.as_bytes());
-        }
-        let _ = child.wait();
+    if copy_to_clipboard(&full_sha) {
         state.flash_message = Some(FlashMessage {
             message: format!("copied {}", short_sha),
             shown_at: Instant::now(),
         });
     }
+}
+
+fn copy_to_clipboard(text: &str) -> bool {
+    // Try platform-specific clipboard commands in order of preference
+    let commands: &[(&str, &[&str])] = if cfg!(target_os = "macos") {
+        &[("pbcopy", &[])]
+    } else if cfg!(target_os = "linux") {
+        // Check for WSL first (clip.exe), then try xclip and xsel
+        &[
+            ("clip.exe", &[]),                              // WSL
+            ("xclip", &["-selection", "clipboard"]),        // X11
+            ("xsel", &["--clipboard", "--input"]),          // X11 alternative
+            ("wl-copy", &[]),                               // Wayland
+        ]
+    } else if cfg!(target_os = "windows") {
+        &[("clip", &[])]
+    } else {
+        &[]
+    };
+
+    for (cmd, args) in commands {
+        if let Ok(mut child) = std::process::Command::new(cmd)
+            .args(*args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            if let Some(stdin) = child.stdin.as_mut() {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            if child.wait().is_ok() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn open_in_browser(state: &mut State, repo: &Repo) {
