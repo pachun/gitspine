@@ -78,6 +78,15 @@ pub struct Hunk {
     pub lines: Vec<DiffLine>,
 }
 
+/// A conflict section from a merge/rebase conflict
+#[derive(Clone)]
+pub struct ConflictSection {
+    pub ours_label: String,        // Label after <<<<<<< (e.g., "HEAD")
+    pub ours_lines: Vec<String>,   // Lines from our side
+    pub theirs_label: String,      // Label after >>>>>>> (e.g., "feature-branch")
+    pub theirs_lines: Vec<String>, // Lines from their side
+}
+
 pub struct FileChange {
     pub path: String,
     pub status: char, // 'M', 'A', 'D', 'R', etc.
@@ -122,6 +131,7 @@ pub struct WorktreeFile {
     pub staged_hunks: Vec<Hunk>,
     pub additions: usize,
     pub deletions: usize,
+    pub conflicts: Vec<ConflictSection>, // Parsed conflicts for conflicted files
 }
 
 /// Current worktree status with all changed files
@@ -633,16 +643,18 @@ impl Repo {
 
             // Check for conflicted files (during merge/rebase)
             if status.contains(git2::Status::CONFLICTED) {
-                let (hunks, additions, deletions) =
-                    self.load_unstaged_hunks(&git_repo, &path).unwrap_or_default();
+                // For conflicted files, parse conflict sections
+                let conflicts = self.parse_conflict_sections(&path);
+                let conflict_count = conflicts.len();
 
                 unstaged_files.push(WorktreeFile {
                     path: path.clone(),
                     status: FileStatus::Conflicted,
-                    unstaged_hunks: hunks,
+                    unstaged_hunks: Vec::new(),
                     staged_hunks: Vec::new(),
-                    additions,
-                    deletions,
+                    additions: conflict_count,
+                    deletions: 0,
+                    conflicts,
                 });
                 continue; // Skip other status checks for conflicted files
             }
@@ -678,6 +690,7 @@ impl Repo {
                     staged_hunks: Vec::new(),
                     additions,
                     deletions,
+                    conflicts: Vec::new(),
                 });
             }
 
@@ -712,6 +725,7 @@ impl Repo {
                     staged_hunks: hunks,
                     additions,
                     deletions,
+                    conflicts: Vec::new(),
                 });
             }
         }
@@ -743,6 +757,123 @@ impl Repo {
             .ok()?;
 
         self.extract_hunks_from_diff(&diff)
+    }
+
+    /// Parse conflict sections from a conflicted file
+    fn parse_conflict_sections(&self, path: &str) -> Vec<ConflictSection> {
+        let full_path = std::path::Path::new(&self.path).join(path);
+        let content = match std::fs::read_to_string(&full_path) {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
+
+        let mut conflicts = Vec::new();
+        let mut in_conflict = false;
+        let mut in_ours = false;
+        let mut ours_label = String::new();
+        let mut ours_lines = Vec::new();
+        let mut theirs_lines = Vec::new();
+
+        for line in content.lines() {
+            if line.starts_with("<<<<<<<") {
+                in_conflict = true;
+                in_ours = true;
+                ours_label = line.strip_prefix("<<<<<<< ").unwrap_or("").to_string();
+                ours_lines.clear();
+                theirs_lines.clear();
+            } else if line.starts_with("=======") && in_conflict {
+                in_ours = false;
+            } else if line.starts_with(">>>>>>>") && in_conflict {
+                let theirs_label = line.strip_prefix(">>>>>>> ").unwrap_or("").to_string();
+                conflicts.push(ConflictSection {
+                    ours_label: ours_label.clone(),
+                    ours_lines: ours_lines.clone(),
+                    theirs_label,
+                    theirs_lines: theirs_lines.clone(),
+                });
+                in_conflict = false;
+            } else if in_conflict {
+                if in_ours {
+                    ours_lines.push(line.to_string());
+                } else {
+                    theirs_lines.push(line.to_string());
+                }
+            }
+        }
+
+        conflicts
+    }
+
+    /// Resolve a conflict by accepting one side, returns the new file content
+    pub fn resolve_conflict(&self, path: &str, conflict_index: usize, accept_ours: bool) -> Result<(), String> {
+        let full_path = std::path::Path::new(&self.path).join(path);
+        let content = std::fs::read_to_string(&full_path)
+            .map_err(|e| format!("Failed to read file: {}", e))?;
+
+        let mut result = String::new();
+        let mut in_conflict = false;
+        let mut in_ours = false;
+        let mut current_conflict = 0;
+        let mut ours_lines: Vec<String> = Vec::new();
+        let mut theirs_lines: Vec<String> = Vec::new();
+
+        for line in content.lines() {
+            if line.starts_with("<<<<<<<") {
+                in_conflict = true;
+                in_ours = true;
+                ours_lines.clear();
+                theirs_lines.clear();
+            } else if line.starts_with("=======") && in_conflict {
+                in_ours = false;
+            } else if line.starts_with(">>>>>>>") && in_conflict {
+                // End of conflict - write the selected side
+                if current_conflict == conflict_index {
+                    let selected = if accept_ours { &ours_lines } else { &theirs_lines };
+                    for l in selected {
+                        result.push_str(l);
+                        result.push('\n');
+                    }
+                } else {
+                    // Keep the conflict markers for other conflicts
+                    result.push_str("<<<<<<< ");
+                    result.push_str(&ours_lines.first().map(|_| "HEAD").unwrap_or(""));
+                    result.push('\n');
+                    for l in &ours_lines {
+                        result.push_str(l);
+                        result.push('\n');
+                    }
+                    result.push_str("=======\n");
+                    for l in &theirs_lines {
+                        result.push_str(l);
+                        result.push('\n');
+                    }
+                    result.push_str(">>>>>>> ");
+                    result.push_str(line.strip_prefix(">>>>>>> ").unwrap_or(""));
+                    result.push('\n');
+                }
+                current_conflict += 1;
+                in_conflict = false;
+            } else if in_conflict {
+                if in_ours {
+                    ours_lines.push(line.to_string());
+                } else {
+                    theirs_lines.push(line.to_string());
+                }
+            } else {
+                result.push_str(line);
+                result.push('\n');
+            }
+        }
+
+        // Remove trailing newline if original didn't have one
+        if !content.ends_with('\n') && result.ends_with('\n') {
+            result.pop();
+        }
+
+        std::fs::write(&full_path, &result)
+            .map_err(|e| format!("Failed to write file: {}", e))?;
+
+        Ok(())
     }
 
     /// Load staged hunks for a file (index vs HEAD)

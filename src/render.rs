@@ -1151,6 +1151,7 @@ fn render_details_panel(
                         Style::default().fg(Color::Red),
                         Some(Color::Rgb(35, 0, 0)),
                     ),
+                    '!' => (Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD), Some(Color::Rgb(30, 0, 30))),
                     _ => (Style::default().fg(Color::DarkGray), None),
                 };
 
@@ -1742,6 +1743,14 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
 
     let is_unstaged = is_unstaged.unwrap_or(true);
     let is_untracked = file.status == FileStatus::Untracked;
+    let is_conflicted = file.status == FileStatus::Conflicted;
+
+    // For conflicted files, render conflicts instead of hunks
+    if is_conflicted && !file.conflicts.is_empty() {
+        render_conflicts(frame, inner, &file.conflicts, commit_view.selected_conflict);
+        return;
+    }
+
     let action_label = if is_unstaged { "(s)tage" } else { "(u)nstage" };
     // Don't show discard option for untracked files (can only delete whole file with D)
     let discard_label = if is_unstaged && !is_untracked { Some("(d)iscard") } else { None };
@@ -1802,6 +1811,7 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
             let (prefix_style, line_bg) = match diff_line.origin {
                 '+' => (Style::default().fg(Color::Green), None),
                 '-' => (Style::default().fg(Color::Red), Some(Color::Rgb(35, 0, 0))),
+                '!' => (Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD), Some(Color::Rgb(30, 0, 30))), // Conflict markers
                 _ => (Style::default().fg(Color::DarkGray), None),
             };
 
@@ -2029,4 +2039,93 @@ fn render_file_list_panel(
             .style(Style::default().fg(Color::DarkGray));
         frame.render_widget(hints_widget, area);
     }
+}
+
+/// Render conflict sections for a conflicted file
+fn render_conflicts(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    conflicts: &[crate::repo::ConflictSection],
+    selected_conflict: usize,
+) {
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (idx, conflict) in conflicts.iter().enumerate() {
+        let is_selected = idx == selected_conflict;
+        let header_style = if is_selected {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        // Conflict header
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("═══ CONFLICT {}/{} ", idx + 1, conflicts.len()),
+                header_style,
+            ),
+            Span::styled(
+                if is_selected { "(1)=ours  (2)=theirs" } else { "" },
+                Style::default().fg(Color::Cyan),
+            ),
+        ]));
+
+        // Ours section header
+        lines.push(Line::from(vec![
+            Span::styled("─── OURS ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("({})", conflict.ours_label),
+                Style::default().fg(Color::DarkGray),
+            ),
+            if is_selected {
+                Span::styled(" ← press 1", Style::default().fg(Color::Green))
+            } else {
+                Span::raw("")
+            },
+        ]));
+
+        // Ours content
+        for line in &conflict.ours_lines {
+            lines.push(Line::from(Span::styled(
+                format!("  {}", line),
+                Style::default().fg(Color::Green),
+            )));
+        }
+
+        // Separator
+        lines.push(Line::from(Span::styled(
+            "───────────────────",
+            Style::default().fg(Color::DarkGray),
+        )));
+
+        // Theirs section header
+        lines.push(Line::from(vec![
+            Span::styled("─── THEIRS ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("({})", conflict.theirs_label),
+                Style::default().fg(Color::DarkGray),
+            ),
+            if is_selected {
+                Span::styled(" ← press 2", Style::default().fg(Color::Cyan))
+            } else {
+                Span::raw("")
+            },
+        ]));
+
+        // Theirs content
+        for line in &conflict.theirs_lines {
+            lines.push(Line::from(Span::styled(
+                format!("  {}", line),
+                Style::default().fg(Color::Cyan),
+            )));
+        }
+
+        // Blank line between conflicts
+        if idx < conflicts.len() - 1 {
+            lines.push(Line::from(""));
+        }
+    }
+
+    let paragraph = Paragraph::new(lines);
+    frame.render_widget(paragraph, area);
 }

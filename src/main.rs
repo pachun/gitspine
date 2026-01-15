@@ -160,6 +160,7 @@ fn main() {
                 viewing_file,
                 diff_scroll: 0,
                 staging_highlight: None,
+                selected_conflict: 0,
             });
         }
     }

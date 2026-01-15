@@ -40,6 +40,8 @@ pub struct CommitViewState {
     pub diff_scroll: usize,
     /// Cached syntax highlighting for the currently viewed file
     pub staging_highlight: Option<StagingHighlight>,
+    /// Currently selected conflict index (for conflicted files)
+    pub selected_conflict: usize,
 }
 
 /// Cached syntax highlighting for staging view (one file at a time)

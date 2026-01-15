@@ -210,14 +210,40 @@ impl Action {
                 update_staging_highlight(state);
             }
             Action::CharJ | Action::Down => {
-                // Scroll diff down
-                let viewport = diff_viewport_height(terminal);
-                let max_scroll = compute_max_diff_scroll(commit_view, viewport);
-                commit_view.diff_scroll = (commit_view.diff_scroll + 1).min(max_scroll);
+                // Check if viewing a conflicted file - navigate between conflicts
+                let is_conflict_file = commit_view.viewing_file.as_ref()
+                    .and_then(|path| commit_view.unstaged_files.iter().find(|f| &f.path == path))
+                    .map(|f| f.status == crate::repo::FileStatus::Conflicted && !f.conflicts.is_empty())
+                    .unwrap_or(false);
+
+                if is_conflict_file {
+                    // Move to next conflict
+                    let max_conflict = commit_view.viewing_file.as_ref()
+                        .and_then(|path| commit_view.unstaged_files.iter().find(|f| &f.path == path))
+                        .map(|f| f.conflicts.len().saturating_sub(1))
+                        .unwrap_or(0);
+                    commit_view.selected_conflict = (commit_view.selected_conflict + 1).min(max_conflict);
+                } else {
+                    // Scroll diff down
+                    let viewport = diff_viewport_height(terminal);
+                    let max_scroll = compute_max_diff_scroll(commit_view, viewport);
+                    commit_view.diff_scroll = (commit_view.diff_scroll + 1).min(max_scroll);
+                }
             }
             Action::CharK | Action::Up => {
-                // Scroll diff up
-                commit_view.diff_scroll = commit_view.diff_scroll.saturating_sub(1);
+                // Check if viewing a conflicted file - navigate between conflicts
+                let is_conflict_file = commit_view.viewing_file.as_ref()
+                    .and_then(|path| commit_view.unstaged_files.iter().find(|f| &f.path == path))
+                    .map(|f| f.status == crate::repo::FileStatus::Conflicted && !f.conflicts.is_empty())
+                    .unwrap_or(false);
+
+                if is_conflict_file {
+                    // Move to previous conflict
+                    commit_view.selected_conflict = commit_view.selected_conflict.saturating_sub(1);
+                } else {
+                    // Scroll diff up
+                    commit_view.diff_scroll = commit_view.diff_scroll.saturating_sub(1);
+                }
             }
             Action::ShiftJ => {
                 // Move to next file in active panel
@@ -232,6 +258,7 @@ impl Action {
                                 .get(commit_view.unstaged_selected)
                                 .map(|f| f.path.clone());
                             commit_view.diff_scroll = 0;
+                            commit_view.selected_conflict = 0;
                             ensure_file_visible(commit_view);
                             old_selected != commit_view.unstaged_selected
                         } else {
@@ -248,6 +275,7 @@ impl Action {
                                 .get(commit_view.staged_selected)
                                 .map(|f| f.path.clone());
                             commit_view.diff_scroll = 0;
+                            commit_view.selected_conflict = 0;
                             ensure_file_visible(commit_view);
                             old_selected != commit_view.staged_selected
                         } else {
@@ -270,6 +298,7 @@ impl Action {
                                 .get(commit_view.unstaged_selected)
                                 .map(|f| f.path.clone());
                             commit_view.diff_scroll = 0;
+                            commit_view.selected_conflict = 0;
                             ensure_file_visible(commit_view);
                             true
                         } else {
@@ -284,6 +313,7 @@ impl Action {
                                 .get(commit_view.staged_selected)
                                 .map(|f| f.path.clone());
                             commit_view.diff_scroll = 0;
+                            commit_view.selected_conflict = 0;
                             ensure_file_visible(commit_view);
                             true
                         } else {
@@ -504,6 +534,56 @@ impl Action {
                     });
                 } else {
                     return commit_with_editor(state, repo, terminal, true);
+                }
+            }
+            Action::Digit('1') => {
+                // Accept "ours" for the selected conflict
+                if let Some(path) = &commit_view.viewing_file.clone() {
+                    let file = commit_view.unstaged_files.iter().find(|f| &f.path == path);
+                    if let Some(file) = file {
+                        if file.status == crate::repo::FileStatus::Conflicted && !file.conflicts.is_empty() {
+                            let conflict_idx = commit_view.selected_conflict;
+                            if conflict_idx < file.conflicts.len() {
+                                if let Err(e) = repo.resolve_conflict(path, conflict_idx, true) {
+                                    state.flash_message = Some(FlashMessage {
+                                        message: format!("failed to resolve: {}", e),
+                                        shown_at: Instant::now(),
+                                    });
+                                } else {
+                                    state.flash_message = Some(FlashMessage {
+                                        message: format!("accepted OURS for conflict {}", conflict_idx + 1),
+                                        shown_at: Instant::now(),
+                                    });
+                                    refresh_commit_view(state, repo);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Action::Digit('2') => {
+                // Accept "theirs" for the selected conflict
+                if let Some(path) = &commit_view.viewing_file.clone() {
+                    let file = commit_view.unstaged_files.iter().find(|f| &f.path == path);
+                    if let Some(file) = file {
+                        if file.status == crate::repo::FileStatus::Conflicted && !file.conflicts.is_empty() {
+                            let conflict_idx = commit_view.selected_conflict;
+                            if conflict_idx < file.conflicts.len() {
+                                if let Err(e) = repo.resolve_conflict(path, conflict_idx, false) {
+                                    state.flash_message = Some(FlashMessage {
+                                        message: format!("failed to resolve: {}", e),
+                                        shown_at: Instant::now(),
+                                    });
+                                } else {
+                                    state.flash_message = Some(FlashMessage {
+                                        message: format!("accepted THEIRS for conflict {}", conflict_idx + 1),
+                                        shown_at: Instant::now(),
+                                    });
+                                    refresh_commit_view(state, repo);
+                                }
+                            }
+                        }
+                    }
                 }
             }
             _ => {}
@@ -943,6 +1023,7 @@ impl Action {
                                 viewing_file,
                                 diff_scroll: 0,
                                 staging_highlight: None,
+                                selected_conflict: 0,
                             });
                             // Compute initial highlighting
                             update_staging_highlight(state);
@@ -1759,11 +1840,12 @@ fn open_commit_view_for_conflicts(state: &mut State, repo: &mut Repo) {
             viewing_file,
             diff_scroll: 0,
             staging_highlight: None,
+            selected_conflict: 0,
         });
         update_staging_highlight(state);
         state.commit_details = None;
         state.flash_message = Some(FlashMessage {
-            message: "conflicts detected - resolve and stage, then (c) to continue".to_string(),
+            message: "conflicts - use 1/2 to select side, S to stage when resolved".to_string(),
             shown_at: Instant::now(),
         });
     }
