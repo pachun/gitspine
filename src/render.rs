@@ -1580,7 +1580,7 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
     // Render diff view (top panel)
     render_commit_diff_panel(frame, diff_area, commit_view);
 
-    // Render unstaged files list (bottom left) with shared navigation hints
+    // Render unstaged files list (bottom left) with action hints
     render_file_list_panel(
         frame,
         unstaged_area,
@@ -1589,14 +1589,14 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
         commit_view.unstaged_selected,
         commit_view.unstaged_scroll,
         commit_view.active_panel == CommitViewPanel::UnstagedFiles,
-        Some("tab:back  o:open  j/k:scroll  J/K:files  s:hunk  S:file"),
+        Some("s:stage  S:all  d:discard  D:all"),
     );
 
-    // Render staged files list (bottom right) with stage-specific hints
+    // Render staged files list (bottom right) with action hints
     let staged_hints = if commit_view.staged_files.is_empty() {
-        "u:hunk  U:file"
+        "u:unstage  U:all"
     } else {
-        "u:hunk  U:file  c:commit"
+        "u:unstage  U:all  c:commit"
     };
     render_file_list_panel(
         frame,
@@ -1608,6 +1608,21 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
         commit_view.active_panel == CommitViewPanel::StagedFiles,
         Some(staged_hints),
     );
+
+    // Show flash message if active (in the diff panel area)
+    if let Some(msg) = &state.flash_message {
+        if msg.shown_at.elapsed().as_secs() < 3 {
+            let msg_width = (msg.message.len() + 4) as u16;
+            let msg_x = area.width.saturating_sub(msg_width).saturating_sub(1);
+            let msg_area = ratatui::layout::Rect::new(msg_x, 1, msg_width, 1);
+
+            let flash = Paragraph::new(Span::styled(
+                format!(" {} ", msg.message),
+                Style::default().fg(Color::Yellow).bg(Color::DarkGray),
+            ));
+            frame.render_widget(flash, msg_area);
+        }
+    }
 
     // Render discard confirmation dialog if active
     if let Some(confirmation) = &state.discard_confirmation {
@@ -1674,8 +1689,12 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
         None => " No file selected ".to_string(),
     };
 
+    // Shared navigation hints on the right side of the title bar
+    let nav_hints = " tab:back  o:open  j/k:files  J/K:scroll ";
+
     let block = Block::default()
         .title(title)
+        .title_bottom(Line::from(Span::styled(nav_hints, Style::default().fg(Color::DarkGray))))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::White));
 
@@ -1704,7 +1723,10 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
     };
 
     let is_unstaged = is_unstaged.unwrap_or(true);
-    let action_label = if is_unstaged { "(s)tage hunk" } else { "(u)nstage hunk" };
+    let is_untracked = file.status == FileStatus::Untracked;
+    let action_label = if is_unstaged { "(s)tage" } else { "(u)nstage" };
+    // Don't show discard option for untracked files (can only delete whole file with D)
+    let discard_label = if is_unstaged && !is_untracked { Some("(d)iscard") } else { None };
 
     // Determine which hunks to show based on panel
     let hunks = if is_unstaged {
@@ -1796,21 +1818,34 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
                 }
             }
 
-            // First line of each hunk gets the action label right-aligned
+            // First line of each hunk gets the action labels right-aligned
             if line_idx == 0 {
-                // Calculate content length
+                // Calculate content length and total label length
                 let content_len: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-                let label_len = action_label.len();
-                let padding = width.saturating_sub(content_len + label_len + 1);
+                let total_label_len = action_label.len()
+                    + discard_label.map(|d| d.len() + 2).unwrap_or(0); // +2 for "  " separator
+                let padding = width.saturating_sub(content_len + total_label_len + 1);
 
                 spans.push(Span::raw(" ".repeat(padding)));
-                // Active hunk gets underlined to show it's the one that will be staged
-                let label_style = if is_active_hunk {
+
+                // Active hunk gets underlined to show it's the one that will be acted on
+                let action_style = if is_active_hunk {
                     Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
                 } else {
                     Style::default().fg(Color::DarkGray)
                 };
-                spans.push(Span::styled(action_label, label_style));
+                spans.push(Span::styled(action_label, action_style));
+
+                // Add discard label in red (only for unstaged)
+                if let Some(discard) = discard_label {
+                    spans.push(Span::raw("  "));
+                    let discard_style = if is_active_hunk {
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    };
+                    spans.push(Span::styled(discard, discard_style));
+                }
             }
 
             lines.push(Line::from(spans));
@@ -1824,15 +1859,25 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
 
     // Apply scroll and render with sticky header if needed
     let visible_lines: Vec<Line> = if needs_sticky {
-        // Build sticky header line - right-aligned action label with highlighted style
-        let label_style = Style::default()
+        // Build sticky header line - right-aligned action labels with highlighted style
+        let action_style = Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
-        let padding = width.saturating_sub(action_label.len());
-        let sticky_line = Line::from(vec![
+        let discard_style = Style::default()
+            .fg(Color::Red)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+        let total_label_len = action_label.len()
+            + discard_label.map(|d| d.len() + 2).unwrap_or(0);
+        let padding = width.saturating_sub(total_label_len);
+        let mut sticky_spans = vec![
             Span::raw(" ".repeat(padding)),
-            Span::styled(action_label, label_style),
-        ]);
+            Span::styled(action_label, action_style),
+        ];
+        if let Some(discard) = discard_label {
+            sticky_spans.push(Span::raw("  "));
+            sticky_spans.push(Span::styled(discard, discard_style));
+        }
+        let sticky_line = Line::from(sticky_spans);
 
         // Calculate content start - skip past the sticky header's content line
         // When next hunk is approaching, show it intact

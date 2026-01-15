@@ -354,24 +354,20 @@ impl Action {
                 }
             }
             Action::CharD => {
-                // Discard topmost visible hunk (only for unstaged files)
+                // Discard topmost visible hunk (only for unstaged tracked files)
                 if commit_view.active_panel == CommitViewPanel::UnstagedFiles {
                     if let Some(path) = &commit_view.viewing_file.clone() {
-                        // Check if file is untracked (can't discard individual hunks for untracked)
-                        let is_untracked = commit_view
+                        let file_entry = commit_view
                             .unstaged_files
                             .iter()
-                            .find(|f| &f.path == path)
+                            .find(|f| &f.path == path);
+
+                        let is_untracked = file_entry
                             .map(|f| f.status == crate::repo::FileStatus::Untracked)
                             .unwrap_or(false);
 
-                        if is_untracked {
-                            state.flash_message = Some(FlashMessage {
-                                message: "use D to delete untracked file".to_string(),
-                                shown_at: Instant::now(),
-                            });
-                        } else {
-                            // Set confirmation state
+                        // Only show confirmation for tracked files with hunks
+                        if !is_untracked && file_entry.map(|f| !f.unstaged_hunks.is_empty()).unwrap_or(false) {
                             state.discard_confirmation = Some(crate::state::DiscardConfirmation {
                                 discard_type: crate::state::DiscardType::Hunk,
                                 file_path: path.clone(),
