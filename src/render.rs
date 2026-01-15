@@ -1988,6 +1988,7 @@ fn render_file_list_panel(
                     FileStatus::Added => Color::Green,
                     FileStatus::Modified => Color::Yellow,
                     FileStatus::Deleted => Color::Red,
+                    FileStatus::Conflicted => Color::Magenta,
                     _ => Color::White,
                 };
 

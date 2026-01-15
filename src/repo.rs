@@ -110,6 +110,7 @@ pub enum FileStatus {
     Deleted,
     Renamed,
     Typechange,
+    Conflicted,
 }
 
 /// A file in the worktree with potential staged and unstaged changes
@@ -629,6 +630,22 @@ impl Repo {
         for entry in statuses.iter() {
             let path = entry.path().unwrap_or("").to_string();
             let status = entry.status();
+
+            // Check for conflicted files (during merge/rebase)
+            if status.contains(git2::Status::CONFLICTED) {
+                let (hunks, additions, deletions) =
+                    self.load_unstaged_hunks(&git_repo, &path).unwrap_or_default();
+
+                unstaged_files.push(WorktreeFile {
+                    path: path.clone(),
+                    status: FileStatus::Conflicted,
+                    unstaged_hunks: hunks,
+                    staged_hunks: Vec::new(),
+                    additions,
+                    deletions,
+                });
+                continue; // Skip other status checks for conflicted files
+            }
 
             // Check for unstaged changes (worktree vs index)
             if status.intersects(
