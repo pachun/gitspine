@@ -122,9 +122,18 @@ pub enum FileStatus {
     Conflicted,
 }
 
-/// Context for how conflicts arose (rebase vs merge)
+/// Context for how conflicts arose (rebase vs merge) with branch/sha info
+#[derive(Clone, PartialEq, Debug)]
+pub struct ConflictContext {
+    pub context_type: ConflictContextType,
+    /// The branch/sha we're rebasing onto or merging into (option 1)
+    pub target_label: String,
+    /// The branch/sha we're rebasing or merging (option 2)
+    pub source_label: String,
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub enum ConflictContext {
+pub enum ConflictContextType {
     Rebase,
     Merge,
     Unknown,
@@ -600,15 +609,91 @@ impl Repo {
         }
     }
 
-    /// Detect whether current conflicts are from a rebase or merge
+    /// Detect whether current conflicts are from a rebase or merge, including branch names
     pub fn detect_conflict_context(&self) -> ConflictContext {
         let git_dir = std::path::Path::new(&self.path).join(".git");
-        if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
-            ConflictContext::Rebase
-        } else if git_dir.join("MERGE_HEAD").exists() {
-            ConflictContext::Merge
+
+        // Check for rebase
+        let rebase_dir = if git_dir.join("rebase-merge").exists() {
+            Some(git_dir.join("rebase-merge"))
+        } else if git_dir.join("rebase-apply").exists() {
+            Some(git_dir.join("rebase-apply"))
         } else {
-            ConflictContext::Unknown
+            None
+        };
+
+        if let Some(rebase_dir) = rebase_dir {
+            // Get the branch being rebased (source) from head-name
+            let source_label = std::fs::read_to_string(rebase_dir.join("head-name"))
+                .ok()
+                .map(|s| s.trim().strip_prefix("refs/heads/").unwrap_or(s.trim()).to_string())
+                .unwrap_or_else(|| "HEAD".to_string());
+
+            // Get the target (onto) sha and find its branch name
+            let onto_sha = std::fs::read_to_string(rebase_dir.join("onto"))
+                .ok()
+                .map(|s| s.trim().to_string());
+
+            let target_label = onto_sha
+                .and_then(|sha| {
+                    // Try to find a branch that points to this sha
+                    self.branches.iter()
+                        .find(|(name, branch_sha)| {
+                            // Skip remote branches, prefer local
+                            !name.0.contains('/') && branch_sha.to_string().starts_with(&sha[..7.min(sha.len())])
+                        })
+                        .map(|(name, _)| name.0.clone())
+                        .or_else(|| {
+                            // Try remote branches
+                            self.branches.iter()
+                                .find(|(_, branch_sha)| branch_sha.to_string().starts_with(&sha[..7.min(sha.len())]))
+                                .map(|(name, _)| name.0.clone())
+                        })
+                })
+                .unwrap_or_else(|| "target".to_string());
+
+            return ConflictContext {
+                context_type: ConflictContextType::Rebase,
+                target_label,
+                source_label,
+            };
+        }
+
+        // Check for merge
+        if git_dir.join("MERGE_HEAD").exists() {
+            // Get current branch as target
+            let target_label = match &self.head {
+                Head::Attached { branch_name } => branch_name.0.clone(),
+                Head::Detached { sha } => sha.to_string()[..7].to_string(),
+            };
+
+            // Get merge head sha and find its branch name
+            let merge_sha = std::fs::read_to_string(git_dir.join("MERGE_HEAD"))
+                .ok()
+                .map(|s| s.trim().to_string());
+
+            let source_label = merge_sha
+                .and_then(|sha| {
+                    self.branches.iter()
+                        .find(|(name, branch_sha)| {
+                            !name.0.contains('/') && branch_sha.to_string().starts_with(&sha[..7.min(sha.len())])
+                        })
+                        .map(|(name, _)| name.0.clone())
+                        .or_else(|| Some(sha[..7].to_string()))
+                })
+                .unwrap_or_else(|| "source".to_string());
+
+            return ConflictContext {
+                context_type: ConflictContextType::Merge,
+                target_label,
+                source_label,
+            };
+        }
+
+        ConflictContext {
+            context_type: ConflictContextType::Unknown,
+            target_label: "ours".to_string(),
+            source_label: "theirs".to_string(),
         }
     }
 

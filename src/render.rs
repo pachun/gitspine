@@ -1750,7 +1750,7 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
 
     // For conflicted files, render conflicts instead of hunks
     if is_conflicted && !file.conflicts.is_empty() {
-        render_conflicts(frame, inner, &file.conflicts, commit_view.diff_scroll, conflict_context);
+        render_conflicts(frame, inner, &file.conflicts, commit_view.diff_scroll, &conflict_context);
         return;
     }
 
@@ -2056,24 +2056,25 @@ fn render_conflicts(
     area: ratatui::layout::Rect,
     conflicts: &[crate::repo::ConflictSection],
     scroll: usize,
-    context: crate::repo::ConflictContext,
+    context: &crate::repo::ConflictContext,
 ) {
     let width = area.width as usize;
 
     // Format labels based on conflict context
-    let (ours_prefix, theirs_prefix) = match context {
-        crate::repo::ConflictContext::Rebase => ("rebasing onto", "rebasing"),
-        crate::repo::ConflictContext::Merge => ("merging into", "merging"),
-        crate::repo::ConflictContext::Unknown => ("ours", "theirs"),
+    let (ours_prefix, theirs_prefix) = match context.context_type {
+        crate::repo::ConflictContextType::Rebase => ("rebasing onto", "rebasing"),
+        crate::repo::ConflictContextType::Merge => ("merging into", "merging"),
+        crate::repo::ConflictContextType::Unknown => ("ours", "theirs"),
     };
 
     // Calculate conflict start lines for determining active conflict
+    // Each conflict has: ours header + ours content + theirs header + theirs content
     let mut conflict_start_lines: Vec<usize> = Vec::new();
     let mut current_line = 0;
     for (idx, conflict) in conflicts.iter().enumerate() {
         conflict_start_lines.push(current_line);
-        // Header + ours header + ours content + separator + theirs header + theirs content
-        current_line += 1 + 1 + conflict.ours_lines.len() + 1 + 1 + conflict.theirs_lines.len();
+        // ours header + ours content + theirs header + theirs content
+        current_line += 1 + conflict.ours_lines.len() + 1 + conflict.theirs_lines.len();
         if idx < conflicts.len() - 1 {
             current_line += 1; // blank line between conflicts
         }
@@ -2085,81 +2086,49 @@ fn render_conflicts(
         .rposition(|&start| scroll >= start)
         .unwrap_or(0);
 
-    // Check if we need a sticky header
+    // Check if we need a sticky header (when first line of conflict is scrolled off)
     let needs_sticky = scroll > conflict_start_lines[active_conflict_idx];
 
-    // Build all lines
+    // Build all lines (no inline conflict headers - only content)
     let mut lines: Vec<Line> = Vec::new();
+    let mut line_num = 1usize;
 
     for (idx, conflict) in conflicts.iter().enumerate() {
-        let is_active = idx == active_conflict_idx;
-
-        // Conflict header
-        let header_style = if is_active {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-
-        // Build header with right-aligned action hints
-        let header_text = format!("═══ CONFLICT {}/{} ", idx + 1, conflicts.len());
-        let action_hints = if is_active { "(1) / (2)  (o)pen" } else { "" };
-        let padding = width.saturating_sub(header_text.len() + action_hints.len());
-        lines.push(Line::from(vec![
-            Span::styled(header_text, header_style),
-            Span::raw(" ".repeat(padding)),
-            Span::styled(
-                action_hints,
-                Style::default().fg(Color::Cyan).add_modifier(if is_active { Modifier::BOLD | Modifier::UNDERLINED } else { Modifier::empty() }),
-            ),
-        ]));
-
-        // Ours section header
+        // Ours section header with line numbers
         lines.push(Line::from(vec![
             Span::styled(
-                format!("─── {} ({}) ", ours_prefix, conflict.ours_label),
+                format!("─── {} ({}) ", ours_prefix, &context.target_label),
                 Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
             ),
-            if is_active {
-                Span::styled("← press 1", Style::default().fg(Color::Green))
-            } else {
-                Span::raw("")
-            },
+            Span::styled("← press 1", Style::default().fg(Color::Green)),
         ]));
 
-        // Ours content
+        // Ours content with line numbers
         for line in &conflict.ours_lines {
-            lines.push(Line::from(Span::styled(
-                format!("  {}", line),
-                Style::default().fg(Color::Green),
-            )));
+            lines.push(Line::from(vec![
+                Span::styled(format!("+{:>4} ", line_num), Style::default().fg(Color::Green)),
+                Span::styled(line.clone(), Style::default().fg(Color::Green)),
+            ]));
+            line_num += 1;
         }
-
-        // Separator
-        lines.push(Line::from(Span::styled(
-            "───────────────────",
-            Style::default().fg(Color::DarkGray),
-        )));
 
         // Theirs section header
         lines.push(Line::from(vec![
             Span::styled(
-                format!("─── {} ({}) ", theirs_prefix, conflict.theirs_label),
+                format!("─── {} ({}) ", theirs_prefix, &context.source_label),
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             ),
-            if is_active {
-                Span::styled("← press 2", Style::default().fg(Color::Cyan))
-            } else {
-                Span::raw("")
-            },
+            Span::styled("← press 2", Style::default().fg(Color::Cyan)),
         ]));
 
-        // Theirs content
+        // Theirs content with line numbers (same line numbers - alternative version)
+        let mut theirs_line_num = line_num - conflict.ours_lines.len();
         for line in &conflict.theirs_lines {
-            lines.push(Line::from(Span::styled(
-                format!("  {}", line),
-                Style::default().fg(Color::Cyan),
-            )));
+            lines.push(Line::from(vec![
+                Span::styled(format!("-{:>4} ", theirs_line_num), Style::default().fg(Color::Cyan)),
+                Span::styled(line.clone(), Style::default().fg(Color::Cyan)),
+            ]));
+            theirs_line_num += 1;
         }
 
         // Blank line between conflicts
@@ -2170,18 +2139,13 @@ fn render_conflicts(
 
     // Apply scroll and render with sticky header if needed
     let visible_lines: Vec<Line> = if needs_sticky {
-        // Build sticky header
-        let conflict = &conflicts[active_conflict_idx];
+        // Build sticky header: "conflict 1 of 3: (1), (2), or (o)pen"
         let header_text = format!(
-            "═══ CONFLICT {}/{} ═══ {} ({}) / {} ({}) ",
+            "conflict {} of {}: ",
             active_conflict_idx + 1,
             conflicts.len(),
-            ours_prefix,
-            conflict.ours_label,
-            theirs_prefix,
-            conflict.theirs_label,
         );
-        let action_hints = "(1) / (2)  (o)pen";
+        let action_hints = "(1), (2), or (o)pen";
         let padding = width.saturating_sub(header_text.len() + action_hints.len());
         let sticky_line = Line::from(vec![
             Span::styled(

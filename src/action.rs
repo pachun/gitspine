@@ -2722,14 +2722,10 @@ fn compute_max_conflict_scroll(conflicts: &[crate::repo::ConflictSection], viewp
 pub fn compute_conflict_content_height(conflicts: &[crate::repo::ConflictSection]) -> usize {
     let mut total = 0;
     for (i, conflict) in conflicts.iter().enumerate() {
-        // Header line: "═══ CONFLICT X/Y"
-        total += 1;
         // Ours header line
         total += 1;
         // Ours content lines
         total += conflict.ours_lines.len();
-        // Separator line
-        total += 1;
         // Theirs header line
         total += 1;
         // Theirs content lines
@@ -2756,7 +2752,8 @@ fn get_viewed_conflicts(commit_view: &CommitViewState) -> Option<Vec<crate::repo
 fn get_active_conflict_index(conflicts: &[crate::repo::ConflictSection], scroll: usize) -> usize {
     let mut line = 0;
     for (idx, conflict) in conflicts.iter().enumerate() {
-        let conflict_height = 1 + 1 + conflict.ours_lines.len() + 1 + 1 + conflict.theirs_lines.len();
+        // ours header + ours lines + theirs header + theirs lines
+        let conflict_height = 1 + conflict.ours_lines.len() + 1 + conflict.theirs_lines.len();
         let conflict_end = if idx < conflicts.len() - 1 {
             line + conflict_height + 1 // +1 for blank line
         } else {
@@ -2777,8 +2774,8 @@ fn get_conflict_start_line(conflicts: &[crate::repo::ConflictSection], target_id
         if idx == target_idx {
             return line;
         }
-        // Header + ours header + ours lines + separator + theirs header + theirs lines
-        let conflict_height = 1 + 1 + conflict.ours_lines.len() + 1 + 1 + conflict.theirs_lines.len();
+        // ours header + ours lines + theirs header + theirs lines
+        let conflict_height = 1 + conflict.ours_lines.len() + 1 + conflict.theirs_lines.len();
         line += conflict_height;
         if idx < conflicts.len() - 1 {
             line += 1; // blank line between conflicts
