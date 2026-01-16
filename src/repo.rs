@@ -122,6 +122,14 @@ pub enum FileStatus {
     Conflicted,
 }
 
+/// Context for how conflicts arose (rebase vs merge)
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum ConflictContext {
+    Rebase,
+    Merge,
+    Unknown,
+}
+
 /// A file in the worktree with potential staged and unstaged changes
 #[derive(Clone)]
 pub struct WorktreeFile {
@@ -589,6 +597,18 @@ impl Repo {
             !statuses.is_empty()
         } else {
             false
+        }
+    }
+
+    /// Detect whether current conflicts are from a rebase or merge
+    pub fn detect_conflict_context(&self) -> ConflictContext {
+        let git_dir = std::path::Path::new(&self.path).join(".git");
+        if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+            ConflictContext::Rebase
+        } else if git_dir.join("MERGE_HEAD").exists() {
+            ConflictContext::Merge
+        } else {
+            ConflictContext::Unknown
         }
     }
 

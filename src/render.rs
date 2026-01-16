@@ -80,7 +80,7 @@ fn highlight_matches(
 pub fn render(frame: &mut Frame, state: &State, repo: &Repo, license: &LicenseData) {
     // If commit view is active, render that instead
     if let Some(commit_view) = &state.commit_view {
-        render_commit_view(frame, commit_view, state);
+        render_commit_view(frame, commit_view, state, repo);
         return;
     }
 
@@ -1554,7 +1554,7 @@ fn render_file_tree(
 }
 
 /// Render the staging/commit view
-fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &State) {
+fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &State, repo: &Repo) {
     let area = frame.area();
 
     // Layout: Diff view fills space, file lists are fixed 8 lines (6 files + 2 border)
@@ -1578,8 +1578,11 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
     let unstaged_area = list_chunks[0];
     let staged_area = list_chunks[1];
 
+    // Get conflict context for rendering conflict labels
+    let conflict_context = repo.detect_conflict_context();
+
     // Render diff view (top panel)
-    render_commit_diff_panel(frame, diff_area, commit_view, state.is_rebase_in_progress);
+    render_commit_diff_panel(frame, diff_area, commit_view, state.is_rebase_in_progress, conflict_context);
 
     // Render unstaged files list (bottom left) with action hints
     render_file_list_panel(
@@ -1690,7 +1693,7 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
 }
 
 /// Render the diff panel for the commit view
-fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, commit_view: &CommitViewState, is_rebase: bool) {
+fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, commit_view: &CommitViewState, is_rebase: bool, conflict_context: crate::repo::ConflictContext) {
     let title = match &commit_view.viewing_file {
         Some(path) => {
             if is_rebase {
@@ -1747,7 +1750,7 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
 
     // For conflicted files, render conflicts instead of hunks
     if is_conflicted && !file.conflicts.is_empty() {
-        render_conflicts(frame, inner, &file.conflicts, commit_view.selected_conflict);
+        render_conflicts(frame, inner, &file.conflicts, commit_view.selected_conflict, conflict_context);
         return;
     }
 
@@ -2047,6 +2050,7 @@ fn render_conflicts(
     area: ratatui::layout::Rect,
     conflicts: &[crate::repo::ConflictSection],
     selected_conflict: usize,
+    context: crate::repo::ConflictContext,
 ) {
     let mut lines: Vec<Line> = Vec::new();
 
@@ -2058,6 +2062,13 @@ fn render_conflicts(
             Style::default().fg(Color::DarkGray)
         };
 
+        // Format labels based on conflict context
+        let (ours_prefix, theirs_prefix) = match context {
+            crate::repo::ConflictContext::Rebase => ("rebasing onto", "rebasing"),
+            crate::repo::ConflictContext::Merge => ("merging into", "merging"),
+            crate::repo::ConflictContext::Unknown => ("ours", "theirs"),
+        };
+
         // Conflict header
         lines.push(Line::from(vec![
             Span::styled(
@@ -2065,20 +2076,19 @@ fn render_conflicts(
                 header_style,
             ),
             Span::styled(
-                if is_selected { "(1)=ours  (2)=theirs" } else { "" },
+                if is_selected { "(1) / (2)" } else { "" },
                 Style::default().fg(Color::Cyan),
             ),
         ]));
 
-        // Ours section header
+        // Ours section header (rebasing onto / merging into)
         lines.push(Line::from(vec![
-            Span::styled("─── OURS ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
             Span::styled(
-                format!("({})", conflict.ours_label),
-                Style::default().fg(Color::DarkGray),
+                format!("─── {} ({}) ", ours_prefix, conflict.ours_label),
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
             ),
             if is_selected {
-                Span::styled(" ← press 1", Style::default().fg(Color::Green))
+                Span::styled("← press 1", Style::default().fg(Color::Green))
             } else {
                 Span::raw("")
             },
@@ -2098,15 +2108,14 @@ fn render_conflicts(
             Style::default().fg(Color::DarkGray),
         )));
 
-        // Theirs section header
+        // Theirs section header (rebasing / merging)
         lines.push(Line::from(vec![
-            Span::styled("─── THEIRS ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::styled(
-                format!("({})", conflict.theirs_label),
-                Style::default().fg(Color::DarkGray),
+                format!("─── {} ({}) ", theirs_prefix, conflict.theirs_label),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             ),
             if is_selected {
-                Span::styled(" ← press 2", Style::default().fg(Color::Cyan))
+                Span::styled("← press 2", Style::default().fg(Color::Cyan))
             } else {
                 Span::raw("")
             },
