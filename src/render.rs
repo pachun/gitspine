@@ -1586,9 +1586,9 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
 
     // Use different titles and hints when resolving conflicts
     let (left_title, left_hints, right_title) = if state.is_rebase_in_progress {
-        ("Conflicts", "1:ours  2:theirs  o:open", "Resolved")
+        ("Conflicts", "J/K:scroll", "Resolved")
     } else {
-        ("Unstaged", "s:stage  S:all  d:discard  D:all", "Staged")
+        ("Unstaged", "s:stage  S:all  d:discard  D:all  J/K:scroll", "Staged")
     };
 
     // Render left panel (unstaged/conflicts)
@@ -1601,14 +1601,15 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
         commit_view.unstaged_scroll,
         commit_view.active_panel == CommitViewPanel::UnstagedFiles,
         Some(left_hints),
+        None, // No resolved counts for unstaged/conflicts panel
     );
 
     // Render right panel (staged/resolved)
     let right_hints = if state.is_rebase_in_progress {
         if commit_view.unstaged_files.is_empty() {
-            "c:continue rebase"
+            "J/K:scroll  c:continue rebase"
         } else {
-            ""
+            "J/K:scroll"
         }
     } else if commit_view.staged_files.is_empty() {
         "u:unstage  U:all"
@@ -1624,6 +1625,7 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
         commit_view.staged_scroll,
         commit_view.active_panel == CommitViewPanel::StagedFiles,
         Some(right_hints),
+        Some(&commit_view.resolved_conflicts), // Pass resolved counts for staged/resolved panel
     );
 
     // Show flash message if active (in the diff panel area)
@@ -1714,9 +1716,9 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
 
     // Navigation hints - show abort hint during rebase
     let nav_hints = if is_rebase {
-        " esc:abort rebase  o:open  j/k:files  J/K:scroll "
+        " esc:abort rebase  o:open file  j/k:scroll "
     } else {
-        " tab:back  o:open  j/k:files  J/K:scroll "
+        " tab:back  o:open file  j/k:scroll "
     };
 
     let border_color = if is_rebase { Color::Yellow } else { Color::White };
@@ -1968,6 +1970,7 @@ fn render_file_list_panel(
     scroll: usize,
     is_focused: bool,
     key_hints: Option<&str>,
+    resolved_conflicts: Option<&std::collections::HashMap<String, usize>>,
 ) {
     let border_color = if is_focused { Color::White } else { Color::DarkGray };
     let count = files.len();
@@ -2023,11 +2026,19 @@ fn render_file_list_panel(
                     Style::default().fg(status_color)
                 };
 
-                // Build stats - show conflict count for conflicted files, otherwise +/- counts
+                // Build stats - show conflict/resolved count or +/- counts
+                let resolved_count = resolved_conflicts
+                    .and_then(|rc| rc.get(&file.path))
+                    .copied()
+                    .unwrap_or(0);
+
                 let stats_spans = if file.status == FileStatus::Conflicted && !file.conflicts.is_empty() {
                     let count = file.conflicts.len();
                     let text = if count == 1 { "1 conflict".to_string() } else { format!("{} conflicts", count) };
                     vec![Span::styled(text, Style::default().fg(Color::Yellow))]
+                } else if resolved_count > 0 {
+                    let text = if resolved_count == 1 { "1 resolved".to_string() } else { format!("{} resolved", resolved_count) };
+                    vec![Span::styled(text, Style::default().fg(Color::Green))]
                 } else {
                     vec![
                         Span::styled(format!("+{}", file.additions), Style::default().fg(Color::Green)),

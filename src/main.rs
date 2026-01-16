@@ -168,7 +168,10 @@ fn main() {
                 diff_scroll: 0,
                 staging_highlight: None,
                 selected_conflict: 0,
+                resolved_conflicts: std::collections::HashMap::new(),
             });
+            // Compute initial syntax highlighting
+            action::update_staging_highlight(&mut state);
         }
     }
 

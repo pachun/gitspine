@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
 use std::time::Instant;
 
@@ -42,6 +43,8 @@ pub struct CommitViewState {
     pub staging_highlight: Option<StagingHighlight>,
     /// Currently selected conflict index (for conflicted files)
     pub selected_conflict: usize,
+    /// Track resolved conflicts per file path (for display in Resolved panel)
+    pub resolved_conflicts: HashMap<String, usize>,
 }
 
 /// Cached syntax highlighting for staging view (one file at a time)

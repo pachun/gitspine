@@ -538,6 +538,9 @@ impl Action {
                                         shown_at: Instant::now(),
                                     });
                                 } else {
+                                    // Track resolved conflict count
+                                    let count = commit_view.resolved_conflicts.entry(path.clone()).or_insert(0);
+                                    *count += 1;
                                     refresh_commit_view(state, repo);
                                 }
                             }
@@ -559,6 +562,9 @@ impl Action {
                                         shown_at: Instant::now(),
                                     });
                                 } else {
+                                    // Track resolved conflict count
+                                    let count = commit_view.resolved_conflicts.entry(path.clone()).or_insert(0);
+                                    *count += 1;
                                     refresh_commit_view(state, repo);
                                 }
                             }
@@ -1077,6 +1083,7 @@ impl Action {
                                 diff_scroll: 0,
                                 staging_highlight: None,
                                 selected_conflict: 0,
+                                resolved_conflicts: std::collections::HashMap::new(),
                             });
                             // Compute initial highlighting
                             update_staging_highlight(state);
@@ -1894,6 +1901,7 @@ fn open_commit_view_for_conflicts(state: &mut State, repo: &mut Repo) {
             diff_scroll: 0,
             staging_highlight: None,
             selected_conflict: 0,
+            resolved_conflicts: std::collections::HashMap::new(),
         });
         update_staging_highlight(state);
         state.commit_details = None;
@@ -2848,7 +2856,7 @@ fn find_topmost_visible_hunk(
 }
 
 /// Update the staging highlight cache for the currently viewed file
-fn update_staging_highlight(state: &mut State) {
+pub fn update_staging_highlight(state: &mut State) {
     let Some(commit_view) = &mut state.commit_view else {
         return;
     };
