@@ -300,20 +300,20 @@ impl Action {
                 }
             }
             Action::CharG => {
-                // Scroll diff to top
+                // Scroll diff/conflict to top
                 commit_view.diff_scroll = 0;
             }
             Action::ShiftG => {
-                // Scroll diff to bottom
+                // Scroll diff/conflict to bottom
                 let viewport = diff_viewport_height(terminal);
-                let max_scroll = compute_max_diff_scroll(commit_view, viewport);
+                let max_scroll = compute_max_scroll(commit_view, viewport);
                 commit_view.diff_scroll = max_scroll;
             }
             Action::CtrlD => {
                 // Half-page scroll down
                 let half_page = diff_viewport_height(terminal) / 2;
                 let viewport = diff_viewport_height(terminal);
-                let max_scroll = compute_max_diff_scroll(commit_view, viewport);
+                let max_scroll = compute_max_scroll(commit_view, viewport);
                 commit_view.diff_scroll = (commit_view.diff_scroll + half_page).min(max_scroll);
             }
             Action::CtrlU => {
@@ -388,7 +388,7 @@ impl Action {
                 }
             }
             Action::CharD => {
-                // Discard topmost visible hunk (only for unstaged tracked files)
+                // Discard topmost visible hunk (only for unstaged tracked files, not conflicts)
                 if commit_view.active_panel == CommitViewPanel::UnstagedFiles {
                     if let Some(path) = &commit_view.viewing_file.clone() {
                         let file_entry = commit_view
@@ -400,8 +400,13 @@ impl Action {
                             .map(|f| f.status == crate::repo::FileStatus::Untracked)
                             .unwrap_or(false);
 
+                        let is_conflicted = file_entry
+                            .map(|f| f.status == crate::repo::FileStatus::Conflicted)
+                            .unwrap_or(false);
+
+                        // Don't allow discard for conflicted files - must use 1/2 to resolve
                         // Only show confirmation for tracked files with hunks
-                        if !is_untracked && file_entry.map(|f| !f.unstaged_hunks.is_empty()).unwrap_or(false) {
+                        if !is_conflicted && !is_untracked && file_entry.map(|f| !f.unstaged_hunks.is_empty()).unwrap_or(false) {
                             state.discard_confirmation = Some(crate::state::DiscardConfirmation {
                                 discard_type: crate::state::DiscardType::Hunk,
                                 file_path: path.clone(),
@@ -411,21 +416,30 @@ impl Action {
                 }
             }
             Action::Char('D') => {
-                // Discard entire file (only for unstaged files)
+                // Discard entire file (only for unstaged files, not conflicts)
                 if commit_view.active_panel == CommitViewPanel::UnstagedFiles {
                     if let Some(path) = &commit_view.viewing_file.clone() {
-                        let is_untracked = commit_view
+                        let file_entry = commit_view
                             .unstaged_files
                             .iter()
-                            .find(|f| &f.path == path)
+                            .find(|f| &f.path == path);
+
+                        let is_untracked = file_entry
                             .map(|f| f.status == crate::repo::FileStatus::Untracked)
                             .unwrap_or(false);
 
-                        // Set confirmation state
-                        state.discard_confirmation = Some(crate::state::DiscardConfirmation {
-                            discard_type: crate::state::DiscardType::File { is_untracked },
-                            file_path: path.clone(),
-                        });
+                        let is_conflicted = file_entry
+                            .map(|f| f.status == crate::repo::FileStatus::Conflicted)
+                            .unwrap_or(false);
+
+                        // Don't allow discard for conflicted files - must use 1/2 to resolve
+                        if !is_conflicted {
+                            // Set confirmation state
+                            state.discard_confirmation = Some(crate::state::DiscardConfirmation {
+                                discard_type: crate::state::DiscardType::File { is_untracked },
+                                file_path: path.clone(),
+                            });
+                        }
                     }
                 }
             }
@@ -2870,10 +2884,22 @@ fn update_staging_highlight(state: &mut State) {
         crate::highlight::HighlightedFile { lines: Vec::new() }
     };
 
+    // Also highlight conflicts if this is a conflicted file
+    let conflicts_highlight = if let Some(file) = unstaged_file {
+        if file.status == crate::repo::FileStatus::Conflicted && !file.conflicts.is_empty() {
+            highlighter.highlight_conflicts(&file.conflicts, path)
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
     commit_view.staging_highlight = Some(StagingHighlight {
         file_path: path.clone(),
         unstaged: unstaged_highlight,
         staged: staged_highlight,
+        conflicts: conflicts_highlight,
     });
 }
 

@@ -79,6 +79,33 @@ impl Highlighter {
         HighlightedFile { lines: highlighted }
     }
 
+    /// Highlight conflict sections for a file
+    /// Returns (ours_highlighted, theirs_highlighted) for each conflict
+    pub fn highlight_conflicts(
+        &self,
+        conflicts: &[crate::repo::ConflictSection],
+        file_path: &str,
+    ) -> Vec<(HighlightedFile, HighlightedFile)> {
+        let ext = Self::extension_from_path(file_path);
+
+        conflicts
+            .iter()
+            .map(|conflict| {
+                let ours_lines: Vec<&str> = conflict.ours_lines.iter().map(|s| s.as_str()).collect();
+                let theirs_lines: Vec<&str> = conflict.theirs_lines.iter().map(|s| s.as_str()).collect();
+
+                let ours_highlighted = HighlightedFile {
+                    lines: self.highlight_lines(&ours_lines, ext),
+                };
+                let theirs_highlighted = HighlightedFile {
+                    lines: self.highlight_lines(&theirs_lines, ext),
+                };
+
+                (ours_highlighted, theirs_highlighted)
+            })
+            .collect()
+    }
+
     /// Pre-compute syntax highlighting for all files in a commit
     pub fn highlight_commit(&self, details: &CommitDetails) -> HighlightCache {
         let mut files = Vec::new();

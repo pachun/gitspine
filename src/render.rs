@@ -1750,7 +1750,12 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
 
     // For conflicted files, render conflicts instead of hunks
     if is_conflicted && !file.conflicts.is_empty() {
-        render_conflicts(frame, inner, &file.conflicts, commit_view.diff_scroll, &conflict_context);
+        // Get cached highlighting if available
+        let cached_conflicts = commit_view.staging_highlight.as_ref()
+            .filter(|h| commit_view.viewing_file.as_ref() == Some(&h.file_path))
+            .map(|h| &h.conflicts[..])
+            .unwrap_or(&[]);
+        render_conflicts(frame, inner, &file.conflicts, commit_view.diff_scroll, &conflict_context, cached_conflicts);
         return;
     }
 
@@ -2057,6 +2062,7 @@ fn render_conflicts(
     conflicts: &[crate::repo::ConflictSection],
     scroll: usize,
     context: &crate::repo::ConflictContext,
+    cached_highlights: &[(crate::highlight::HighlightedFile, crate::highlight::HighlightedFile)],
 ) {
     let width = area.width as usize;
 
@@ -2086,15 +2092,17 @@ fn render_conflicts(
         .rposition(|&start| scroll >= start)
         .unwrap_or(0);
 
-    // Check if we need a sticky header (when first line of conflict is scrolled off)
-    let needs_sticky = scroll > conflict_start_lines[active_conflict_idx];
-
-    // Build all lines (no inline conflict headers - only content)
+    // Build all lines with syntax highlighting
     let mut lines: Vec<Line> = Vec::new();
     let mut line_num = 1usize;
 
     for (idx, conflict) in conflicts.iter().enumerate() {
-        // Ours section header with line numbers
+        // Get cached highlighting for this conflict if available
+        let (ours_highlight, theirs_highlight) = cached_highlights.get(idx)
+            .map(|(o, t)| (&o.lines[..], &t.lines[..]))
+            .unwrap_or((&[], &[]));
+
+        // Ours section header
         lines.push(Line::from(vec![
             Span::styled(
                 format!("─── {} ({}) ", ours_prefix, &context.target_label),
@@ -2103,12 +2111,21 @@ fn render_conflicts(
             Span::styled("← press 1", Style::default().fg(Color::Green)),
         ]));
 
-        // Ours content with line numbers
-        for line in &conflict.ours_lines {
-            lines.push(Line::from(vec![
-                Span::styled(format!("+{:>4} ", line_num), Style::default().fg(Color::Green)),
-                Span::styled(line.clone(), Style::default().fg(Color::Green)),
-            ]));
+        // Ours content with line numbers and syntax highlighting
+        for (line_idx, line) in conflict.ours_lines.iter().enumerate() {
+            let prefix = format!("+{:>4} ", line_num);
+            let mut spans = vec![Span::styled(prefix, Style::default().fg(Color::Green))];
+
+            // Use syntax highlighting if available, otherwise plain green
+            if let Some(highlighted) = ours_highlight.get(line_idx) {
+                for (style, text) in highlighted {
+                    spans.push(Span::styled(text.clone(), syntect_to_ratatui_style(style)));
+                }
+            } else {
+                spans.push(Span::styled(line.clone(), Style::default().fg(Color::Green)));
+            }
+
+            lines.push(Line::from(spans));
             line_num += 1;
         }
 
@@ -2121,13 +2138,22 @@ fn render_conflicts(
             Span::styled("← press 2", Style::default().fg(Color::Cyan)),
         ]));
 
-        // Theirs content with line numbers (same line numbers - alternative version)
+        // Theirs content with line numbers and syntax highlighting
         let mut theirs_line_num = line_num - conflict.ours_lines.len();
-        for line in &conflict.theirs_lines {
-            lines.push(Line::from(vec![
-                Span::styled(format!("-{:>4} ", theirs_line_num), Style::default().fg(Color::Cyan)),
-                Span::styled(line.clone(), Style::default().fg(Color::Cyan)),
-            ]));
+        for (line_idx, line) in conflict.theirs_lines.iter().enumerate() {
+            let prefix = format!("-{:>4} ", theirs_line_num);
+            let mut spans = vec![Span::styled(prefix, Style::default().fg(Color::Cyan))];
+
+            // Use syntax highlighting if available, otherwise plain cyan
+            if let Some(highlighted) = theirs_highlight.get(line_idx) {
+                for (style, text) in highlighted {
+                    spans.push(Span::styled(text.clone(), syntect_to_ratatui_style(style)));
+                }
+            } else {
+                spans.push(Span::styled(line.clone(), Style::default().fg(Color::Cyan)));
+            }
+
+            lines.push(Line::from(spans));
             theirs_line_num += 1;
         }
 
@@ -2137,55 +2163,38 @@ fn render_conflicts(
         }
     }
 
-    // Apply scroll and render with sticky header if needed
-    let visible_lines: Vec<Line> = if needs_sticky {
-        // Build sticky header: "conflict 1 of 3: (1), (2), or (o)pen"
-        let header_text = format!(
-            "conflict {} of {}: ",
-            active_conflict_idx + 1,
-            conflicts.len(),
-        );
-        let action_hints = "(1), (2), or (o)pen";
-        let padding = width.saturating_sub(header_text.len() + action_hints.len());
-        let sticky_line = Line::from(vec![
-            Span::styled(
-                header_text,
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" ".repeat(padding)),
-            Span::styled(
-                action_hints,
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-            ),
-        ]);
+    // Always show header at top
+    let header_text = format!(
+        "conflict {} of {}: ",
+        active_conflict_idx + 1,
+        conflicts.len(),
+    );
+    let action_hints = "(1), (2), or (o)pen";
+    let padding = width.saturating_sub(header_text.len() + action_hints.len());
+    let header_line = Line::from(vec![
+        Span::styled(
+            header_text,
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" ".repeat(padding)),
+        Span::styled(
+            action_hints,
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        ),
+    ]);
 
-        // Calculate content start
-        let content_start = if active_conflict_idx + 1 < conflict_start_lines.len() {
-            let next_conflict_start = conflict_start_lines[active_conflict_idx + 1];
-            if scroll + 1 > next_conflict_start {
-                next_conflict_start
-            } else {
-                scroll + 1
-            }
-        } else {
-            scroll + 1
-        };
+    // Content area is height - 1 for the header
+    let content_height = area.height.saturating_sub(1) as usize;
 
-        std::iter::once(sticky_line)
-            .chain(
-                lines
-                    .into_iter()
-                    .skip(content_start)
-                    .take(area.height.saturating_sub(1) as usize)
-            )
-            .collect()
-    } else {
-        lines
-            .into_iter()
-            .skip(scroll)
-            .take(area.height as usize)
-            .collect()
-    };
+    // Build visible lines: header + scrolled content
+    let visible_lines: Vec<Line> = std::iter::once(header_line)
+        .chain(
+            lines
+                .into_iter()
+                .skip(scroll)
+                .take(content_height)
+        )
+        .collect();
 
     let paragraph = Paragraph::new(visible_lines);
     frame.render_widget(paragraph, area);

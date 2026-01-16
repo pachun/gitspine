@@ -49,6 +49,8 @@ pub struct StagingHighlight {
     pub file_path: String,
     pub unstaged: HighlightedFile,
     pub staged: HighlightedFile,
+    /// For conflicted files: (ours_highlighted, theirs_highlighted) per conflict
+    pub conflicts: Vec<(HighlightedFile, HighlightedFile)>,
 }
 
 /// What type of discard is being confirmed
