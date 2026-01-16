@@ -81,9 +81,7 @@ pub struct Hunk {
 /// A conflict section from a merge/rebase conflict
 #[derive(Clone)]
 pub struct ConflictSection {
-    pub ours_label: String,        // Label after <<<<<<< (e.g., "HEAD")
     pub ours_lines: Vec<String>,   // Lines from our side
-    pub theirs_label: String,      // Label after >>>>>>> (e.g., "feature-branch")
     pub theirs_lines: Vec<String>, // Lines from their side
 }
 
@@ -875,7 +873,6 @@ impl Repo {
         let mut conflicts = Vec::new();
         let mut in_conflict = false;
         let mut in_ours = false;
-        let mut ours_label = String::new();
         let mut ours_lines = Vec::new();
         let mut theirs_lines = Vec::new();
 
@@ -883,17 +880,13 @@ impl Repo {
             if line.starts_with("<<<<<<<") {
                 in_conflict = true;
                 in_ours = true;
-                ours_label = line.strip_prefix("<<<<<<< ").unwrap_or("").to_string();
                 ours_lines.clear();
                 theirs_lines.clear();
             } else if line.starts_with("=======") && in_conflict {
                 in_ours = false;
             } else if line.starts_with(">>>>>>>") && in_conflict {
-                let theirs_label = line.strip_prefix(">>>>>>> ").unwrap_or("").to_string();
                 conflicts.push(ConflictSection {
-                    ours_label: ours_label.clone(),
                     ours_lines: ours_lines.clone(),
-                    theirs_label,
                     theirs_lines: theirs_lines.clone(),
                 });
                 in_conflict = false;

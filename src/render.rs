@@ -1584,24 +1584,31 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
     // Render diff view (top panel)
     render_commit_diff_panel(frame, diff_area, commit_view, state.is_rebase_in_progress, conflict_context);
 
-    // Render unstaged files list (bottom left) with action hints
+    // Use different titles and hints when resolving conflicts
+    let (left_title, left_hints, right_title) = if state.is_rebase_in_progress {
+        ("Conflicts", "1:ours  2:theirs  o:open", "Resolved")
+    } else {
+        ("Unstaged", "s:stage  S:all  d:discard  D:all", "Staged")
+    };
+
+    // Render left panel (unstaged/conflicts)
     render_file_list_panel(
         frame,
         unstaged_area,
-        "Unstaged",
+        left_title,
         &commit_view.unstaged_files,
         commit_view.unstaged_selected,
         commit_view.unstaged_scroll,
         commit_view.active_panel == CommitViewPanel::UnstagedFiles,
-        Some("s:stage  S:all  d:discard  D:all"),
+        Some(left_hints),
     );
 
-    // Render staged files list (bottom right) with action hints
-    let staged_hints = if state.is_rebase_in_progress {
+    // Render right panel (staged/resolved)
+    let right_hints = if state.is_rebase_in_progress {
         if commit_view.unstaged_files.is_empty() {
-            "u:unstage  U:all  c:continue rebase"
+            "c:continue rebase"
         } else {
-            "u:unstage  U:all"
+            ""
         }
     } else if commit_view.staged_files.is_empty() {
         "u:unstage  U:all"
@@ -1611,12 +1618,12 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
     render_file_list_panel(
         frame,
         staged_area,
-        "Staged",
+        right_title,
         &commit_view.staged_files,
         commit_view.staged_selected,
         commit_view.staged_scroll,
         commit_view.active_panel == CommitViewPanel::StagedFiles,
-        Some(staged_hints),
+        Some(right_hints),
     );
 
     // Show flash message if active (in the diff panel area)
@@ -2108,7 +2115,7 @@ fn render_conflicts(
                 format!("─── {} ({}) ", ours_prefix, &context.target_label),
                 Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
             ),
-            Span::styled("← press 1", Style::default().fg(Color::Green)),
+            Span::styled("← press 1 to take these changes", Style::default().fg(Color::Green)),
         ]));
 
         // Ours content with line numbers and syntax highlighting
@@ -2135,7 +2142,7 @@ fn render_conflicts(
                 format!("─── {} ({}) ", theirs_prefix, &context.source_label),
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             ),
-            Span::styled("← press 2", Style::default().fg(Color::Cyan)),
+            Span::styled("← press 2 to take these changes", Style::default().fg(Color::Cyan)),
         ]));
 
         // Theirs content with line numbers and syntax highlighting
