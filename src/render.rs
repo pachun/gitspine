@@ -1750,7 +1750,7 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
 
     // For conflicted files, render conflicts instead of hunks
     if is_conflicted && !file.conflicts.is_empty() {
-        render_conflicts(frame, inner, &file.conflicts, commit_view.selected_conflict, conflict_context);
+        render_conflicts(frame, inner, &file.conflicts, commit_view.diff_scroll, conflict_context);
         return;
     }
 
@@ -2011,12 +2011,18 @@ fn render_file_list_panel(
                     Style::default().fg(status_color)
                 };
 
-                // Build stats with colored +/- counts
-                let stats_spans = vec![
-                    Span::styled(format!("+{}", file.additions), Style::default().fg(Color::Green)),
-                    Span::raw(" "),
-                    Span::styled(format!("-{}", file.deletions), Style::default().fg(Color::Red)),
-                ];
+                // Build stats - show conflict count for conflicted files, otherwise +/- counts
+                let stats_spans = if file.status == FileStatus::Conflicted && !file.conflicts.is_empty() {
+                    let count = file.conflicts.len();
+                    let text = if count == 1 { "1 conflict".to_string() } else { format!("{} conflicts", count) };
+                    vec![Span::styled(text, Style::default().fg(Color::Yellow))]
+                } else {
+                    vec![
+                        Span::styled(format!("+{}", file.additions), Style::default().fg(Color::Green)),
+                        Span::raw(" "),
+                        Span::styled(format!("-{}", file.deletions), Style::default().fg(Color::Red)),
+                    ]
+                };
 
                 Row::new(vec![
                     Cell::from(Span::styled(file.path.clone(), path_style)),
@@ -2044,50 +2050,77 @@ fn render_file_list_panel(
     }
 }
 
-/// Render conflict sections for a conflicted file
+/// Render conflict sections for a conflicted file with scrolling and sticky header
 fn render_conflicts(
     frame: &mut Frame,
     area: ratatui::layout::Rect,
     conflicts: &[crate::repo::ConflictSection],
-    selected_conflict: usize,
+    scroll: usize,
     context: crate::repo::ConflictContext,
 ) {
+    let width = area.width as usize;
+
+    // Format labels based on conflict context
+    let (ours_prefix, theirs_prefix) = match context {
+        crate::repo::ConflictContext::Rebase => ("rebasing onto", "rebasing"),
+        crate::repo::ConflictContext::Merge => ("merging into", "merging"),
+        crate::repo::ConflictContext::Unknown => ("ours", "theirs"),
+    };
+
+    // Calculate conflict start lines for determining active conflict
+    let mut conflict_start_lines: Vec<usize> = Vec::new();
+    let mut current_line = 0;
+    for (idx, conflict) in conflicts.iter().enumerate() {
+        conflict_start_lines.push(current_line);
+        // Header + ours header + ours content + separator + theirs header + theirs content
+        current_line += 1 + 1 + conflict.ours_lines.len() + 1 + 1 + conflict.theirs_lines.len();
+        if idx < conflicts.len() - 1 {
+            current_line += 1; // blank line between conflicts
+        }
+    }
+
+    // Find active conflict (the one containing scroll position)
+    let active_conflict_idx = conflict_start_lines
+        .iter()
+        .rposition(|&start| scroll >= start)
+        .unwrap_or(0);
+
+    // Check if we need a sticky header
+    let needs_sticky = scroll > conflict_start_lines[active_conflict_idx];
+
+    // Build all lines
     let mut lines: Vec<Line> = Vec::new();
 
     for (idx, conflict) in conflicts.iter().enumerate() {
-        let is_selected = idx == selected_conflict;
-        let header_style = if is_selected {
+        let is_active = idx == active_conflict_idx;
+
+        // Conflict header
+        let header_style = if is_active {
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::DarkGray)
         };
 
-        // Format labels based on conflict context
-        let (ours_prefix, theirs_prefix) = match context {
-            crate::repo::ConflictContext::Rebase => ("rebasing onto", "rebasing"),
-            crate::repo::ConflictContext::Merge => ("merging into", "merging"),
-            crate::repo::ConflictContext::Unknown => ("ours", "theirs"),
-        };
-
-        // Conflict header
+        // Build header with right-aligned action hints
+        let header_text = format!("═══ CONFLICT {}/{} ", idx + 1, conflicts.len());
+        let action_hints = if is_active { "(1) / (2)  (o)pen" } else { "" };
+        let padding = width.saturating_sub(header_text.len() + action_hints.len());
         lines.push(Line::from(vec![
+            Span::styled(header_text, header_style),
+            Span::raw(" ".repeat(padding)),
             Span::styled(
-                format!("═══ CONFLICT {}/{} ", idx + 1, conflicts.len()),
-                header_style,
-            ),
-            Span::styled(
-                if is_selected { "(1) / (2)" } else { "" },
-                Style::default().fg(Color::Cyan),
+                action_hints,
+                Style::default().fg(Color::Cyan).add_modifier(if is_active { Modifier::BOLD | Modifier::UNDERLINED } else { Modifier::empty() }),
             ),
         ]));
 
-        // Ours section header (rebasing onto / merging into)
+        // Ours section header
         lines.push(Line::from(vec![
             Span::styled(
                 format!("─── {} ({}) ", ours_prefix, conflict.ours_label),
                 Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
             ),
-            if is_selected {
+            if is_active {
                 Span::styled("← press 1", Style::default().fg(Color::Green))
             } else {
                 Span::raw("")
@@ -2108,13 +2141,13 @@ fn render_conflicts(
             Style::default().fg(Color::DarkGray),
         )));
 
-        // Theirs section header (rebasing / merging)
+        // Theirs section header
         lines.push(Line::from(vec![
             Span::styled(
                 format!("─── {} ({}) ", theirs_prefix, conflict.theirs_label),
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             ),
-            if is_selected {
+            if is_active {
                 Span::styled("← press 2", Style::default().fg(Color::Cyan))
             } else {
                 Span::raw("")
@@ -2135,6 +2168,61 @@ fn render_conflicts(
         }
     }
 
-    let paragraph = Paragraph::new(lines);
+    // Apply scroll and render with sticky header if needed
+    let visible_lines: Vec<Line> = if needs_sticky {
+        // Build sticky header
+        let conflict = &conflicts[active_conflict_idx];
+        let header_text = format!(
+            "═══ CONFLICT {}/{} ═══ {} ({}) / {} ({}) ",
+            active_conflict_idx + 1,
+            conflicts.len(),
+            ours_prefix,
+            conflict.ours_label,
+            theirs_prefix,
+            conflict.theirs_label,
+        );
+        let action_hints = "(1) / (2)  (o)pen";
+        let padding = width.saturating_sub(header_text.len() + action_hints.len());
+        let sticky_line = Line::from(vec![
+            Span::styled(
+                header_text,
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" ".repeat(padding)),
+            Span::styled(
+                action_hints,
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            ),
+        ]);
+
+        // Calculate content start
+        let content_start = if active_conflict_idx + 1 < conflict_start_lines.len() {
+            let next_conflict_start = conflict_start_lines[active_conflict_idx + 1];
+            if scroll + 1 > next_conflict_start {
+                next_conflict_start
+            } else {
+                scroll + 1
+            }
+        } else {
+            scroll + 1
+        };
+
+        std::iter::once(sticky_line)
+            .chain(
+                lines
+                    .into_iter()
+                    .skip(content_start)
+                    .take(area.height.saturating_sub(1) as usize)
+            )
+            .collect()
+    } else {
+        lines
+            .into_iter()
+            .skip(scroll)
+            .take(area.height as usize)
+            .collect()
+    };
+
+    let paragraph = Paragraph::new(visible_lines);
     frame.render_widget(paragraph, area);
 }

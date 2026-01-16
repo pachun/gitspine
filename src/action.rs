@@ -210,40 +210,14 @@ impl Action {
                 update_staging_highlight(state);
             }
             Action::CharJ | Action::Down => {
-                // Check if viewing a conflicted file - navigate between conflicts
-                let is_conflict_file = commit_view.viewing_file.as_ref()
-                    .and_then(|path| commit_view.unstaged_files.iter().find(|f| &f.path == path))
-                    .map(|f| f.status == crate::repo::FileStatus::Conflicted && !f.conflicts.is_empty())
-                    .unwrap_or(false);
-
-                if is_conflict_file {
-                    // Move to next conflict
-                    let max_conflict = commit_view.viewing_file.as_ref()
-                        .and_then(|path| commit_view.unstaged_files.iter().find(|f| &f.path == path))
-                        .map(|f| f.conflicts.len().saturating_sub(1))
-                        .unwrap_or(0);
-                    commit_view.selected_conflict = (commit_view.selected_conflict + 1).min(max_conflict);
-                } else {
-                    // Scroll diff down
-                    let viewport = diff_viewport_height(terminal);
-                    let max_scroll = compute_max_diff_scroll(commit_view, viewport);
-                    commit_view.diff_scroll = (commit_view.diff_scroll + 1).min(max_scroll);
-                }
+                // Scroll diff/conflict view down
+                let viewport = diff_viewport_height(terminal);
+                let max_scroll = compute_max_scroll(commit_view, viewport);
+                commit_view.diff_scroll = (commit_view.diff_scroll + 1).min(max_scroll);
             }
             Action::CharK | Action::Up => {
-                // Check if viewing a conflicted file - navigate between conflicts
-                let is_conflict_file = commit_view.viewing_file.as_ref()
-                    .and_then(|path| commit_view.unstaged_files.iter().find(|f| &f.path == path))
-                    .map(|f| f.status == crate::repo::FileStatus::Conflicted && !f.conflicts.is_empty())
-                    .unwrap_or(false);
-
-                if is_conflict_file {
-                    // Move to previous conflict
-                    commit_view.selected_conflict = commit_view.selected_conflict.saturating_sub(1);
-                } else {
-                    // Scroll diff up
-                    commit_view.diff_scroll = commit_view.diff_scroll.saturating_sub(1);
-                }
+                // Scroll diff/conflict view up
+                commit_view.diff_scroll = commit_view.diff_scroll.saturating_sub(1);
             }
             Action::ShiftJ => {
                 // Move to next file in active panel
@@ -537,12 +511,12 @@ impl Action {
                 }
             }
             Action::Digit('1') => {
-                // Accept "ours" for the selected conflict
+                // Accept "ours" for the active conflict (determined by scroll position)
                 if let Some(path) = &commit_view.viewing_file.clone() {
                     let file = commit_view.unstaged_files.iter().find(|f| &f.path == path);
                     if let Some(file) = file {
                         if file.status == crate::repo::FileStatus::Conflicted && !file.conflicts.is_empty() {
-                            let conflict_idx = commit_view.selected_conflict;
+                            let conflict_idx = get_active_conflict_index(&file.conflicts, commit_view.diff_scroll);
                             if conflict_idx < file.conflicts.len() {
                                 if let Err(e) = repo.resolve_conflict(path, conflict_idx, true) {
                                     state.flash_message = Some(FlashMessage {
@@ -551,7 +525,7 @@ impl Action {
                                     });
                                 } else {
                                     state.flash_message = Some(FlashMessage {
-                                        message: format!("accepted OURS for conflict {}", conflict_idx + 1),
+                                        message: format!("accepted option 1 for conflict {}", conflict_idx + 1),
                                         shown_at: Instant::now(),
                                     });
                                     refresh_commit_view(state, repo);
@@ -562,12 +536,12 @@ impl Action {
                 }
             }
             Action::Digit('2') => {
-                // Accept "theirs" for the selected conflict
+                // Accept "theirs" for the active conflict (determined by scroll position)
                 if let Some(path) = &commit_view.viewing_file.clone() {
                     let file = commit_view.unstaged_files.iter().find(|f| &f.path == path);
                     if let Some(file) = file {
                         if file.status == crate::repo::FileStatus::Conflicted && !file.conflicts.is_empty() {
-                            let conflict_idx = commit_view.selected_conflict;
+                            let conflict_idx = get_active_conflict_index(&file.conflicts, commit_view.diff_scroll);
                             if conflict_idx < file.conflicts.len() {
                                 if let Err(e) = repo.resolve_conflict(path, conflict_idx, false) {
                                     state.flash_message = Some(FlashMessage {
@@ -576,10 +550,83 @@ impl Action {
                                     });
                                 } else {
                                     state.flash_message = Some(FlashMessage {
-                                        message: format!("accepted THEIRS for conflict {}", conflict_idx + 1),
+                                        message: format!("accepted option 2 for conflict {}", conflict_idx + 1),
                                         shown_at: Instant::now(),
                                     });
                                     refresh_commit_view(state, repo);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Action::CharN => {
+                // Jump to next conflict or hunk
+                if let Some(path) = &commit_view.viewing_file {
+                    // Check if viewing a conflicted file
+                    if let Some(file) = commit_view.unstaged_files.iter().find(|f| &f.path == path) {
+                        if file.status == crate::repo::FileStatus::Conflicted && !file.conflicts.is_empty() {
+                            // Jump to next conflict
+                            let current_idx = get_active_conflict_index(&file.conflicts, commit_view.diff_scroll);
+                            if current_idx + 1 < file.conflicts.len() {
+                                let next_line = get_conflict_start_line(&file.conflicts, current_idx + 1);
+                                commit_view.diff_scroll = next_line;
+                            }
+                            return false;
+                        }
+                    }
+                    // Not a conflict file - jump to next hunk
+                    if let Some(hunks) = get_viewed_hunks(commit_view) {
+                        if !hunks.is_empty() {
+                            let starts = get_hunk_start_lines(&hunks);
+                            // Find next hunk start after current scroll
+                            for (idx, &start) in starts.iter().enumerate() {
+                                if start > commit_view.diff_scroll {
+                                    commit_view.diff_scroll = start;
+                                    break;
+                                }
+                                // If we're past the last hunk start, stay where we are
+                                if idx == starts.len() - 1 {
+                                    commit_view.diff_scroll = start;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Action::ShiftN => {
+                // Jump to previous conflict or hunk
+                if let Some(path) = &commit_view.viewing_file {
+                    // Check if viewing a conflicted file
+                    if let Some(file) = commit_view.unstaged_files.iter().find(|f| &f.path == path) {
+                        if file.status == crate::repo::FileStatus::Conflicted && !file.conflicts.is_empty() {
+                            // Jump to previous conflict
+                            let current_idx = get_active_conflict_index(&file.conflicts, commit_view.diff_scroll);
+                            let current_start = get_conflict_start_line(&file.conflicts, current_idx);
+                            if commit_view.diff_scroll > current_start {
+                                // We're in the middle of a conflict, jump to its start
+                                commit_view.diff_scroll = current_start;
+                            } else if current_idx > 0 {
+                                // Jump to previous conflict
+                                let prev_line = get_conflict_start_line(&file.conflicts, current_idx - 1);
+                                commit_view.diff_scroll = prev_line;
+                            }
+                            return false;
+                        }
+                    }
+                    // Not a conflict file - jump to previous hunk
+                    if let Some(hunks) = get_viewed_hunks(commit_view) {
+                        if !hunks.is_empty() {
+                            let starts = get_hunk_start_lines(&hunks);
+                            // Find previous hunk start before current scroll
+                            for (idx, &start) in starts.iter().enumerate().rev() {
+                                if start < commit_view.diff_scroll {
+                                    commit_view.diff_scroll = start;
+                                    break;
+                                }
+                                // If we're at or before the first hunk, go to start
+                                if idx == 0 {
+                                    commit_view.diff_scroll = 0;
                                 }
                             }
                         }
@@ -2651,6 +2698,107 @@ fn compute_max_diff_scroll(commit_view: &CommitViewState, viewport_height: usize
     // 2. Content height - viewport (so you can see all content)
     let content_based_max = total_lines.saturating_sub(viewport_height);
     last_hunk_start.max(content_based_max)
+}
+
+/// Calculate the max scroll position for either conflicts or hunks
+fn compute_max_scroll(commit_view: &CommitViewState, viewport_height: usize) -> usize {
+    // Check if viewing a conflicted file
+    if let Some(conflicts) = get_viewed_conflicts(commit_view) {
+        if !conflicts.is_empty() {
+            return compute_max_conflict_scroll(&conflicts, viewport_height);
+        }
+    }
+    // Fall back to hunk-based scroll
+    compute_max_diff_scroll(commit_view, viewport_height)
+}
+
+/// Calculate max scroll for conflict content
+fn compute_max_conflict_scroll(conflicts: &[crate::repo::ConflictSection], viewport_height: usize) -> usize {
+    let total_lines = compute_conflict_content_height(conflicts);
+    total_lines.saturating_sub(viewport_height)
+}
+
+/// Calculate total height in lines for all conflicts
+pub fn compute_conflict_content_height(conflicts: &[crate::repo::ConflictSection]) -> usize {
+    let mut total = 0;
+    for (i, conflict) in conflicts.iter().enumerate() {
+        // Header line: "═══ CONFLICT X/Y"
+        total += 1;
+        // Ours header line
+        total += 1;
+        // Ours content lines
+        total += conflict.ours_lines.len();
+        // Separator line
+        total += 1;
+        // Theirs header line
+        total += 1;
+        // Theirs content lines
+        total += conflict.theirs_lines.len();
+        // Blank line between conflicts (except last)
+        if i < conflicts.len() - 1 {
+            total += 1;
+        }
+    }
+    total
+}
+
+/// Get conflicts from the currently viewed file (if it's a conflicted file)
+fn get_viewed_conflicts(commit_view: &CommitViewState) -> Option<Vec<crate::repo::ConflictSection>> {
+    let path = commit_view.viewing_file.as_ref()?;
+    commit_view
+        .unstaged_files
+        .iter()
+        .find(|f| &f.path == path && f.status == crate::repo::FileStatus::Conflicted)
+        .map(|f| f.conflicts.clone())
+}
+
+/// Get active conflict index based on scroll position
+fn get_active_conflict_index(conflicts: &[crate::repo::ConflictSection], scroll: usize) -> usize {
+    let mut line = 0;
+    for (idx, conflict) in conflicts.iter().enumerate() {
+        let conflict_height = 1 + 1 + conflict.ours_lines.len() + 1 + 1 + conflict.theirs_lines.len();
+        let conflict_end = if idx < conflicts.len() - 1 {
+            line + conflict_height + 1 // +1 for blank line
+        } else {
+            line + conflict_height
+        };
+        if scroll < conflict_end {
+            return idx;
+        }
+        line = conflict_end;
+    }
+    conflicts.len().saturating_sub(1)
+}
+
+/// Get start line for a conflict by index
+fn get_conflict_start_line(conflicts: &[crate::repo::ConflictSection], target_idx: usize) -> usize {
+    let mut line = 0;
+    for (idx, conflict) in conflicts.iter().enumerate() {
+        if idx == target_idx {
+            return line;
+        }
+        // Header + ours header + ours lines + separator + theirs header + theirs lines
+        let conflict_height = 1 + 1 + conflict.ours_lines.len() + 1 + 1 + conflict.theirs_lines.len();
+        line += conflict_height;
+        if idx < conflicts.len() - 1 {
+            line += 1; // blank line between conflicts
+        }
+    }
+    line
+}
+
+/// Get hunk start lines for navigation
+fn get_hunk_start_lines(hunks: &[crate::repo::Hunk]) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let mut line = 0;
+    for (idx, hunk) in hunks.iter().enumerate() {
+        starts.push(line);
+        line += hunk.lines.len();
+        if idx < hunks.len() - 1 {
+            line += 1; // blank line between hunks
+        }
+    }
+    starts
 }
 
 /// Find the hunk that's currently at the top of the visible diff area
