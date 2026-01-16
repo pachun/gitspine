@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 const TRIAL_DAYS: u64 = 14;
-const VALIDATION_CACHE_DAYS: u64 = 7; // Re-validate license weekly
+const VALIDATION_CACHE_DAYS: u64 = 2; // Re-validate license every 48 hours
 const OFFLINE_GRACE_DAYS: u64 = 30; // Allow offline use for 30 days
 
 #[derive(Serialize, Deserialize, Default)]

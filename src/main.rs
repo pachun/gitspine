@@ -109,7 +109,14 @@ fn main() {
 
     // Check if user can use the app
     if !license.can_use() {
-        eprintln!("Your trial has expired. Purchase a license at:");
+        match license.status() {
+            license::LicenseStatus::TrialExpired => {
+                eprintln!("Your trial has expired. Purchase a license at:");
+            }
+            _ => {
+                eprintln!("Your license has expired. Renew at:");
+            }
+        }
         eprintln!("https://castlelabs.lemonsqueezy.com/checkout/buy/bae436c6-4d94-4630-987b-77e51bae2e43");
         eprintln!();
         eprintln!("Then run: gg --activate <LICENSE_KEY>");
