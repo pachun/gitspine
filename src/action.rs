@@ -538,10 +538,6 @@ impl Action {
                                         shown_at: Instant::now(),
                                     });
                                 } else {
-                                    state.flash_message = Some(FlashMessage {
-                                        message: format!("accepted option 1 for conflict {}", conflict_idx + 1),
-                                        shown_at: Instant::now(),
-                                    });
                                     refresh_commit_view(state, repo);
                                 }
                             }
@@ -563,10 +559,6 @@ impl Action {
                                         shown_at: Instant::now(),
                                     });
                                 } else {
-                                    state.flash_message = Some(FlashMessage {
-                                        message: format!("accepted option 2 for conflict {}", conflict_idx + 1),
-                                        shown_at: Instant::now(),
-                                    });
                                     refresh_commit_view(state, repo);
                                 }
                             }
