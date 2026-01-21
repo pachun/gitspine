@@ -849,17 +849,50 @@ impl Repo {
         git_repo: &Repository,
         path: &str,
     ) -> Option<(Vec<Hunk>, usize, usize)> {
+        // For untracked files, read content directly since diff_index_to_workdir
+        // with pathspec filtering doesn't include them properly
+        let full_path = std::path::Path::new(&self.path).join(path);
+        let is_untracked = git_repo
+            .status_file(std::path::Path::new(path))
+            .map(|s| s.contains(git2::Status::WT_NEW))
+            .unwrap_or(false);
+
+        if is_untracked {
+            return self.load_untracked_file_as_diff(&full_path);
+        }
+
         let mut diff_opts = git2::DiffOptions::new();
         diff_opts.pathspec(path);
-        // Include untracked files and their content in the diff
-        diff_opts.include_untracked(true);
-        diff_opts.show_untracked_content(true);
 
         let diff = git_repo
             .diff_index_to_workdir(None, Some(&mut diff_opts))
             .ok()?;
 
         self.extract_hunks_from_diff(&diff)
+    }
+
+    /// Load an untracked file's content as a diff (all lines are additions)
+    fn load_untracked_file_as_diff(
+        &self,
+        full_path: &std::path::Path,
+    ) -> Option<(Vec<Hunk>, usize, usize)> {
+        let content = std::fs::read_to_string(full_path).ok()?;
+        let lines: Vec<DiffLine> = content
+            .lines()
+            .enumerate()
+            .map(|(i, line)| DiffLine {
+                origin: '+',
+                content: line.to_string(),
+                new_line_no: Some((i + 1) as u32),
+            })
+            .collect();
+
+        let additions = lines.len();
+        if lines.is_empty() {
+            Some((Vec::new(), 0, 0))
+        } else {
+            Some((vec![Hunk { lines }], additions, 0))
+        }
     }
 
     /// Parse conflict sections from a conflicted file

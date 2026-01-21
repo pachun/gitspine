@@ -1588,7 +1588,7 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
     let (left_title, left_hints, right_title) = if state.is_rebase_in_progress {
         ("Conflicts", "J/K:scroll", "Resolved")
     } else {
-        ("Unstaged", "s:stage  S:all  d:discard  D:all  J/K:scroll", "Staged")
+        ("Unstaged", "s:stage  S:all  d:discard  D:discard all  J/K:scroll", "Staged")
     };
 
     // Render left panel (unstaged/conflicts)
