@@ -117,7 +117,7 @@ fn main() {
                 eprintln!("Your license has expired. Renew at:");
             }
         }
-        eprintln!("https://castlelabs.lemonsqueezy.com/checkout/buy/bae436c6-4d94-4630-987b-77e51bae2e43");
+        eprintln!("https://castlelabs.lemonsqueezy.com/checkout/buy/ea5533b5-37a4-4d79-8db2-9b20fccff51a");
         eprintln!();
         eprintln!("Then run: gg --activate <LICENSE_KEY>");
         std::process::exit(1);

@@ -901,7 +901,7 @@ impl Action {
             Action::ShiftL => {
                 state.jump_distance_string.clear();
                 // Open purchase page
-                let url = "https://castlelabs.lemonsqueezy.com/checkout/buy/bae436c6-4d94-4630-987b-77e51bae2e43";
+                let url = "https://castlelabs.lemonsqueezy.com/checkout/buy/ea5533b5-37a4-4d79-8db2-9b20fccff51a";
                 let _ = open::that(url);
                 state.flash_message = Some(FlashMessage {
                     message: "opening checkout - use --activate <KEY> after purchase".to_string(),
