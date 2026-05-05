@@ -5,7 +5,7 @@ use ratatui::Terminal;
 use ratatui::prelude::CrosstermBackend;
 
 use crate::highlight::Highlighter;
-use crate::repo::Repo;
+use crate::repo::{BranchName, Repo};
 use crate::state::{CommitViewPanel, CommitViewState, FlashMessage, StagingHighlight, State};
 use crate::viewport::{center_view_on_selected_row, git_graph_height, DETAILS_HEADER_LINES, FILE_HEADER_HEIGHT, SUMMARY_HEADER_HEIGHT};
 
@@ -2071,6 +2071,19 @@ fn execute_branch_move(state: &mut State, repo: &mut Repo) {
     }
 }
 
+/// Move the cursor to wherever the named branch currently points.
+/// Used after rebase + branch-move operations so the user lands on the
+/// new tip instead of the now-orphaned commit they started from.
+/// Silently no-ops if the branch isn't in the loaded commit list (e.g.
+/// the rebased branch ended up below the commit-history limit).
+fn jump_cursor_to_branch_tip(state: &mut State, repo: &Repo, branch: &str) {
+    if let Some(&tip_sha) = repo.branches.get(&BranchName(branch.to_string())) {
+        if let Some(idx) = repo.commits.iter().position(|c| c.sha == tip_sha) {
+            state.index_of_selected_row = idx;
+        }
+    }
+}
+
 fn execute_rebase(state: &mut State, repo: &mut Repo) {
     // Use git CLI for rebase
     let output = std::process::Command::new("git")
@@ -2080,11 +2093,13 @@ fn execute_rebase(state: &mut State, repo: &mut Repo) {
 
     match output {
         Ok(result) if result.status.success() => {
+            let rebased = state.rebase_branch.clone();
             state.flash_message = Some(FlashMessage {
                 message: format!("rebased {} onto {}", state.rebase_branch, state.rebase_target),
                 shown_at: Instant::now(),
             });
             repo.refresh();
+            jump_cursor_to_branch_tip(state, repo, &rebased);
         }
         Ok(result) => {
             // Check if rebase is in progress (conflicts)
@@ -2149,6 +2164,7 @@ fn open_commit_view_for_conflicts(state: &mut State, repo: &mut Repo) {
 
 /// Continues an in-progress rebase after conflicts have been resolved
 fn continue_rebase(state: &mut State, repo: &mut Repo) {
+    let rebased = state.rebase_branch.clone();
     let output = std::process::Command::new("git")
         .args(["rebase", "--continue"])
         .current_dir(repo.path())
@@ -2166,6 +2182,7 @@ fn continue_rebase(state: &mut State, repo: &mut Repo) {
                 shown_at: Instant::now(),
             });
             repo.refresh();
+            jump_cursor_to_branch_tip(state, repo, &rebased);
         }
         Ok(result) => {
             let stderr = String::from_utf8_lossy(&result.stderr);
