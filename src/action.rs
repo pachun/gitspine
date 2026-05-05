@@ -710,7 +710,9 @@ impl Action {
             | Action::CharD
             | Action::CharR
             | Action::ShiftR
-            | Action::CharP => {
+            | Action::CharP
+            | Action::CharM
+            | Action::CharF => {
                 let c = match self {
                     Action::CharSlash => '/',
                     Action::CharQ => 'q',
@@ -730,6 +732,8 @@ impl Action {
                     Action::CharR => 'r',
                     Action::ShiftR => 'R',
                     Action::CharP => 'p',
+                    Action::CharM => 'm',
+                    Action::CharF => 'f',
                     _ => unreachable!(),
                 };
                 type_search_character(state, c);
@@ -743,7 +747,7 @@ impl Action {
             Action::Space => {
                 type_search_character(state, ' ');
             }
-            Action::Tab | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::CharM | Action::CharF | Action::None => {}
+            Action::Tab | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
         false // typing mode never quits
     }
@@ -1229,7 +1233,9 @@ impl Action {
             | Action::CharD
             | Action::CharR
             | Action::ShiftR
-            | Action::CharP => {
+            | Action::CharP
+            | Action::CharM
+            | Action::CharF => {
                 let c = match self {
                     Action::CharSlash => '/',
                     Action::CharQ => 'q',
@@ -1249,6 +1255,8 @@ impl Action {
                     Action::CharR => 'r',
                     Action::ShiftR => 'R',
                     Action::CharP => 'p',
+                    Action::CharM => 'm',
+                    Action::CharF => 'f',
                     _ => unreachable!(),
                 };
                 state.branch_name.push(c);
@@ -1259,7 +1267,7 @@ impl Action {
             Action::Space => {
                 state.branch_name.push(' ');
             }
-            Action::Tab | Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::CharM | Action::CharF | Action::None => {}
+            Action::Tab | Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
     }
 
@@ -1346,7 +1354,9 @@ impl Action {
             | Action::CharD
             | Action::CharR
             | Action::ShiftR
-            | Action::CharP => {
+            | Action::CharP
+            | Action::CharM
+            | Action::CharF => {
                 state.tab_complete_base = None;
                 state.tab_complete_index = 0;
                 let c = match self {
@@ -1368,6 +1378,8 @@ impl Action {
                     Action::CharR => 'r',
                     Action::ShiftR => 'R',
                     Action::CharP => 'p',
+                    Action::CharM => 'm',
+                    Action::CharF => 'f',
                     _ => unreachable!(),
                 };
                 state.delete_branch_name.push(c);
@@ -1382,7 +1394,7 @@ impl Action {
                 state.tab_complete_index = 0;
                 state.delete_branch_name.push(' ');
             }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::CharM | Action::CharF | Action::None => {}
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
     }
 
@@ -1487,7 +1499,9 @@ impl Action {
             | Action::CharD
             | Action::CharR
             | Action::ShiftR
-            | Action::CharP => {
+            | Action::CharP
+            | Action::CharM
+            | Action::CharF => {
                 state.tab_complete_base = None;
                 state.tab_complete_index = 0;
                 let c = match self {
@@ -1509,6 +1523,8 @@ impl Action {
                     Action::CharR => 'r',
                     Action::ShiftR => 'R',
                     Action::CharP => 'p',
+                    Action::CharM => 'm',
+                    Action::CharF => 'f',
                     _ => unreachable!(),
                 };
                 state.checkout_branch_name.push(c);
@@ -1523,7 +1539,7 @@ impl Action {
                 state.tab_complete_index = 0;
                 state.checkout_branch_name.push(' ');
             }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::CharM | Action::CharF | Action::None => {}
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
     }
 
@@ -1620,7 +1636,9 @@ impl Action {
             | Action::CharD
             | Action::CharR
             | Action::ShiftR
-            | Action::CharP => {
+            | Action::CharP
+            | Action::CharM
+            | Action::CharF => {
                 state.tab_complete_base = None;
                 state.tab_complete_index = 0;
                 let c = match self {
@@ -1642,6 +1660,8 @@ impl Action {
                     Action::CharR => 'r',
                     Action::ShiftR => 'R',
                     Action::CharP => 'p',
+                    Action::CharM => 'm',
+                    Action::CharF => 'f',
                     _ => unreachable!(),
                 };
                 state.rebase_target.push(c);
@@ -1656,7 +1676,7 @@ impl Action {
                 state.tab_complete_index = 0;
                 state.rebase_target.push(' ');
             }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::CharM | Action::CharF | Action::None => {}
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
     }
 
@@ -1818,7 +1838,9 @@ impl Action {
             | Action::CharD
             | Action::CharR
             | Action::ShiftR
-            | Action::CharP => {
+            | Action::CharP
+            | Action::CharM
+            | Action::CharF => {
                 state.tab_complete_base = None;
                 state.tab_complete_index = 0;
                 let c = match self {
@@ -1840,6 +1862,8 @@ impl Action {
                     Action::CharR => 'r',
                     Action::ShiftR => 'R',
                     Action::CharP => 'p',
+                    Action::CharM => 'm',
+                    Action::CharF => 'f',
                     _ => unreachable!(),
                 };
                 state.push_branch_name.push(c);
@@ -1862,8 +1886,6 @@ impl Action {
             | Action::ShiftK
             | Action::ShiftS
             | Action::ShiftU
-            | Action::CharM
-            | Action::CharF
             | Action::None => {}
         }
     }
