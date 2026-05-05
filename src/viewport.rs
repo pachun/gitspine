@@ -6,8 +6,11 @@ use ratatui::Terminal;
 use crate::repo::Repo;
 use crate::state::State;
 
-// Layout constants
-pub const HELP_PANEL_HEIGHT: u16 = 4;
+// Layout constants. HELP_PANEL_HEIGHT must match the
+// `Constraint::Length(...)` for the help panel in render.rs — otherwise
+// the bottom row of the commit list overlaps with (and is hidden by)
+// the help panel when scrolled to the end.
+pub const HELP_PANEL_HEIGHT: u16 = 5;
 pub const DETAILS_COMMIT_LIST_HEIGHT: u16 = 5;
 pub const FILE_HEADER_HEIGHT: usize = 1;
 pub const SUMMARY_HEADER_HEIGHT: usize = 1;
