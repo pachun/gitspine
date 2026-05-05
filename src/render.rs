@@ -400,12 +400,14 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         Color::Magenta
     } else if state.is_creating_branch {
         Color::Cyan
-    } else if state.is_deleting_branch || state.is_confirming_revert {
+    } else if state.is_deleting_branch || state.is_confirming_revert || state.is_confirming_move {
         Color::Red
     } else if state.is_checking_out {
         Color::Green
     } else if state.is_pushing {
         Color::Blue
+    } else if state.is_selecting_move_branch || state.is_selecting_move_target {
+        Color::Yellow
     } else if search_active {
         Color::White
     } else {
@@ -600,6 +602,72 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         )]))
         .alignment(ratatui::layout::Alignment::Right);
         frame.render_widget(hint, search_inner);
+    } else if state.is_selecting_move_branch {
+        // Stage 1 of move: pick which branch to move when more than one
+        // sits on the cursor's commit. Tab cycles through them.
+        let selected_sha = repo.commits[state.index_of_selected_row].sha;
+        let local_branches = repo.local_branches_at(selected_sha);
+        let branch_count = local_branches.len();
+
+        let move_input = Paragraph::new(Line::from(vec![
+            Span::styled("branch to move: ", Style::default().fg(Color::Yellow)),
+            Span::styled(&state.move_branch, Style::default().fg(Color::Yellow).bold()),
+            Span::styled(
+                format!(
+                    " ({}/{})",
+                    local_branches
+                        .iter()
+                        .position(|b| *b == state.move_branch)
+                        .map(|i| i + 1)
+                        .unwrap_or(1),
+                    branch_count
+                ),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+        frame.render_widget(move_input, search_inner);
+
+        let hint = Paragraph::new(Line::from(vec![Span::styled(
+            "tab → cycle   enter → select   esc → cancel",
+            Style::default().fg(Color::DarkGray),
+        )]))
+        .alignment(ratatui::layout::Alignment::Right);
+        frame.render_widget(hint, search_inner);
+    } else if state.is_selecting_move_target {
+        // Stage 2: navigate the commit list to pick the destination.
+        // Cursor movement is live so the user sees where the branch will land.
+        let target_sha = repo.commits[state.index_of_selected_row].sha.to_string();
+        let move_input = Paragraph::new(Line::from(vec![
+            Span::styled(format!("moving {} → ", state.move_branch), Style::default().fg(Color::Yellow)),
+            Span::styled(&target_sha[..7], Style::default().fg(Color::Yellow).bold()),
+        ]));
+        frame.render_widget(move_input, search_inner);
+
+        let hint = Paragraph::new(Line::from(vec![Span::styled(
+            "j/k → navigate   enter → confirm target   esc → cancel",
+            Style::default().fg(Color::DarkGray),
+        )]))
+        .alignment(ratatui::layout::Alignment::Right);
+        frame.render_widget(hint, search_inner);
+    } else if state.is_confirming_move {
+        // Stage 3: final y/n. Show the chosen branch and target so the
+        // user can sanity-check before the destructive write.
+        let target_sha = repo.commits[state.index_of_selected_row].sha.to_string();
+        let move_prompt = Paragraph::new(Line::from(vec![
+            Span::styled("move ", Style::default().fg(Color::Red)),
+            Span::styled(&state.move_branch, Style::default().fg(Color::Red).bold()),
+            Span::styled(" to ", Style::default().fg(Color::Red)),
+            Span::styled(&target_sha[..7], Style::default().fg(Color::Red).bold()),
+            Span::styled("?", Style::default().fg(Color::Red)),
+        ]));
+        frame.render_widget(move_prompt, search_inner);
+
+        let hint = Paragraph::new(Line::from(vec![Span::styled(
+            "y/enter → move   n/esc → cancel",
+            Style::default().fg(Color::DarkGray),
+        )]))
+        .alignment(ratatui::layout::Alignment::Right);
+        frame.render_widget(hint, search_inner);
     } else if state.is_typing_search_term {
         // Typing mode: yellow /query with cursor on left, hints on right
         let search_input = Paragraph::new(Line::from(vec![Span::styled(
@@ -763,7 +831,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             .as_ref()
             .map(|m| m.shown_at.elapsed().as_secs() < 3)
             .unwrap_or(false);
-        if !has_flash && state.push_in_progress.is_none() {
+        if !has_flash && state.push_in_progress.is_none() && state.fetch_in_progress.is_none() {
             let hotkey_hint = if state.is_showing_help_panel {
                 "? → hide hotkeys"
             } else {
@@ -787,6 +855,19 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         let spinner = Paragraph::new(Line::from(vec![Span::styled(
             spinner_char.to_string(),
             Style::default().fg(Color::Cyan),
+        )]))
+        .alignment(ratatui::layout::Alignment::Right);
+        frame.render_widget(spinner, search_inner);
+    } else if let Some(ref fetch_in_progress) = state.fetch_in_progress {
+        // Same spinner shape as push, distinct color so the two
+        // operations are visually distinguishable when they overlap with
+        // a flash message.
+        const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        let frame_idx = fetch_in_progress.spinner_frame % SPINNER_FRAMES.len();
+        let spinner_char = SPINNER_FRAMES[frame_idx];
+        let spinner = Paragraph::new(Line::from(vec![Span::styled(
+            format!("{} fetching", spinner_char),
+            Style::default().fg(Color::Magenta),
         )]))
         .alignment(ratatui::layout::Alignment::Right);
         frame.render_widget(spinner, search_inner);
@@ -877,6 +958,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                 ("b", "create branch", true),
                 ("d", "delete branch", has_local_branches),
                 ("r", "rebase", has_local_branches),
+                ("m", "move branch", has_local_branches),
             ],
             // Other operations
             vec![
@@ -884,6 +966,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
                 ("o", &open_in_label, commit_on_remote),
                 ("R", "revert", is_in_head_history),
                 ("p", "push", has_remote && has_local_branches),
+                ("f", "fetch", has_remote),
             ],
             // Search
             vec![("/", "search", true), ("n", "next", has_active_search), ("N", "prev", has_active_search)],

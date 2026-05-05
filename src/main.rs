@@ -185,6 +185,36 @@ fn main() {
             }
         }
 
+        // Check for fetch completion (mirrors push polling above).
+        if let Some(ref mut fetch_in_progress) = state.fetch_in_progress {
+            match fetch_in_progress.receiver.try_recv() {
+                Ok(result) => {
+                    state.flash_message = Some(state::FlashMessage {
+                        message: result.message,
+                        shown_at: std::time::Instant::now(),
+                    });
+                    if result.success {
+                        repo.refresh();
+                    }
+                    state.fetch_in_progress = None;
+                    needs_render = true;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    fetch_in_progress.spinner_frame =
+                        fetch_in_progress.spinner_frame.wrapping_add(1);
+                    needs_render = true;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    state.flash_message = Some(state::FlashMessage {
+                        message: "fetch failed: thread died".to_string(),
+                        shown_at: std::time::Instant::now(),
+                    });
+                    state.fetch_in_progress = None;
+                    needs_render = true;
+                }
+            }
+        }
+
         // Poll for events (with timeout to allow watcher checks)
         if !event::poll(Duration::from_millis(100)).unwrap() {
             // No event, but render if watcher triggered a refresh or push in progress
@@ -234,6 +264,8 @@ fn main() {
                     (KeyCode::Char('r'), _) => Action::CharR,
                     (KeyCode::Char('R'), _) => Action::ShiftR,
                     (KeyCode::Char('p'), _) => Action::CharP,
+                    (KeyCode::Char('m'), _) => Action::CharM,
+                    (KeyCode::Char('f'), _) => Action::CharF,
                     (KeyCode::Char(c), _) if c.is_ascii_digit() => Action::Digit(c),
                     (KeyCode::Char(c), _) => Action::Char(c),
                     _ => Action::None,

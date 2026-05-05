@@ -43,6 +43,8 @@ pub enum Action {
     CtrlU,
     ShiftS,
     ShiftU,
+    CharM,
+    CharF,
     Digit(char),
     Char(char), // For characters without special normal-mode behavior
     None,
@@ -83,6 +85,15 @@ impl Action {
             false
         } else if state.is_pushing {
             self.execute_push_mode(state, repo);
+            false
+        } else if state.is_selecting_move_branch {
+            self.execute_move_branch_selection_mode(state, repo);
+            false
+        } else if state.is_selecting_move_target {
+            self.execute_move_target_mode(state, repo);
+            false
+        } else if state.is_confirming_move {
+            self.execute_move_confirmation_mode(state, repo);
             false
         } else {
             self.execute_normal_mode(state, repo, terminal)
@@ -732,7 +743,7 @@ impl Action {
             Action::Space => {
                 type_search_character(state, ' ');
             }
-            Action::Tab | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
+            Action::Tab | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::CharM | Action::CharF | Action::None => {}
         }
         false // typing mode never quits
     }
@@ -1009,6 +1020,80 @@ impl Action {
                     state.flash_message = None;
                 }
             }
+            Action::CharM => {
+                state.jump_distance_string.clear();
+                let selected_sha = repo.commits[state.index_of_selected_row].sha;
+                let branches = repo.local_branches_at(selected_sha);
+                if branches.is_empty() {
+                    state.flash_message = Some(FlashMessage {
+                        message: "no local branches on this commit".to_string(),
+                        shown_at: Instant::now(),
+                    });
+                } else if branches.len() == 1 {
+                    // Single branch — skip the picker and go straight to
+                    // target navigation.
+                    state.move_branch = branches[0].clone();
+                    state.is_selecting_move_target = true;
+                    state.flash_message = None;
+                } else {
+                    // Multiple branches at this commit — pick one. Tab
+                    // cycles through them; Enter advances to target nav.
+                    state.is_selecting_move_branch = true;
+                    state.move_branch = branches[0].clone();
+                    state.flash_message = None;
+                }
+            }
+            Action::CharF => {
+                state.jump_distance_string.clear();
+                if !repo.has_remote() {
+                    state.flash_message = Some(FlashMessage {
+                        message: "no remote configured".to_string(),
+                        shown_at: Instant::now(),
+                    });
+                } else if state.fetch_in_progress.is_some() {
+                    // Already fetching — ignore the keypress so the user
+                    // doesn't pile up parallel fetches.
+                } else {
+                    // Spawn `git fetch --all` on a background thread so
+                    // the UI keeps redrawing the spinner. Result comes
+                    // back via the channel; main.rs polls and refreshes
+                    // the repo when it lands.
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let repo_path = repo.path().to_string();
+                    std::thread::spawn(move || {
+                        let output = std::process::Command::new("git")
+                            .args(["fetch", "--all", "--prune"])
+                            .current_dir(&repo_path)
+                            .output();
+                        let result = match output {
+                            Ok(r) if r.status.success() => crate::state::FetchResult {
+                                success: true,
+                                message: "fetched".to_string(),
+                            },
+                            Ok(r) => {
+                                let stderr = String::from_utf8_lossy(&r.stderr);
+                                crate::state::FetchResult {
+                                    success: false,
+                                    message: format!(
+                                        "fetch failed: {}",
+                                        stderr.lines().next().unwrap_or("unknown error")
+                                    ),
+                                }
+                            }
+                            Err(e) => crate::state::FetchResult {
+                                success: false,
+                                message: format!("fetch failed: {}", e),
+                            },
+                        };
+                        let _ = tx.send(result);
+                    });
+                    state.fetch_in_progress = Some(crate::state::FetchInProgress {
+                        receiver: rx,
+                        spinner_frame: 0,
+                    });
+                    state.flash_message = None;
+                }
+            }
             Action::CtrlD => {
                 state.jump_distance_string.clear();
                 let half_page = git_graph_height(state, terminal) / 2;
@@ -1174,7 +1259,7 @@ impl Action {
             Action::Space => {
                 state.branch_name.push(' ');
             }
-            Action::Tab | Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
+            Action::Tab | Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::CharM | Action::CharF | Action::None => {}
         }
     }
 
@@ -1297,7 +1382,7 @@ impl Action {
                 state.tab_complete_index = 0;
                 state.delete_branch_name.push(' ');
             }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::CharM | Action::CharF | Action::None => {}
         }
     }
 
@@ -1438,7 +1523,7 @@ impl Action {
                 state.tab_complete_index = 0;
                 state.checkout_branch_name.push(' ');
             }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::CharM | Action::CharF | Action::None => {}
         }
     }
 
@@ -1571,7 +1656,7 @@ impl Action {
                 state.tab_complete_index = 0;
                 state.rebase_target.push(' ');
             }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::CharM | Action::CharF | Action::None => {}
         }
     }
 
@@ -1777,6 +1862,8 @@ impl Action {
             | Action::ShiftK
             | Action::ShiftS
             | Action::ShiftU
+            | Action::CharM
+            | Action::CharF
             | Action::None => {}
         }
     }
@@ -1820,6 +1907,144 @@ impl Action {
                 state.is_confirming_revert = false;
             }
             _ => {}
+        }
+    }
+
+    // Branch-move flow: pick a branch on the current commit (if multiple),
+    // navigate to a target commit, confirm. The picker mirrors the rebase
+    // branch-selection UX (Tab cycles through branches at the cursor).
+    fn execute_move_branch_selection_mode(&self, state: &mut State, repo: &Repo) {
+        // Recompute branches at the original cursor in case the user
+        // pressed Tab — we still cycle the same set.
+        let selected_sha = repo.commits[state.index_of_selected_row].sha;
+        let branches = repo.local_branches_at(selected_sha);
+        match self {
+            Action::Esc | Action::CtrlC => {
+                state.is_selecting_move_branch = false;
+                state.move_branch.clear();
+            }
+            Action::Enter => {
+                state.is_selecting_move_branch = false;
+                state.is_selecting_move_target = true;
+            }
+            Action::Tab => {
+                if !branches.is_empty() {
+                    let cur = branches
+                        .iter()
+                        .position(|b| *b == state.move_branch)
+                        .unwrap_or(0);
+                    let next = (cur + 1) % branches.len();
+                    state.move_branch = branches[next].clone();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Target-selection mode: regular navigation is allowed so the user
+    // can scroll/jump to any commit. Enter captures the cursor's commit
+    // as the move target; Esc cancels. Other keys are ignored to avoid
+    // accidentally triggering branch-create / push / etc. mid-flow.
+    fn execute_move_target_mode(&self, state: &mut State, repo: &mut Repo) {
+        match self {
+            Action::Esc | Action::CtrlC => {
+                state.is_selecting_move_target = false;
+                state.move_branch.clear();
+            }
+            Action::Enter => {
+                state.is_selecting_move_target = false;
+                state.is_confirming_move = true;
+            }
+            // Navigation keys — pass through to the same helpers normal
+            // mode uses. Implemented inline here rather than recursing into
+            // execute_normal_mode to avoid pulling in unrelated key handling.
+            Action::Up | Action::CharK => {
+                if state.index_of_selected_row > 0 {
+                    state.index_of_selected_row -= 1;
+                }
+            }
+            Action::Down | Action::CharJ => {
+                if state.index_of_selected_row + 1 < repo.commits.len() {
+                    state.index_of_selected_row += 1;
+                }
+            }
+            Action::CharG => {
+                state.index_of_selected_row = 0;
+            }
+            Action::ShiftG => {
+                if !repo.commits.is_empty() {
+                    state.index_of_selected_row = repo.commits.len() - 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn execute_move_confirmation_mode(&self, state: &mut State, repo: &mut Repo) {
+        match self {
+            Action::Enter | Action::CharY => {
+                execute_branch_move(state, repo);
+                state.is_confirming_move = false;
+                state.move_branch.clear();
+            }
+            Action::Esc | Action::CtrlC | Action::CharN => {
+                state.is_confirming_move = false;
+                state.move_branch.clear();
+            }
+            _ => {}
+        }
+    }
+}
+
+fn execute_branch_move(state: &mut State, repo: &mut Repo) {
+    let target_sha = repo.commits[state.index_of_selected_row].sha.to_string();
+    let branch = state.move_branch.clone();
+
+    // If the branch being moved is the currently checked out branch,
+    // we have to move HEAD + the working tree together — `git reset
+    // --hard <sha>` is the only safe primitive. For non-current
+    // branches, `git branch -f` just repositions the ref.
+    let is_head_branch = repo
+        .head
+        .branch_name()
+        .map(|n| n.0.as_str() == branch.as_str())
+        .unwrap_or(false);
+
+    let output = if is_head_branch {
+        std::process::Command::new("git")
+            .args(["reset", "--hard", &target_sha])
+            .current_dir(repo.path())
+            .output()
+    } else {
+        std::process::Command::new("git")
+            .args(["branch", "-f", &branch, &target_sha])
+            .current_dir(repo.path())
+            .output()
+    };
+
+    match output {
+        Ok(result) if result.status.success() => {
+            repo.refresh();
+            state.flash_message = Some(FlashMessage {
+                message: format!("moved {} to {}", branch, &target_sha[..7]),
+                shown_at: Instant::now(),
+            });
+        }
+        Ok(result) => {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            state.flash_message = Some(FlashMessage {
+                message: format!(
+                    "move failed: {}",
+                    stderr.lines().next().unwrap_or("unknown error")
+                ),
+                shown_at: Instant::now(),
+            });
+        }
+        Err(e) => {
+            state.flash_message = Some(FlashMessage {
+                message: format!("move failed: {}", e),
+                shown_at: Instant::now(),
+            });
         }
     }
 }

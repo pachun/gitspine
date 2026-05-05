@@ -17,6 +17,19 @@ pub struct PushInProgress {
     pub spinner_frame: usize,
 }
 
+/// Result of an async fetch (mirrors PushResult shape).
+pub struct FetchResult {
+    pub success: bool,
+    pub message: String,
+}
+
+/// State for an in-progress fetch operation. Same shape as
+/// PushInProgress so the main-loop polling code can mirror it directly.
+pub struct FetchInProgress {
+    pub receiver: Receiver<FetchResult>,
+    pub spinner_frame: usize,
+}
+
 pub struct FlashMessage {
     pub message: String,
     pub shown_at: Instant,
@@ -92,6 +105,14 @@ pub struct State {
     pub rebase_branch: String,
     pub rebase_target: String,
     pub is_rebase_in_progress: bool,
+    // Branch-move flow: pick a local branch at the cursor, navigate to a
+    // target commit, confirm. Three flags because the flow has three
+    // distinct modes (picker → target nav → confirm). `move_branch`
+    // holds the chosen branch across modes.
+    pub is_selecting_move_branch: bool,
+    pub is_selecting_move_target: bool,
+    pub is_confirming_move: bool,
+    pub move_branch: String,
     pub tab_complete_base: Option<String>,
     pub tab_complete_index: usize,
     pub is_showing_help_panel: bool,
@@ -107,6 +128,7 @@ pub struct State {
     pub is_pushing: bool,
     pub push_branch_name: String,
     pub push_in_progress: Option<PushInProgress>,
+    pub fetch_in_progress: Option<FetchInProgress>,
 }
 
 impl State {
@@ -142,6 +164,10 @@ impl State {
             rebase_branch: String::new(),
             rebase_target: String::new(),
             is_rebase_in_progress: false,
+            is_selecting_move_branch: false,
+            is_selecting_move_target: false,
+            is_confirming_move: false,
+            move_branch: String::new(),
             tab_complete_base: None,
             tab_complete_index: 0,
             is_showing_help_panel: false,
@@ -157,6 +183,7 @@ impl State {
             is_pushing: false,
             push_branch_name: String::new(),
             push_in_progress: None,
+            fetch_in_progress: None,
         }
     }
 }
