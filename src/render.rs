@@ -798,13 +798,20 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             }
         };
 
-        // Only show counter if no active flash message
+        // Bottom-right is exclusive: only one of {flash message, push
+        // spinner, fetch spinner, match counter} can occupy it at a
+        // time. Push/fetch take priority since they're transient
+        // operation indicators; flash takes priority over the counter
+        // because it's a one-shot result message.
         let has_flash = state
             .flash_message
             .as_ref()
             .map(|m| m.shown_at.elapsed().as_secs() < 3)
             .unwrap_or(false);
-        if !has_flash {
+        if !has_flash
+            && state.push_in_progress.is_none()
+            && state.fetch_in_progress.is_none()
+        {
             let counter = Paragraph::new(Line::from(vec![Span::styled(
                 counter_text,
                 Style::default().fg(Color::Yellow),
