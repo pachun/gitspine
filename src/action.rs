@@ -43,7 +43,6 @@ pub enum Action {
     CtrlU,
     ShiftS,
     ShiftU,
-    ShiftL,
     Digit(char),
     Char(char), // For characters without special normal-mode behavior
     None,
@@ -733,7 +732,7 @@ impl Action {
             Action::Space => {
                 type_search_character(state, ' ');
             }
-            Action::Tab | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::ShiftL | Action::None => {}
+            Action::Tab | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
         false // typing mode never quits
     }
@@ -897,16 +896,6 @@ impl Action {
             Action::CharO => {
                 state.jump_distance_string.clear();
                 open_in_browser(state, repo);
-            }
-            Action::ShiftL => {
-                state.jump_distance_string.clear();
-                // Open purchase page
-                let url = "https://castlelabs.lemonsqueezy.com/checkout/buy/ea5533b5-37a4-4d79-8db2-9b20fccff51a";
-                let _ = open::that(url);
-                state.flash_message = Some(FlashMessage {
-                    message: "opening checkout - use --activate <KEY> after purchase".to_string(),
-                    shown_at: Instant::now(),
-                });
             }
             Action::CharB => {
                 state.jump_distance_string.clear();
@@ -1185,7 +1174,7 @@ impl Action {
             Action::Space => {
                 state.branch_name.push(' ');
             }
-            Action::Tab | Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::ShiftL | Action::None => {}
+            Action::Tab | Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
     }
 
@@ -1308,7 +1297,7 @@ impl Action {
                 state.tab_complete_index = 0;
                 state.delete_branch_name.push(' ');
             }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::ShiftL | Action::None => {}
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
     }
 
@@ -1449,7 +1438,7 @@ impl Action {
                 state.tab_complete_index = 0;
                 state.checkout_branch_name.push(' ');
             }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::ShiftL | Action::None => {}
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
     }
 
@@ -1582,7 +1571,7 @@ impl Action {
                 state.tab_complete_index = 0;
                 state.rebase_target.push(' ');
             }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::ShiftL | Action::None => {}
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
     }
 
@@ -1788,7 +1777,6 @@ impl Action {
             | Action::ShiftK
             | Action::ShiftS
             | Action::ShiftU
-            | Action::ShiftL
             | Action::None => {}
         }
     }
