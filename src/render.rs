@@ -2135,7 +2135,7 @@ fn render_file_list_panel(
         frame.render_widget(table, list_area);
     }
 
-    // Render key hints if provided
+    // Render key hints if provided.
     if let (Some(hints), Some(area)) = (key_hints, hints_area) {
         let hints_widget = Paragraph::new(hints)
             .style(Style::default().fg(Color::DarkGray));

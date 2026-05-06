@@ -2863,6 +2863,7 @@ fn refresh_commit_view(state: &mut State, repo: &Repo) {
         // Clamp selections to valid range
         if commit_view.unstaged_files.is_empty() {
             commit_view.unstaged_selected = 0;
+            commit_view.unstaged_scroll = 0;
         } else {
             commit_view.unstaged_selected = commit_view
                 .unstaged_selected
@@ -2871,11 +2872,18 @@ fn refresh_commit_view(state: &mut State, repo: &Repo) {
 
         if commit_view.staged_files.is_empty() {
             commit_view.staged_selected = 0;
+            commit_view.staged_scroll = 0;
         } else {
             commit_view.staged_selected = commit_view
                 .staged_selected
                 .min(commit_view.staged_files.len() - 1);
         }
+
+        // After clamping selection, the scroll offset may be stale —
+        // e.g. scroll=1 left over from a 6-file list when now there's
+        // only 1 file. ensure_file_visible recomputes scroll from
+        // selection so the cursor stays in the rendered window.
+        ensure_file_visible(commit_view);
 
         // Always sync viewing_file with the current selection in the active panel
         let new_viewing_file = match commit_view.active_panel {
@@ -3156,7 +3164,12 @@ pub fn update_staging_highlight(state: &mut State) {
 }
 
 /// Ensure the selected file is visible in the file list (6 visible lines)
-const FILE_LIST_VISIBLE_LINES: usize = 6;
+// Must match the renderer's actual file-row count: render.rs sizes
+// the lists_area as Length(8), the panel block subtracts 2 for the
+// top/bottom border (= 6 inner rows), then reserves 1 row for the
+// key-hints line at the bottom — leaving 5 rows for files. If this
+// drifts from render.rs, the cursor can disappear behind the hints.
+const FILE_LIST_VISIBLE_LINES: usize = 5;
 
 fn ensure_file_visible(commit_view: &mut CommitViewState) {
     match commit_view.active_panel {
