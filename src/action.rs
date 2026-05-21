@@ -177,6 +177,11 @@ impl Action {
                     });
                     repo.refresh();
                 }
+                // Cancelling an amend drops its staging so the repo is
+                // left exactly as before — HEAD was never moved.
+                if commit_view.amend_mode {
+                    let _ = repo.reset_index_to_head();
+                }
                 // Close commit view
                 state.commit_view = None;
             }
@@ -195,6 +200,11 @@ impl Action {
                         shown_at: Instant::now(),
                     });
                     repo.refresh();
+                }
+                // Cancelling an amend drops its staging so the repo is
+                // left exactly as before — HEAD was never moved.
+                if commit_view.amend_mode {
+                    let _ = repo.reset_index_to_head();
                 }
                 // Close commit view (go back to graph)
                 state.commit_view = None;
@@ -386,7 +396,7 @@ impl Action {
                 // Unstage entire file
                 if commit_view.active_panel == CommitViewPanel::StagedFiles {
                     if let Some(path) = &commit_view.viewing_file.clone() {
-                        if let Err(e) = repo.unstage_file(path) {
+                        if let Err(e) = repo.unstage_file(path, commit_view.amend_mode) {
                             state.flash_message = Some(FlashMessage {
                                 message: format!("failed to unstage: {}", e),
                                 shown_at: Instant::now(),
@@ -512,26 +522,18 @@ impl Action {
                         continue_rebase(state, repo);
                     }
                 } else {
-                    // Commit with external editor
+                    // Commit with external editor. In amend mode this
+                    // runs `git commit --amend`, pre-filling the editor
+                    // with HEAD's existing message.
                     if commit_view.staged_files.is_empty() {
                         state.flash_message = Some(FlashMessage {
                             message: "nothing staged to commit".to_string(),
                             shown_at: Instant::now(),
                         });
                     } else {
-                        return commit_with_editor(state, repo, terminal, false);
+                        let amend = commit_view.amend_mode;
+                        return commit_with_editor(state, repo, terminal, amend);
                     }
-                }
-            }
-            Action::Char('a') => {
-                // Amend commit with external editor (disabled during rebase)
-                if state.is_rebase_in_progress {
-                    state.flash_message = Some(FlashMessage {
-                        message: "cannot amend during rebase".to_string(),
-                        shown_at: Instant::now(),
-                    });
-                } else {
-                    return commit_with_editor(state, repo, terminal, true);
                 }
             }
             Action::Digit('1') => {
@@ -1137,7 +1139,7 @@ impl Action {
                 } else {
                     // Try to open commit view
                     if repo.has_changes() {
-                        if let Some(status) = repo.load_worktree_status() {
+                        if let Some(status) = repo.load_worktree_status(false) {
                             // Determine initial viewing file
                             let viewing_file = status
                                 .unstaged_files
@@ -1162,6 +1164,7 @@ impl Action {
                                 staging_highlight: None,
                                 selected_conflict: 0,
                                 resolved_conflicts: std::collections::HashMap::new(),
+                                amend_mode: false,
                             });
                             // Compute initial highlighting
                             update_staging_highlight(state);
@@ -1174,6 +1177,67 @@ impl Action {
                             shown_at: Instant::now(),
                         });
                     }
+                }
+            }
+            Action::Char('a') => {
+                // Amend the latest commit: open the staging view with
+                // the commit's contents already in the Staged box (see
+                // load_worktree_status's amend path). HEAD is not
+                // touched here — `c` later runs `git commit --amend`,
+                // and backing out drops the staging via
+                // reset_index_to_head, so history is never at risk.
+                state.jump_distance_string.clear();
+                let selected_sha = repo.commits[state.index_of_selected_row].sha;
+                let parent_count =
+                    repo.commits[state.index_of_selected_row].parent_shas.len();
+                if selected_sha != repo.head_sha() {
+                    state.flash_message = Some(FlashMessage {
+                        message: "can only amend the latest commit".to_string(),
+                        shown_at: Instant::now(),
+                    });
+                } else if parent_count != 1 {
+                    let why = if parent_count == 0 {
+                        "the first commit has no parent"
+                    } else {
+                        "merge commits can't be amended"
+                    };
+                    state.flash_message = Some(FlashMessage {
+                        message: format!("cannot amend: {}", why),
+                        shown_at: Instant::now(),
+                    });
+                } else if let Some(status) = repo.load_worktree_status(true) {
+                    let viewing_file = status
+                        .staged_files
+                        .first()
+                        .or(status.unstaged_files.first())
+                        .map(|f| f.path.clone());
+                    state.commit_view = Some(CommitViewState {
+                        active_panel: CommitViewPanel::StagedFiles,
+                        unstaged_files: status.unstaged_files,
+                        staged_files: status.staged_files,
+                        unstaged_selected: 0,
+                        staged_selected: 0,
+                        unstaged_scroll: 0,
+                        staged_scroll: 0,
+                        viewing_file,
+                        diff_scroll: 0,
+                        staging_highlight: None,
+                        selected_conflict: 0,
+                        resolved_conflicts: std::collections::HashMap::new(),
+                        amend_mode: true,
+                    });
+                    update_staging_highlight(state);
+                    state.commit_details = None;
+                    state.flash_message = Some(FlashMessage {
+                        message: "amending HEAD — edit staging, c to commit, esc to cancel"
+                            .to_string(),
+                        shown_at: Instant::now(),
+                    });
+                } else {
+                    state.flash_message = Some(FlashMessage {
+                        message: "could not open commit for amend".to_string(),
+                        shown_at: Instant::now(),
+                    });
                 }
             }
             Action::Char(_) | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
@@ -1209,6 +1273,8 @@ impl Action {
                 state.branch_name.clear();
             }
             Action::Backspace => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
                 if state.branch_name.is_empty() {
                     state.is_creating_branch = false;
                 } else {
@@ -1236,6 +1302,8 @@ impl Action {
             | Action::CharP
             | Action::CharM
             | Action::CharF => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
                 let c = match self {
                     Action::CharSlash => '/',
                     Action::CharQ => 'q',
@@ -1262,12 +1330,32 @@ impl Action {
                 state.branch_name.push(c);
             }
             Action::Digit(c) | Action::Char(c) => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
                 state.branch_name.push(*c);
             }
             Action::Space => {
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
                 state.branch_name.push(' ');
             }
-            Action::Tab | Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
+            Action::Tab => {
+                // Suggest names taken from remote-tracking branches at the
+                // selected commit (e.g. "origin/some-name" → "some-name").
+                // Useful when checking out / rebasing someone else's branch.
+                let selected_sha = repo.commits[state.index_of_selected_row].sha;
+                let candidates = repo.new_branch_name_candidates_at(selected_sha);
+                let (completed, new_base, new_index) = tab_complete_branch(
+                    &state.branch_name,
+                    &candidates,
+                    &state.tab_complete_base,
+                    state.tab_complete_index,
+                );
+                state.branch_name = completed;
+                state.tab_complete_base = new_base;
+                state.tab_complete_index = new_index;
+            }
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
     }
 
@@ -2128,7 +2216,7 @@ fn execute_rebase(state: &mut State, repo: &mut Repo) {
 /// Opens the commit view for resolving rebase conflicts
 fn open_commit_view_for_conflicts(state: &mut State, repo: &mut Repo) {
     repo.refresh();
-    if let Some(status) = repo.load_worktree_status() {
+    if let Some(status) = repo.load_worktree_status(false) {
         let viewing_file = status
             .unstaged_files
             .first()
@@ -2152,6 +2240,7 @@ fn open_commit_view_for_conflicts(state: &mut State, repo: &mut Repo) {
             staging_highlight: None,
             selected_conflict: 0,
             resolved_conflicts: std::collections::HashMap::new(),
+            amend_mode: false,
         });
         update_staging_highlight(state);
         state.commit_details = None;
@@ -2168,6 +2257,11 @@ fn continue_rebase(state: &mut State, repo: &mut Repo) {
     let output = std::process::Command::new("git")
         .args(["rebase", "--continue"])
         .current_dir(repo.path())
+        // Skip the commit-message editor that git invokes by default after a
+        // conflict resolution. Without this, git spawns $EDITOR on a tty that
+        // gitspine's TUI still owns — nvim sits waiting for input that never
+        // arrives. The original commit message is reused as-is.
+        .env("GIT_EDITOR", "true")
         .output();
 
     match output {
@@ -2700,6 +2794,36 @@ fn common_prefix_of(strings: &[&String]) -> String {
     first.chars().take(prefix_len).collect()
 }
 
+/// Guidance appended below the commit message in the editor. Every
+/// line begins with '#', so commit_with_editor() strips the whole
+/// block before the message reaches git. The closing Vim modeline
+/// sets the `gitcommit` filetype so neovim flags an over-long
+/// subject line and wraps the body at 72 columns. Advice follows
+/// https://cbea.ms/git-commit/.
+const COMMIT_MSG_HINTS: &str = r#"# ── Commit message guidance ───────────────────────────────────
+#
+# Subject line (line 1)
+#   · 50 characters or fewer
+#   · Capitalized, with no period at the end
+#   · Imperative mood: "Add", "Fix", "Refactor" — not "Added"
+#   · Finishes the sentence "If applied, this commit will …"
+#
+# Then leave a blank line before the body.
+#
+# Body
+#   · Wrap lines at 72 characters
+#   · Explain what changed and why — not how
+#
+# Lines starting with '#' are ignored. An empty message aborts.
+# Guide: https://cbea.ms/git-commit/
+# vim: ft=gitcommit
+"#;
+
+/// Neovim commit-message editing aids, sourced when gitspine opens the
+/// message in nvim (see commit_with_editor). Embedded with include_str!
+/// so the binary stays self-contained — no install step for the user.
+const COMMIT_AIDS_LUA: &str = include_str!("gitcommit_aids.lua");
+
 /// Open external editor for commit message and create commit
 fn commit_with_editor(
     state: &mut State,
@@ -2714,14 +2838,23 @@ fn commit_with_editor(
     let temp_dir = std::env::temp_dir();
     let temp_file = temp_dir.join("gitspine_commit_msg.md");
 
-    // Write initial message
+    // Write the initial message followed by the guidance block. The
+    // read-back below strips every '#' line, so the hints never reach
+    // git; the trailing modeline makes neovim treat this as a commit
+    // buffer (over-long subject flagged, body wrapped at 72 columns).
     let initial_message = if amend {
         repo.head_message().unwrap_or_default()
     } else {
         String::new()
     };
 
-    if let Err(e) = fs::write(&temp_file, &initial_message) {
+    let file_contents = if initial_message.is_empty() {
+        format!("\n{}", COMMIT_MSG_HINTS)
+    } else {
+        format!("{}\n\n{}", initial_message, COMMIT_MSG_HINTS)
+    };
+
+    if let Err(e) = fs::write(&temp_file, &file_contents) {
         state.flash_message = Some(FlashMessage {
             message: format!("failed to create temp file: {}", e),
             shown_at: Instant::now(),
@@ -2734,13 +2867,32 @@ fn commit_with_editor(
         .or_else(|_| std::env::var("VISUAL"))
         .unwrap_or_else(|_| "vi".to_string());
 
+    // For Neovim, drop the commit-message editing aids next to the
+    // message file and have nvim source them — so every gitspine user
+    // gets the subject/body guides, overflow highlighting and reflow
+    // with no personal config. Other editors are launched plainly.
+    // The aids no-op on a repeat load, so an nvim user who also loads
+    // them from their own config is unaffected.
+    let editor_is_nvim = std::path::Path::new(&editor)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|stem| stem == "nvim")
+        .unwrap_or(false);
+    let aids_file = temp_dir.join("gitspine_commit_aids.lua");
+
+    let mut editor_command = Command::new(&editor);
+    editor_command.arg(&temp_file);
+    if editor_is_nvim && fs::write(&aids_file, COMMIT_AIDS_LUA).is_ok() {
+        editor_command
+            .arg("-c")
+            .arg(format!("luafile {}", aids_file.display()));
+    }
+
     // Suspend terminal for editor
     ratatui::restore();
 
     // Run editor
-    let editor_result = Command::new(&editor)
-        .arg(&temp_file)
-        .status();
+    let editor_result = editor_command.status();
 
     // Restore terminal state (raw mode + alternate screen)
     let _ = crossterm::terminal::enable_raw_mode();
@@ -2783,10 +2935,17 @@ fn commit_with_editor(
                                 // Refresh repo state
                                 repo.refresh();
 
+                                // The amend (if any) is done — leave
+                                // amend mode so any follow-up staging
+                                // behaves normally.
+                                if let Some(cv) = state.commit_view.as_mut() {
+                                    cv.amend_mode = false;
+                                }
+
                                 let action = if amend { "amended" } else { "committed" };
 
                                 // Check if there are more unstaged changes
-                                if let Some(status) = repo.load_worktree_status() {
+                                if let Some(status) = repo.load_worktree_status(false) {
                                     if !status.unstaged_files.is_empty() {
                                         // Stay in staging view for incremental commits
                                         refresh_commit_view(state, repo);
@@ -2842,15 +3001,20 @@ fn commit_with_editor(
         }
     }
 
-    // Clean up temp file
+    // Clean up temp files
     let _ = fs::remove_file(&temp_file);
+    let _ = fs::remove_file(&aids_file);
 
     false
 }
 
 /// Refresh the commit view state after staging/unstaging
 fn refresh_commit_view(state: &mut State, repo: &Repo) {
-    if let Some(status) = repo.load_worktree_status() {
+    let amend = match state.commit_view.as_ref() {
+        Some(cv) => cv.amend_mode,
+        None => return,
+    };
+    if let Some(status) = repo.load_worktree_status(amend) {
         let commit_view = state.commit_view.as_mut().unwrap();
 
         // Remember current viewing file
@@ -2903,8 +3067,10 @@ fn refresh_commit_view(state: &mut State, repo: &Repo) {
         }
         commit_view.viewing_file = new_viewing_file;
 
-        // If no more changes, close the commit view
-        if commit_view.unstaged_files.is_empty() && commit_view.staged_files.is_empty() {
+        // If no more changes, close the commit view. In amend mode we
+        // stay put — an empty staging area is a valid amend state, and
+        // esc still cancels cleanly (resetting the index).
+        if !amend && commit_view.unstaged_files.is_empty() && commit_view.staged_files.is_empty() {
             state.commit_view = None;
             state.flash_message = Some(FlashMessage {
                 message: "all changes staged/unstaged".to_string(),

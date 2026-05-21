@@ -427,14 +427,21 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
     frame.render_widget(search_block, chunks[1]);
 
     if state.is_creating_branch {
-        // Branch creation mode: cyan input with cursor, hint for create/cancel
-        let branch_input = Paragraph::new(Line::from(vec![
+        // Branch creation mode: cyan input with cursor and grey preview
+        // suggesting names of remote-tracking branches at the selected commit
+        let selected_sha = repo.commits[state.index_of_selected_row].sha;
+        let candidates = repo.new_branch_name_candidates_at(selected_sha);
+        let preview = get_tab_preview(&state.branch_name, &candidates);
+
+        let mut spans = vec![
             Span::styled("create branch: ", Style::default().fg(Color::Cyan)),
-            Span::styled(
-                format!("{}█", state.branch_name),
-                Style::default().fg(Color::Cyan),
-            ),
-        ]));
+            Span::styled(&state.branch_name, Style::default().fg(Color::Cyan)),
+            Span::styled("█", Style::default().fg(Color::Cyan)),
+        ];
+        if let Some(preview_text) = preview {
+            spans.push(Span::styled(preview_text, Style::default().fg(Color::DarkGray)));
+        }
+        let branch_input = Paragraph::new(Line::from(spans));
         frame.render_widget(branch_input, search_inner);
 
         let hint = Paragraph::new(Line::from(vec![Span::styled(
@@ -941,6 +948,10 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         // Contextual checks for greying out items
         let selected_sha = repo.commits[state.index_of_selected_row].sha;
         let is_on_head = selected_sha == head_sha;
+        // Amendable only when sitting on HEAD and HEAD is an ordinary
+        // single-parent commit (not a root or a merge commit).
+        let head_amendable = is_on_head
+            && repo.commits[state.index_of_selected_row].parent_shas.len() == 1;
         let has_local_branches = repo.has_local_branches_at(selected_sha);
         let commit_on_remote = repo.commit_is_on_remote(selected_sha, state.index_of_selected_row);
         let has_changes = repo.has_changes();
@@ -977,9 +988,10 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             ],
             // Search
             vec![("/", "search", true), ("n", "next", has_active_search), ("N", "prev", has_active_search)],
-            // Stage view
+            // Stage view / amend
             vec![
                 ("tab", "stage view", has_changes),
+                ("a", "amend", head_amendable),
             ],
         ];
 
@@ -1656,7 +1668,13 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
 
     // Use different titles and hints when resolving conflicts
     let (left_title, left_hints, right_title) = if state.is_rebase_in_progress {
-        ("Conflicts", "J/K:scroll", "Resolved")
+        ("Conflicts", "o:edit  S:resolve  J/K:scroll", "Resolved")
+    } else if commit_view.amend_mode {
+        (
+            "Unstaged",
+            "s:stage  S:all  d:discard  D:discard all  J/K:scroll",
+            "Amending HEAD",
+        )
     } else {
         ("Unstaged", "s:stage  S:all  d:discard  D:discard all  J/K:scroll", "Staged")
     };
@@ -1675,12 +1693,14 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
     );
 
     // Render right panel (staged/resolved)
-    let right_hints = if state.is_rebase_in_progress {
+    let right_hints: &str = if state.is_rebase_in_progress {
         if commit_view.unstaged_files.is_empty() {
             "J/K:scroll  c:continue rebase"
         } else {
             "J/K:scroll"
         }
+    } else if commit_view.amend_mode {
+        "u:unstage  U:all  c:amend  esc:cancel"
     } else if commit_view.staged_files.is_empty() {
         "u:unstage  U:all"
     } else {

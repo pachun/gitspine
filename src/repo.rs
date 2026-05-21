@@ -299,6 +299,54 @@ impl Repo {
         result
     }
 
+    /// Candidate names for a new local branch at the given sha, derived from
+    /// remote-tracking branches there with the `<remote>/` prefix stripped and
+    /// any name that already exists locally filtered out.
+    pub fn new_branch_name_candidates_at(&self, sha: Sha) -> Vec<String> {
+        let existing_local: std::collections::HashSet<&str> = self
+            .branches
+            .keys()
+            .filter(|name| !name.0.contains('/'))
+            .map(|name| name.0.as_str())
+            .collect();
+        self.remote_branches_at(sha)
+            .into_iter()
+            .filter_map(|full| {
+                full.split_once('/').map(|(_, name)| name.to_string())
+            })
+            .filter(|name| !existing_local.contains(name.as_str()))
+            .collect()
+    }
+
+    /// Get the names of remote-tracking branches pointing to the given sha,
+    /// including their remote prefix (e.g. "origin/some-name").
+    pub fn remote_branches_at(&self, sha: Sha) -> Vec<String> {
+        let git_repo = match Repository::open(&self.path) {
+            Ok(r) => r,
+            Err(_) => return vec![],
+        };
+        let Ok(branch_iter) = git_repo.branches(Some(git2::BranchType::Remote)) else {
+            return vec![];
+        };
+        let mut result = vec![];
+        for branch_result in branch_iter {
+            if let Ok((branch, _)) = branch_result {
+                let name = branch.name().ok().flatten().map(|s| s.to_string());
+                if let Ok(reference) = branch.into_reference().resolve() {
+                    if reference.target() == Some(sha) {
+                        if let Some(name) = name {
+                            // Skip symbolic HEAD refs like "origin/HEAD"
+                            if !name.ends_with("/HEAD") {
+                                result.push(name);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        result
+    }
+
     /// Get the web URL for a commit based on the origin remote
     /// Supports GitHub, GitLab, Bitbucket, and other git forges
     pub fn commit_url(&self, sha: Sha) -> Option<String> {
@@ -727,7 +775,7 @@ impl Repo {
     }
 
     /// Load current worktree status (staged and unstaged changes)
-    pub fn load_worktree_status(&self) -> Option<WorktreeStatus> {
+    pub fn load_worktree_status(&self, amend: bool) -> Option<WorktreeStatus> {
         let git_repo = Repository::open(&self.path).ok()?;
 
         let mut opts = git2::StatusOptions::new();
@@ -797,8 +845,9 @@ impl Repo {
                 });
             }
 
-            // Check for staged changes (index vs HEAD)
-            if status.intersects(
+            // Staged changes (index vs HEAD) — skipped in amend mode,
+            // where the Staged box is built by load_amend_staged_files.
+            if !amend && status.intersects(
                 git2::Status::INDEX_NEW
                     | git2::Status::INDEX_MODIFIED
                     | git2::Status::INDEX_DELETED
@@ -819,7 +868,7 @@ impl Repo {
 
                 // Load hunks for this file (index vs HEAD diff)
                 let (hunks, additions, deletions) =
-                    self.load_staged_hunks(&git_repo, &path).unwrap_or_default();
+                    self.load_staged_hunks(&git_repo, &path, false).unwrap_or_default();
 
                 staged_files.push(WorktreeFile {
                     path,
@@ -837,10 +886,63 @@ impl Repo {
         unstaged_files.sort_by(|a, b| a.path.cmp(&b.path));
         staged_files.sort_by(|a, b| a.path.cmp(&b.path));
 
+        // In amend mode the Staged box shows the commit being amended:
+        // everything between HEAD's parent and the index.
+        let staged_files = if amend {
+            self.load_amend_staged_files(&git_repo).unwrap_or_default()
+        } else {
+            staged_files
+        };
+
         Some(WorktreeStatus {
             unstaged_files,
             staged_files,
         })
+    }
+
+    /// Staged-box contents for amend mode: the diff between HEAD's
+    /// parent and the index. With a clean index this is exactly the
+    /// commit being amended; staging more folds it in. HEAD is never
+    /// moved — committing later uses `git commit --amend`.
+    fn load_amend_staged_files(&self, git_repo: &Repository) -> Option<Vec<WorktreeFile>> {
+        let head_commit = git_repo.head().ok()?.peel_to_commit().ok()?;
+        let parent_tree = head_commit.parent(0).ok()?.tree().ok()?;
+        let diff = git_repo
+            .diff_tree_to_index(Some(&parent_tree), None, None)
+            .ok()?;
+
+        let mut files: Vec<WorktreeFile> = Vec::new();
+        for delta in diff.deltas() {
+            let Some(path) = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .and_then(|p| p.to_str())
+                .map(|s| s.to_string())
+            else {
+                continue;
+            };
+            let status = match delta.status() {
+                git2::Delta::Added => FileStatus::Added,
+                git2::Delta::Deleted => FileStatus::Deleted,
+                git2::Delta::Renamed => FileStatus::Renamed,
+                git2::Delta::Typechange => FileStatus::Typechange,
+                _ => FileStatus::Modified,
+            };
+            let (staged_hunks, additions, deletions) =
+                self.load_staged_hunks(git_repo, &path, true).unwrap_or_default();
+            files.push(WorktreeFile {
+                path,
+                status,
+                unstaged_hunks: Vec::new(),
+                staged_hunks,
+                additions,
+                deletions,
+                conflicts: Vec::new(),
+            });
+        }
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        Some(files)
     }
 
     /// Load unstaged hunks for a file (worktree vs index)
@@ -1012,18 +1114,29 @@ impl Repo {
         &self,
         git_repo: &Repository,
         path: &str,
+        amend: bool,
     ) -> Option<(Vec<Hunk>, usize, usize)> {
         let mut diff_opts = git2::DiffOptions::new();
         diff_opts.pathspec(path);
 
-        let head_tree = git_repo
-            .head()
-            .ok()?
-            .peel_to_tree()
-            .ok();
+        // Normal mode diffs the index against HEAD; amend mode against
+        // HEAD's parent, so the commit being amended shows as staged.
+        let base_tree = if amend {
+            git_repo
+                .head()
+                .ok()?
+                .peel_to_commit()
+                .ok()?
+                .parent(0)
+                .ok()?
+                .tree()
+                .ok()
+        } else {
+            git_repo.head().ok()?.peel_to_tree().ok()
+        };
 
         let diff = git_repo
-            .diff_tree_to_index(head_tree.as_ref(), None, Some(&mut diff_opts))
+            .diff_tree_to_index(base_tree.as_ref(), None, Some(&mut diff_opts))
             .ok()?;
 
         self.extract_hunks_from_diff(&diff)
@@ -1099,21 +1212,31 @@ impl Repo {
         Ok(())
     }
 
-    /// Unstage a file (reset to HEAD)
-    pub fn unstage_file(&self, path: &str) -> Result<(), String> {
+    /// Unstage a file. Normal mode resets it to HEAD; amend mode resets
+    /// it to HEAD's parent, so unstaging drops the file from the commit
+    /// being amended.
+    pub fn unstage_file(&self, path: &str, amend: bool) -> Result<(), String> {
         let git_repo = Repository::open(&self.path).map_err(|e| e.message().to_string())?;
 
-        // Get HEAD commit tree
+        // Resolve the tree to reset the file to.
         let head = git_repo.head().map_err(|e| e.message().to_string())?;
         let head_commit = head
             .peel_to_commit()
             .map_err(|e| e.message().to_string())?;
-        let head_tree = head_commit.tree().map_err(|e| e.message().to_string())?;
+        let base_tree = if amend {
+            head_commit
+                .parent(0)
+                .map_err(|e| e.message().to_string())?
+                .tree()
+                .map_err(|e| e.message().to_string())?
+        } else {
+            head_commit.tree().map_err(|e| e.message().to_string())?
+        };
 
         let mut index = git_repo.index().map_err(|e| e.message().to_string())?;
 
-        // Check if file exists in HEAD
-        if let Ok(entry) = head_tree.get_path(std::path::Path::new(path)) {
+        // Check if file exists in the base tree
+        if let Ok(entry) = base_tree.get_path(std::path::Path::new(path)) {
             // File exists in HEAD - restore it to index
             let blob = git_repo
                 .find_blob(entry.id())
@@ -1142,6 +1265,24 @@ impl Repo {
                 .map_err(|e| e.message().to_string())?;
         }
 
+        index.write().map_err(|e| e.message().to_string())?;
+        Ok(())
+    }
+
+    /// Reset the index to HEAD, leaving the working tree untouched.
+    /// Used to cancel an in-progress amend: any staging done for it is
+    /// dropped, and since HEAD never moved, history is unaffected.
+    pub fn reset_index_to_head(&self) -> Result<(), String> {
+        let git_repo = Repository::open(&self.path).map_err(|e| e.message().to_string())?;
+        let head_tree = git_repo
+            .head()
+            .map_err(|e| e.message().to_string())?
+            .peel_to_tree()
+            .map_err(|e| e.message().to_string())?;
+        let mut index = git_repo.index().map_err(|e| e.message().to_string())?;
+        index
+            .read_tree(&head_tree)
+            .map_err(|e| e.message().to_string())?;
         index.write().map_err(|e| e.message().to_string())?;
         Ok(())
     }

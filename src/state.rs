@@ -58,6 +58,9 @@ pub struct CommitViewState {
     pub selected_conflict: usize,
     /// Track resolved conflicts per file path (for display in Resolved panel)
     pub resolved_conflicts: HashMap<String, usize>,
+    /// When true, this staging session amends HEAD: the Staged box is
+    /// computed against HEAD's parent and `c` runs `git commit --amend`.
+    pub amend_mode: bool,
 }
 
 /// Cached syntax highlighting for staging view (one file at a time)

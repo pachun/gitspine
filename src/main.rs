@@ -106,7 +106,7 @@ fn main() {
 
     // If there are uncommitted changes, open staging view by default
     if repo.has_changes() {
-        if let Some(status) = repo.load_worktree_status() {
+        if let Some(status) = repo.load_worktree_status(false) {
             let viewing_file = status
                 .unstaged_files
                 .first()
@@ -130,6 +130,7 @@ fn main() {
                 staging_highlight: None,
                 selected_conflict: 0,
                 resolved_conflicts: std::collections::HashMap::new(),
+                amend_mode: false,
             });
             // Compute initial syntax highlighting
             action::update_staging_highlight(&mut state);
