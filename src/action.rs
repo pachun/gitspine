@@ -2848,8 +2848,12 @@ fn commit_with_editor(
         String::new()
     };
 
+    // A blank line always sits above the hint block so it never
+    // crowds the cursor. New commit: line 1 (empty) is the subject,
+    // line 2 is the blank separator, then the hints. Amend: the
+    // existing message, a blank line, then the hints.
     let file_contents = if initial_message.is_empty() {
-        format!("\n{}", COMMIT_MSG_HINTS)
+        format!("\n\n{}", COMMIT_MSG_HINTS)
     } else {
         format!("{}\n\n{}", initial_message, COMMIT_MSG_HINTS)
     };
