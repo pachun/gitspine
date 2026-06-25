@@ -41,6 +41,10 @@ pub enum Action {
     CharP,
     CtrlD,
     CtrlU,
+    CtrlH,
+    CtrlL,
+    CtrlJ,
+    CtrlK,
     ShiftS,
     ShiftU,
     CharM,
@@ -48,6 +52,27 @@ pub enum Action {
     Digit(char),
     Char(char), // For characters without special normal-mode behavior
     None,
+}
+
+/// Hand a Ctrl-h/j/k/l press back to tmux as a pane switch. tmux always
+/// forwards these to gitspine (its vim-tmux-navigator match includes us),
+/// so when one arrives outside the staging view — where it isn't ours to
+/// keep — we replicate tmux's own select-pane in the matching direction.
+/// No-op when not running under tmux.
+fn switch_tmux_pane(action: &Action) {
+    if std::env::var_os("TMUX").is_none() {
+        return;
+    }
+    let direction = match action {
+        Action::CtrlH => "-L",
+        Action::CtrlJ => "-D",
+        Action::CtrlK => "-U",
+        Action::CtrlL => "-R",
+        _ => return,
+    };
+    let _ = std::process::Command::new("tmux")
+        .args(["select-pane", direction])
+        .output();
 }
 
 impl Action {
@@ -58,6 +83,20 @@ impl Action {
         repo: &mut Repo,
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> bool {
+        // Ctrl-h/j/k/l are gitspine's only while the staging view is
+        // open, where they move between files and the unstaged/staged
+        // boxes. tmux forwards them to us unconditionally, so anywhere
+        // else we hand them straight back as pane switches — the same
+        // pass-through vim-tmux-navigator does at a split edge.
+        if state.commit_view.is_none()
+            && matches!(
+                self,
+                Action::CtrlH | Action::CtrlJ | Action::CtrlK | Action::CtrlL
+            )
+        {
+            switch_tmux_pane(self);
+            return false;
+        }
         if state.commit_view.is_some() {
             self.execute_commit_view_mode(state, repo, terminal)
         } else if state.is_typing_search_term {
@@ -229,6 +268,29 @@ impl Action {
                 commit_view.diff_scroll = 0;
                 update_staging_highlight(state);
             }
+            Action::CtrlH | Action::CtrlL => {
+                // Switch between the two file boxes: Ctrl-h selects the
+                // left (unstaged/conflicts) panel, Ctrl-l the right
+                // (staged/resolved) panel. Directional rather than a
+                // toggle, so the landing side is never in doubt.
+                commit_view.active_panel = if matches!(self, Action::CtrlH) {
+                    CommitViewPanel::UnstagedFiles
+                } else {
+                    CommitViewPanel::StagedFiles
+                };
+                commit_view.viewing_file = match commit_view.active_panel {
+                    CommitViewPanel::UnstagedFiles => commit_view
+                        .unstaged_files
+                        .get(commit_view.unstaged_selected)
+                        .map(|f| f.path.clone()),
+                    CommitViewPanel::StagedFiles => commit_view
+                        .staged_files
+                        .get(commit_view.staged_selected)
+                        .map(|f| f.path.clone()),
+                };
+                commit_view.diff_scroll = 0;
+                update_staging_highlight(state);
+            }
             Action::CharJ | Action::Down => {
                 // Scroll diff/conflict view down
                 let viewport = diff_viewport_height(terminal);
@@ -239,7 +301,7 @@ impl Action {
                 // Scroll diff/conflict view up
                 commit_view.diff_scroll = commit_view.diff_scroll.saturating_sub(1);
             }
-            Action::ShiftJ => {
+            Action::CtrlJ => {
                 // Move to next file in active panel
                 let file_changed = match commit_view.active_panel {
                     CommitViewPanel::UnstagedFiles => {
@@ -281,7 +343,7 @@ impl Action {
                     update_staging_highlight(state);
                 }
             }
-            Action::ShiftK => {
+            Action::CtrlK => {
                 // Move to previous file in active panel
                 let file_changed = match commit_view.active_panel {
                     CommitViewPanel::UnstagedFiles => {
@@ -749,7 +811,7 @@ impl Action {
             Action::Space => {
                 type_search_character(state, ' ');
             }
-            Action::Tab | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
+            Action::Tab | Action::CtrlD | Action::CtrlU | Action::CtrlH | Action::CtrlL | Action::CtrlJ | Action::CtrlK | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
         false // typing mode never quits
     }
@@ -1240,7 +1302,7 @@ impl Action {
                     });
                 }
             }
-            Action::Char(_) | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
+            Action::Char(_) | Action::CtrlH | Action::CtrlL | Action::CtrlJ | Action::CtrlK | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
         false
     }
@@ -1355,7 +1417,7 @@ impl Action {
                 state.tab_complete_base = new_base;
                 state.tab_complete_index = new_index;
             }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::CtrlH | Action::CtrlL | Action::CtrlJ | Action::CtrlK | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
     }
 
@@ -1482,7 +1544,7 @@ impl Action {
                 state.tab_complete_index = 0;
                 state.delete_branch_name.push(' ');
             }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::CtrlH | Action::CtrlL | Action::CtrlJ | Action::CtrlK | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
     }
 
@@ -1627,7 +1689,7 @@ impl Action {
                 state.tab_complete_index = 0;
                 state.checkout_branch_name.push(' ');
             }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::CtrlH | Action::CtrlL | Action::CtrlJ | Action::CtrlK | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
     }
 
@@ -1764,7 +1826,7 @@ impl Action {
                 state.tab_complete_index = 0;
                 state.rebase_target.push(' ');
             }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
+            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::CtrlH | Action::CtrlL | Action::CtrlJ | Action::CtrlK | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
     }
 
@@ -1970,6 +2032,10 @@ impl Action {
             | Action::Down
             | Action::CtrlD
             | Action::CtrlU
+            | Action::CtrlH
+            | Action::CtrlL
+            | Action::CtrlJ
+            | Action::CtrlK
             | Action::ShiftJ
             | Action::ShiftK
             | Action::ShiftS

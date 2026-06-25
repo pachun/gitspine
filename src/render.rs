@@ -1668,15 +1668,15 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
 
     // Use different titles and hints when resolving conflicts
     let (left_title, left_hints, right_title) = if state.is_rebase_in_progress {
-        ("Conflicts", "o:edit  S:resolve  J/K:scroll", "Resolved")
+        ("Conflicts", "o:edit  S:resolve  ^j/^k:file", "Resolved")
     } else if commit_view.amend_mode {
         (
             "Unstaged",
-            "s:stage  S:all  d:discard  D:discard all  J/K:scroll",
+            "s:stage  S:all  d:discard  D:discard all  ^j/^k:file",
             "Amending HEAD",
         )
     } else {
-        ("Unstaged", "s:stage  S:all  d:discard  D:discard all  J/K:scroll", "Staged")
+        ("Unstaged", "s:stage  S:all  d:discard  D:discard all  ^j/^k:file", "Staged")
     };
 
     // Render left panel (unstaged/conflicts)
@@ -1695,9 +1695,9 @@ fn render_commit_view(frame: &mut Frame, commit_view: &CommitViewState, state: &
     // Render right panel (staged/resolved)
     let right_hints: &str = if state.is_rebase_in_progress {
         if commit_view.unstaged_files.is_empty() {
-            "J/K:scroll  c:continue rebase"
+            "^j/^k:file  c:continue rebase"
         } else {
-            "J/K:scroll"
+            "^j/^k:file"
         }
     } else if commit_view.amend_mode {
         "u:unstage  U:all  c:amend  esc:cancel"
@@ -1806,9 +1806,9 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
 
     // Navigation hints - show abort hint during rebase
     let nav_hints = if is_rebase {
-        " esc:abort rebase  o:open file  j/k:scroll "
+        " esc:abort rebase  o:open file  j/k:scroll  ^d/^u:½page "
     } else {
-        " tab:back  o:open file  j/k:scroll "
+        " tab:back  o:open file  j/k:scroll  ^d/^u:½page "
     };
 
     let border_color = if is_rebase { Color::Yellow } else { Color::White };
