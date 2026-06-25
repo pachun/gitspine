@@ -136,9 +136,13 @@ local function jump_to_body()
   if (getline(2) or "") ~= "" then
     vim.api.nvim_buf_set_lines(0, 1, 1, false, { "" })
   end
+  -- Open the body on line 3 with a blank line 4 beneath it, so the
+  -- cursor never sits flush against the '#' hint block. Both blanks go
+  -- in only when line 3 is still a hint (or missing) — a fresh jump,
+  -- not a re-entry where a real body already occupies line 3.
   local l3 = getline(3)
   if l3 == nil or l3:match("^#") then
-    vim.api.nvim_buf_set_lines(0, 2, 2, false, { "" })
+    vim.api.nvim_buf_set_lines(0, 2, 2, false, { "", "" })
   end
   vim.api.nvim_win_set_cursor(0, { 3, 0 })
   refresh_guides()
