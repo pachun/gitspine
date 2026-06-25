@@ -2912,10 +2912,15 @@ fn commit_with_editor(
             // Read the commit message
             match fs::read_to_string(&temp_file) {
                 Ok(message) => {
-                    // Remove comment lines and trim
+                    // Drop comment lines, strip each line's trailing
+                    // whitespace, then trim. The per-line strip clears
+                    // the trailing-space markers the editor's 'w' wrap
+                    // leaves on continued body lines (see
+                    // gitcommit_aids.lua) so they never reach git.
                     let message: String = message
                         .lines()
                         .filter(|line| !line.starts_with('#'))
+                        .map(|line| line.trim_end())
                         .collect::<Vec<_>>()
                         .join("\n")
                         .trim()

@@ -19,7 +19,8 @@
 --     gets no guide of its own.
 --   * Body (line 3+): a guide marks column 73 on body lines only;
 --     characters past 72 turn red; the body auto-wraps and reflows
---     at 72.
+--     at 72. A line you finish with Enter ends its paragraph, so a
+--     single Enter is a real break rather than being reflowed away.
 --
 -- The guides are per-line extmarks rather than 'colorcolumn' because
 -- colorcolumn spans the whole window and cannot differ line to line.
@@ -104,9 +105,17 @@ local function apply_line_rules()
     vim.opt_local.formatoptions:append("t")
     local line2 = vim.api.nvim_buf_get_lines(0, 1, 2, false)[1] or ""
     if line2 == "" then
+      -- 'a' reflows the paragraph live as you type; 'w' makes a line
+      -- you finish (one ending in a non-space char) close the
+      -- paragraph, so a single Enter is a genuine break instead of
+      -- being reflowed back up. Auto-wrap leaves a trailing space to
+      -- mark a still-continuing line; commit_with_editor strips those
+      -- markers on save so they never reach the commit.
       vim.opt_local.formatoptions:append("a")
+      vim.opt_local.formatoptions:append("w")
     else
       vim.opt_local.formatoptions:remove("a")
+      vim.opt_local.formatoptions:remove("w")
     end
   end
 end
