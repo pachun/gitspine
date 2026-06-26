@@ -1341,12 +1341,32 @@ impl Repo {
             .peel_to_commit()
             .map_err(|e| e.message().to_string())?;
 
+        // Re-date the commit to now. The committer becomes the current
+        // user at the current time, as a normal `git commit --amend`
+        // does; the author keeps their name and email but is re-dated to
+        // the same instant, so the amended commit carries one consistent
+        // "now" instead of its stale original author date. This is
+        // exactly `git commit --amend --date=now`. Author and committer
+        // are always the same person here, so there is no upstream author
+        // timestamp worth preserving.
+        let committer = git_repo
+            .signature()
+            .map_err(|e| e.message().to_string())?;
+        let now = committer.when();
+        let original_author = head_commit.author();
+        let author = git2::Signature::new(
+            original_author.name().unwrap_or(""),
+            original_author.email().unwrap_or(""),
+            &now,
+        )
+        .map_err(|e| e.message().to_string())?;
+
         // Amend commit
         let commit_id = head_commit
             .amend(
                 Some("HEAD"),
-                None, // keep author
-                None, // keep committer
+                Some(&author),
+                Some(&committer),
                 None, // keep encoding
                 Some(message),
                 Some(&tree),
