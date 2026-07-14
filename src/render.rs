@@ -1226,15 +1226,7 @@ fn details_lines(
             let content_width = width.saturating_sub(prefix_width as u16) as usize;
 
             for diff_line in &hunk.lines {
-                let (prefix_style, line_bg) = match diff_line.origin {
-                    '+' => (Style::default().fg(Color::Green), None),
-                    '-' => (
-                        Style::default().fg(Color::Red),
-                        Some(Color::Rgb(35, 0, 0)),
-                    ),
-                    '!' => (Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD), Some(Color::Rgb(30, 0, 30))),
-                    _ => (Style::default().fg(Color::DarkGray), None),
-                };
+                let (prefix_style, line_bg) = diff_line_style(diff_line.origin);
 
                 // Format: "{origin}{line_num} " - origin on left, then 4-char line num
                 let line_num = diff_line
@@ -1479,6 +1471,37 @@ fn render_details_panel(
 fn syntect_to_ratatui_style(syntect_style: &two_face::re_exports::syntect::highlighting::Style) -> Style {
     let fg = syntect_style.foreground;
     Style::default().fg(Color::Rgb(fg.r, fg.g, fg.b))
+}
+
+// A green channel carries about three and a half times the luminance of
+// the same value in red, so an added line tinted Rgb(0, 35, 0) would
+// glare next to a removed line tinted Rgb(35, 0, 0). These two are
+// matched by eye instead: near enough in lightness that neither side of
+// a diff pulls the eye first.
+const ADDED_LINE_BACKGROUND: Color = Color::Rgb(0, 20, 0);
+const REMOVED_LINE_BACKGROUND: Color = Color::Rgb(35, 0, 0);
+const CONFLICT_LINE_BACKGROUND: Color = Color::Rgb(30, 0, 30);
+
+/// How a diff line reads: the colour of its `+`/`-` gutter, and the
+/// background the line sits on. The staging view and the commit details
+/// view both draw diffs, and both call this, so a diff looks the same
+/// wherever you meet it.
+fn diff_line_style(origin: char) -> (Style, Option<Color>) {
+    match origin {
+        '+' => (
+            Style::default().fg(Color::Green),
+            Some(ADDED_LINE_BACKGROUND),
+        ),
+        '-' => (
+            Style::default().fg(Color::Red),
+            Some(REMOVED_LINE_BACKGROUND),
+        ),
+        '!' => (
+            Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+            Some(CONFLICT_LINE_BACKGROUND),
+        ),
+        _ => (Style::default().fg(Color::DarkGray), None),
+    }
 }
 
 /// Get preview text for tab completion (what would be added on next Tab)
@@ -1944,12 +1967,7 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
         let is_active_hunk = hunk_idx == current_hunk_idx;
 
         for (line_idx, diff_line) in hunk.lines.iter().enumerate() {
-            let (prefix_style, line_bg) = match diff_line.origin {
-                '+' => (Style::default().fg(Color::Green), None),
-                '-' => (Style::default().fg(Color::Red), Some(Color::Rgb(35, 0, 0))),
-                '!' => (Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD), Some(Color::Rgb(30, 0, 30))), // Conflict markers
-                _ => (Style::default().fg(Color::DarkGray), None),
-            };
+            let (prefix_style, line_bg) = diff_line_style(diff_line.origin);
 
             // Line number: "{origin}{4-char num} " format like commit details
             let line_num = diff_line.new_line_no
