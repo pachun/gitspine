@@ -728,14 +728,14 @@ impl Action {
         &self,
         state: &mut State,
         repo: &Repo,
-        _terminal: &Terminal<CrosstermBackend<Stdout>>,
+        terminal: &Terminal<CrosstermBackend<Stdout>>,
     ) -> bool {
         match self {
             Action::Esc | Action::CtrlC => {
                 cancel_search(state);
             }
             Action::Enter => {
-                confirm_search(state, repo);
+                confirm_search(state, repo, terminal);
             }
             Action::Up => {
                 navigate_to_previous_search_history_entry(state);
@@ -864,7 +864,7 @@ impl Action {
             Action::CharN => {
                 if state.commit_details.is_some() {
                     if !state.details_search_term.is_empty() {
-                        find_next_match_in_details(state, repo, terminal);
+                        find_next_match_in_details(state, terminal);
                     }
                 } else if !state.search_term.is_empty() {
                     find_next_match(state, repo);
@@ -873,7 +873,7 @@ impl Action {
             Action::ShiftN => {
                 if state.commit_details.is_some() {
                     if !state.details_search_term.is_empty() {
-                        find_previous_match_in_details(state, repo, terminal);
+                        find_previous_match_in_details(state, terminal);
                     }
                 } else if !state.search_term.is_empty() {
                     find_previous_match(state, repo);
@@ -2391,13 +2391,17 @@ fn cancel_search(state: &mut State) {
     }
 }
 
-fn confirm_search(state: &mut State, repo: &Repo) {
+fn confirm_search(
+    state: &mut State,
+    repo: &Repo,
+    terminal: &Terminal<CrosstermBackend<Stdout>>,
+) {
     state.is_typing_search_term = false;
     state.index_of_search_term_history_being_viewed = None;
 
     if state.commit_details.is_some() {
         // In details view: check for matches using details_search_term
-        let has_matches = !compute_details_match_lines(state, repo).is_empty();
+        let has_matches = !compute_details_match_lines(state, terminal).is_empty();
         if !has_matches {
             state.details_search_term.clear();
         }
@@ -2513,10 +2517,9 @@ fn find_previous_match(state: &mut State, repo: &Repo) {
 
 fn find_next_match_in_details(
     state: &mut State,
-    repo: &Repo,
     terminal: &Terminal<CrosstermBackend<Stdout>>,
 ) {
-    let match_lines = compute_details_match_lines(state, repo);
+    let match_lines = compute_details_match_lines(state, terminal);
     if match_lines.is_empty() {
         state.details_selected_match_line = None;
         state.details_selected_match_index = None;
@@ -2542,10 +2545,9 @@ fn find_next_match_in_details(
 
 fn find_previous_match_in_details(
     state: &mut State,
-    repo: &Repo,
     terminal: &Terminal<CrosstermBackend<Stdout>>,
 ) {
-    let match_lines = compute_details_match_lines(state, repo);
+    let match_lines = compute_details_match_lines(state, terminal);
     if match_lines.is_empty() {
         state.details_selected_match_line = None;
         state.details_selected_match_index = None;
@@ -2571,74 +2573,20 @@ fn find_previous_match_in_details(
 }
 
 /// Compute which line indices in the details view contain search matches
-pub fn compute_details_match_lines(state: &State, _repo: &Repo) -> Vec<usize> {
+fn compute_details_match_lines(
+    state: &State,
+    terminal: &Terminal<CrosstermBackend<Stdout>>,
+) -> Vec<usize> {
     let Some(details) = &state.commit_details else {
         return vec![];
     };
-    if state.details_search_term.is_empty() {
-        return vec![];
-    }
 
-    let search_lower = state.details_search_term.to_lowercase();
-    let mut match_lines = Vec::new();
-    let mut line_idx = 0;
-
-    // Header lines (commit, author, date, blank)
-    line_idx += 4;
-
-    // Commit message lines - check each for matches
-    for msg_line in details.message.lines() {
-        if msg_line.to_lowercase().contains(&search_lower) {
-            match_lines.push(line_idx);
-        }
-        line_idx += 1;
-    }
-
-    // Blank line and files header
-    line_idx += 2;
-
-    // File list
-    for file in &details.files {
-        if file.path.to_lowercase().contains(&search_lower) {
-            match_lines.push(line_idx);
-        }
-        line_idx += 1;
-    }
-
-    // Blank line before diffs
-    line_idx += 1;
-
-    // Diff content
-    for file in &details.files {
-        if file.hunks.is_empty() {
-            continue;
-        }
-
-        // File separator
-        if file.path.to_lowercase().contains(&search_lower) {
-            match_lines.push(line_idx);
-        }
-        line_idx += 1;
-
-        for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
-            // Blank line between hunks
-            if hunk_idx > 0 {
-                line_idx += 1;
-            }
-
-            for diff_line in &hunk.lines {
-                if diff_line.content.to_lowercase().contains(&search_lower) {
-                    match_lines.push(line_idx);
-                }
-                line_idx += 1;
-            }
-        }
-
-        // Blank line after file
-        line_idx += 1;
-    }
-
-    match_lines
+    crate::render::details_match_lines(
+        details,
+        state.highlight_cache.as_ref(),
+        &state.details_search_term,
+        crate::viewport::details_panel_width(terminal),
+    )
 }
 
 fn compute_details_content_height(

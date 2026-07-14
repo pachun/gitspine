@@ -6,7 +6,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table};
 use ratatui::Frame;
 
-use crate::action::compute_details_match_lines;
 use crate::repo::{BranchName, CommitDetails, Repo, Sha, WorktreeFile, FileStatus};
 use crate::state::{CommitViewPanel, CommitViewState, State};
 use crate::utils::{format_date, format_time, has_mixed_case};
@@ -90,6 +89,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
 
     // Use full width - padding is handled by table columns for proper row highlighting
     let padded_area = frame.area();
+    let details_panel_width = padded_area.width.saturating_sub(DETAILS_HORIZONTAL_PADDING);
 
     // Split into main area, search bar, and optional help panel
     let constraints = if state.is_showing_help_panel {
@@ -705,9 +705,15 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
             } else {
                 "".to_string()
             }
-        } else if state.commit_details.is_some() {
+        } else if let Some(details) = &state.commit_details {
             // In details view: count lines with matches
-            let match_count = compute_details_match_lines(state, repo).len();
+            let match_count = details_match_lines(
+                details,
+                state.highlight_cache.as_ref(),
+                &state.details_search_term,
+                details_panel_width,
+            )
+            .len();
             if match_count == 0 {
                 "no matches   ".to_string()
             } else if match_count == 1 {
@@ -762,9 +768,14 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         frame.render_widget(center_hint, search_inner);
 
         // Calculate matches - use diff matches if in details view, otherwise commit matches
-        let counter_text = if state.commit_details.is_some() {
+        let counter_text = if let Some(details) = &state.commit_details {
             // In details view: show matches within the current diff
-            let match_lines = compute_details_match_lines(state, repo);
+            let match_lines = details_match_lines(
+                details,
+                state.highlight_cache.as_ref(),
+                &state.details_search_term,
+                details_panel_width,
+            );
             let total = match_lines.len();
             if total > 0 {
                 match state.details_selected_match_index {
@@ -1090,6 +1101,34 @@ pub fn details_content_height(
     details_lines(details, highlight_cache, search_term, width).0.len()
 }
 
+/// Which rows of the details panel hold a search match. A row counts as a
+/// match when the panel painted one on it, so `n` and `N` land on the
+/// highlights you can see — including a match on the tail of a long line
+/// that wrapped onto a row of its own.
+pub fn details_match_lines(
+    details: &CommitDetails,
+    highlight_cache: Option<&crate::highlight::HighlightCache>,
+    search_term: &str,
+    width: u16,
+) -> Vec<usize> {
+    if search_term.is_empty() {
+        return Vec::new();
+    }
+
+    let (rows, _file_sections) = details_lines(details, highlight_cache, search_term, width);
+
+    rows.iter()
+        .enumerate()
+        .filter(|(_, row)| row.spans.iter().any(|span| span.style == search_match_style()))
+        .map(|(row_index, _)| row_index)
+        .collect()
+}
+
+/// What the panel paints on text matching the search term.
+fn search_match_style() -> Style {
+    Style::default().bg(Color::Yellow).fg(Color::Black)
+}
+
 /// Every row `render_details_panel` will draw, in render order.
 fn details_lines(
     details: &CommitDetails,
@@ -1097,7 +1136,7 @@ fn details_lines(
     search_term: &str,
     width: u16,
 ) -> (Vec<Line<'static>>, Vec<FileSection>) {
-    let highlight_style = Style::default().bg(Color::Yellow).fg(Color::Black);
+    let highlight_style = search_match_style();
 
     let full_sha = details.sha.to_string();
     let datetime = format!("{} {}", format_date(details.timestamp), format_time(details.timestamp));
