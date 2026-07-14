@@ -10,7 +10,7 @@ use crate::action::compute_details_match_lines;
 use crate::repo::{BranchName, CommitDetails, Repo, Sha, WorktreeFile, FileStatus};
 use crate::state::{CommitViewPanel, CommitViewState, State};
 use crate::utils::{format_date, format_time, has_mixed_case};
-use crate::viewport::{DETAILS_COMMIT_LIST_HEIGHT, FILE_HEADER_HEIGHT};
+use crate::viewport::{DETAILS_COMMIT_LIST_HEIGHT, DETAILS_HORIZONTAL_PADDING, FILE_HEADER_HEIGHT};
 
 /// Build reverse index: commit sha -> list of branch names pointing to it
 fn branches_at_commit(branches: &HashMap<BranchName, Sha>) -> HashMap<Sha, Vec<&BranchName>> {
@@ -1070,31 +1070,34 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
 }
 
 /// Render the commit details panel with syntax-highlighted diffs
-fn render_details_panel(
-    frame: &mut Frame,
-    area: ratatui::layout::Rect,
+struct FileSection {
+    header_line_idx: usize,
+    header_text: String,
+}
+
+/// The number of rows the details panel draws for a commit at the given
+/// panel width. Counted from the rows themselves, so long diff lines that
+/// wrap and the blank line under each file are included. Scrolling clamps
+/// against this: any count derived independently drifts from what is
+/// drawn and strands the tail of the diff below the panel, underneath the
+/// bar at the bottom of the screen.
+pub fn details_content_height(
     details: &CommitDetails,
     highlight_cache: Option<&crate::highlight::HighlightCache>,
-    scroll_offset: usize,
     search_term: &str,
-    selected_match_line: Option<usize>,
-) {
-    let highlight_style = Style::default().bg(Color::Yellow).fg(Color::Black);
-    // Selected match uses teal/cyan background instead of yellow
-    let selected_match_style = Style::default().bg(Color::Cyan).fg(Color::Black);
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::White));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    width: u16,
+) -> usize {
+    details_lines(details, highlight_cache, search_term, width).0.len()
+}
 
-    // Add horizontal padding
-    let inner = ratatui::layout::Rect {
-        x: inner.x + 1,
-        y: inner.y,
-        width: inner.width.saturating_sub(2),
-        height: inner.height,
-    };
+/// Every row `render_details_panel` will draw, in render order.
+fn details_lines(
+    details: &CommitDetails,
+    highlight_cache: Option<&crate::highlight::HighlightCache>,
+    search_term: &str,
+    width: u16,
+) -> (Vec<Line<'static>>, Vec<FileSection>) {
+    let highlight_style = Style::default().bg(Color::Yellow).fg(Color::Black);
 
     let full_sha = details.sha.to_string();
     let datetime = format!("{} {}", format_date(details.timestamp), format_time(details.timestamp));
@@ -1108,7 +1111,7 @@ fn render_details_panel(
     ];
 
     let msg_lines: Vec<&str> = details.message.lines().collect();
-    let available_width = inner.width as usize;
+    let available_width = width as usize;
 
     // Build all lines for the details panel
     let mut lines: Vec<Line> = Vec::new();
@@ -1183,10 +1186,6 @@ fn render_details_panel(
     lines.push(Line::from(""));
 
     // Track file header positions for sticky headers
-    struct FileSection {
-        header_line_idx: usize,
-        header_text: String,
-    }
     let mut file_sections: Vec<FileSection> = Vec::new();
 
     // Add actual diff content using cached syntax highlighting
@@ -1224,7 +1223,7 @@ fn render_details_panel(
 
             // Diff lines with syntax highlighting and line numbers
             let prefix_width: usize = 6; // "{origin}{4-char num} "
-            let content_width = inner.width.saturating_sub(prefix_width as u16) as usize;
+            let content_width = width.saturating_sub(prefix_width as u16) as usize;
 
             for diff_line in &hunk.lines {
                 let (prefix_style, line_bg) = match diff_line.origin {
@@ -1340,6 +1339,36 @@ fn render_details_panel(
         // Blank line after each file
         lines.push(Line::from(""));
     }
+
+    (lines, file_sections)
+}
+
+fn render_details_panel(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    details: &CommitDetails,
+    highlight_cache: Option<&crate::highlight::HighlightCache>,
+    scroll_offset: usize,
+    search_term: &str,
+    selected_match_line: Option<usize>,
+) {
+    // Selected match uses teal/cyan background instead of yellow
+    let selected_match_style = Style::default().bg(Color::Cyan).fg(Color::Black);
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::White));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Add horizontal padding
+    let inner = ratatui::layout::Rect {
+        x: inner.x + 1,
+        y: inner.y,
+        width: inner.width.saturating_sub(DETAILS_HORIZONTAL_PADDING),
+        height: inner.height,
+    };
+
+    let (lines, file_sections) = details_lines(details, highlight_cache, search_term, inner.width);
 
     // Determine if we need a sticky header
     // Sticky appears as soon as header reaches the top of viewport

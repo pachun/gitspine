@@ -7,7 +7,7 @@ use ratatui::prelude::CrosstermBackend;
 use crate::highlight::Highlighter;
 use crate::repo::{BranchName, Repo};
 use crate::state::{CommitViewPanel, CommitViewState, FlashMessage, StagingHighlight, State};
-use crate::viewport::{center_view_on_selected_row, git_graph_height, DETAILS_HEADER_LINES, FILE_HEADER_HEIGHT, SUMMARY_HEADER_HEIGHT};
+use crate::viewport::{center_view_on_selected_row, git_graph_height};
 
 /// Actions represent keypresses. The execute() method determines behavior based on UI state.
 pub enum Action {
@@ -884,7 +884,7 @@ impl Action {
                 state.jump_distance_string.clear();
                 if state.commit_details.is_some() {
                     // Scroll details panel down (clamped to content)
-                    let content_height = compute_details_content_height(state);
+                    let content_height = compute_details_content_height(state, terminal);
                     let viewport_height = crate::viewport::details_panel_height(state, terminal);
                     let max_scroll = content_height.saturating_sub(viewport_height);
                     state.details_scroll_offset = (state.details_scroll_offset + count).min(max_scroll);
@@ -925,7 +925,7 @@ impl Action {
             Action::ShiftG => {
                 if state.commit_details.is_some() {
                     // Scroll to bottom of details
-                    let content_height = compute_details_content_height(state);
+                    let content_height = compute_details_content_height(state, terminal);
                     let viewport_height = crate::viewport::details_panel_height(state, terminal);
                     state.details_scroll_offset = content_height.saturating_sub(viewport_height);
                 } else {
@@ -1167,7 +1167,7 @@ impl Action {
                 let half_page = git_graph_height(state, terminal) / 2;
                 if state.commit_details.is_some() {
                     // Half-page scroll down in details (clamped to content)
-                    let content_height = compute_details_content_height(state);
+                    let content_height = compute_details_content_height(state, terminal);
                     let viewport_height = crate::viewport::details_panel_height(state, terminal);
                     let max_scroll = content_height.saturating_sub(viewport_height);
                     state.details_scroll_offset = (state.details_scroll_offset + half_page).min(max_scroll);
@@ -2641,76 +2641,20 @@ pub fn compute_details_match_lines(state: &State, _repo: &Repo) -> Vec<usize> {
     match_lines
 }
 
-/// Compute the total number of lines in the details view content
-fn compute_details_content_height(state: &State) -> usize {
+fn compute_details_content_height(
+    state: &State,
+    terminal: &Terminal<CrosstermBackend<Stdout>>,
+) -> usize {
     let Some(details) = &state.commit_details else {
         return 0;
     };
 
-    let mut line_count = 0;
-
-    // First lines: message + metadata
-    line_count += DETAILS_HEADER_LINES;
-
-    // Additional message lines beyond the header
-    let msg_line_count = details.message.lines().count();
-    if msg_line_count > DETAILS_HEADER_LINES {
-        line_count += msg_line_count - DETAILS_HEADER_LINES;
-    }
-
-    // Blank line before files section
-    line_count += 1;
-
-    // Changes summary header
-    line_count += SUMMARY_HEADER_HEIGHT;
-
-    // File tree - count all nodes (files + directories)
-    line_count += count_file_tree_nodes(&details.files);
-
-    // Blank line before diffs
-    line_count += 1;
-
-    // Diff content
-    for file in &details.files {
-        if file.hunks.is_empty() {
-            continue;
-        }
-
-        // File header
-        line_count += FILE_HEADER_HEIGHT;
-
-        for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
-            // Blank line between hunks
-            if hunk_idx > 0 {
-                line_count += 1;
-            }
-            line_count += hunk.lines.len();
-        }
-    }
-
-    line_count
-}
-
-/// Count total nodes in the file tree (files + directories)
-fn count_file_tree_nodes(files: &[crate::repo::FileChange]) -> usize {
-    use std::collections::HashSet;
-    let mut dirs: HashSet<String> = HashSet::new();
-
-    for file in files {
-        // Count all parent directories
-        let parts: Vec<&str> = file.path.split('/').collect();
-        let mut path = String::new();
-        for part in parts.iter().take(parts.len().saturating_sub(1)) {
-            if !path.is_empty() {
-                path.push('/');
-            }
-            path.push_str(part);
-            dirs.insert(path.clone());
-        }
-    }
-
-    // Total = number of files + number of unique directories
-    files.len() + dirs.len()
+    crate::render::details_content_height(
+        details,
+        state.highlight_cache.as_ref(),
+        &state.details_search_term,
+        crate::viewport::details_panel_width(terminal),
+    )
 }
 
 fn copy_sha_to_clipboard(state: &mut State, repo: &Repo) {

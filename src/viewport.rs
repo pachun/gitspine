@@ -13,8 +13,7 @@ use crate::state::State;
 pub const HELP_PANEL_HEIGHT: u16 = 5;
 pub const DETAILS_COMMIT_LIST_HEIGHT: u16 = 5;
 pub const FILE_HEADER_HEIGHT: usize = 1;
-pub const SUMMARY_HEADER_HEIGHT: usize = 1;
-pub const DETAILS_HEADER_LINES: usize = 3;
+pub const DETAILS_HORIZONTAL_PADDING: u16 = 2;
 
 pub fn git_graph_height(state: &State, terminal: &Terminal<CrosstermBackend<Stdout>>) -> usize {
     let mut height = terminal.size().unwrap().height;
@@ -30,6 +29,17 @@ pub fn details_panel_height(state: &State, terminal: &Terminal<CrosstermBackend<
     let total = git_graph_height(state, terminal);
     // Subtract commit list height + 1 for border
     total.saturating_sub(DETAILS_COMMIT_LIST_HEIGHT as usize + 1)
+}
+
+/// Width of the details panel when showing commit details. Diff lines
+/// wrap to this width, so the number of rows the panel draws depends on
+/// it.
+pub fn details_panel_width(terminal: &Terminal<CrosstermBackend<Stdout>>) -> u16 {
+    terminal
+        .size()
+        .unwrap()
+        .width
+        .saturating_sub(DETAILS_HORIZONTAL_PADDING)
 }
 
 pub fn center_view_on_selected_row(
