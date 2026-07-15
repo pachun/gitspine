@@ -724,6 +724,45 @@ impl Action {
         false
     }
 
+    /// The character this keypress types into a text field, or None if it
+    /// types nothing. A keypress becomes a semantic Action before we know
+    /// whether a text field has focus, so the fields turn the Action back
+    /// into a character here — in one place, rather than each keeping its
+    /// own copy of the list. Keeping six copies in step is how capital S,
+    /// J, K and U came to be dropped while typing.
+    fn typed_char(&self) -> Option<char> {
+        let character = match self {
+            Action::CharSlash => '/',
+            Action::CharQ => 'q',
+            Action::CharN => 'n',
+            Action::ShiftN => 'N',
+            Action::CharJ => 'j',
+            Action::ShiftJ => 'J',
+            Action::CharK => 'k',
+            Action::ShiftK => 'K',
+            Action::CharG => 'g',
+            Action::ShiftG => 'G',
+            Action::CharH => 'h',
+            Action::CharY => 'y',
+            Action::CharO => 'o',
+            Action::CharL => 'l',
+            Action::CharB => 'b',
+            Action::CharC => 'c',
+            Action::CharD => 'd',
+            Action::CharR => 'r',
+            Action::ShiftR => 'R',
+            Action::CharP => 'p',
+            Action::CharM => 'm',
+            Action::CharF => 'f',
+            Action::ShiftS => 'S',
+            Action::ShiftU => 'U',
+            Action::Space => ' ',
+            Action::Digit(c) | Action::Char(c) => *c,
+            _ => return None,
+        };
+        Some(character)
+    }
+
     fn execute_typing_mode(
         &self,
         state: &mut State,
@@ -756,62 +795,11 @@ impl Action {
                     state.index_of_search_term_history_being_viewed = None;
                 }
             }
-            // All character keys type into the search term
-            Action::CharSlash
-            | Action::CharQ
-            | Action::CharN
-            | Action::ShiftN
-            | Action::CharJ
-            | Action::CharK
-            | Action::CharG
-            | Action::ShiftG
-            | Action::CharH
-            | Action::CharY
-            | Action::CharO
-            | Action::CharL
-            | Action::CharB
-            | Action::CharC
-            | Action::CharD
-            | Action::CharR
-            | Action::ShiftR
-            | Action::CharP
-            | Action::CharM
-            | Action::CharF => {
-                let c = match self {
-                    Action::CharSlash => '/',
-                    Action::CharQ => 'q',
-                    Action::CharN => 'n',
-                    Action::ShiftN => 'N',
-                    Action::CharJ => 'j',
-                    Action::CharK => 'k',
-                    Action::CharG => 'g',
-                    Action::ShiftG => 'G',
-                    Action::CharH => 'h',
-                    Action::CharY => 'y',
-                    Action::CharO => 'o',
-                    Action::CharL => 'l',
-                    Action::CharB => 'b',
-                    Action::CharC => 'c',
-                    Action::CharD => 'd',
-                    Action::CharR => 'r',
-                    Action::ShiftR => 'R',
-                    Action::CharP => 'p',
-                    Action::CharM => 'm',
-                    Action::CharF => 'f',
-                    _ => unreachable!(),
-                };
-                type_search_character(state, c);
+            _ => {
+                if let Some(character) = self.typed_char() {
+                    type_search_character(state, character);
+                }
             }
-            Action::Digit(c) => {
-                type_search_character(state, *c);
-            }
-            Action::Char(c) => {
-                type_search_character(state, *c);
-            }
-            Action::Space => {
-                type_search_character(state, ' ');
-            }
-            Action::Tab | Action::CtrlD | Action::CtrlU | Action::CtrlH | Action::CtrlL | Action::CtrlJ | Action::CtrlK | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
         false // typing mode never quits
     }
@@ -1343,81 +1331,13 @@ impl Action {
                     state.branch_name.pop();
                 }
             }
-            // All character keys type into the branch name
-            Action::CharSlash
-            | Action::CharQ
-            | Action::CharN
-            | Action::ShiftN
-            | Action::CharJ
-            | Action::CharK
-            | Action::CharG
-            | Action::ShiftG
-            | Action::CharH
-            | Action::CharY
-            | Action::CharO
-            | Action::CharL
-            | Action::CharB
-            | Action::CharC
-            | Action::CharD
-            | Action::CharR
-            | Action::ShiftR
-            | Action::CharP
-            | Action::CharM
-            | Action::CharF => {
-                state.tab_complete_base = None;
-                state.tab_complete_index = 0;
-                let c = match self {
-                    Action::CharSlash => '/',
-                    Action::CharQ => 'q',
-                    Action::CharN => 'n',
-                    Action::ShiftN => 'N',
-                    Action::CharJ => 'j',
-                    Action::CharK => 'k',
-                    Action::CharG => 'g',
-                    Action::ShiftG => 'G',
-                    Action::CharH => 'h',
-                    Action::CharY => 'y',
-                    Action::CharO => 'o',
-                    Action::CharL => 'l',
-                    Action::CharB => 'b',
-                    Action::CharC => 'c',
-                    Action::CharD => 'd',
-                    Action::CharR => 'r',
-                    Action::ShiftR => 'R',
-                    Action::CharP => 'p',
-                    Action::CharM => 'm',
-                    Action::CharF => 'f',
-                    _ => unreachable!(),
-                };
-                state.branch_name.push(c);
+            _ => {
+                if let Some(character) = self.typed_char() {
+                    state.tab_complete_base = None;
+                    state.tab_complete_index = 0;
+                    state.branch_name.push(character);
+                }
             }
-            Action::Digit(c) | Action::Char(c) => {
-                state.tab_complete_base = None;
-                state.tab_complete_index = 0;
-                state.branch_name.push(*c);
-            }
-            Action::Space => {
-                state.tab_complete_base = None;
-                state.tab_complete_index = 0;
-                state.branch_name.push(' ');
-            }
-            Action::Tab => {
-                // Suggest names taken from remote-tracking branches at the
-                // selected commit (e.g. "origin/some-name" → "some-name").
-                // Useful when checking out / rebasing someone else's branch.
-                let selected_sha = repo.commits[state.index_of_selected_row].sha;
-                let candidates = repo.new_branch_name_candidates_at(selected_sha);
-                let (completed, new_base, new_index) = tab_complete_branch(
-                    &state.branch_name,
-                    &candidates,
-                    &state.tab_complete_base,
-                    state.tab_complete_index,
-                );
-                state.branch_name = completed;
-                state.tab_complete_base = new_base;
-                state.tab_complete_index = new_index;
-            }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::CtrlH | Action::CtrlL | Action::CtrlJ | Action::CtrlK | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
     }
 
@@ -1487,64 +1407,13 @@ impl Action {
                     state.delete_branch_name.pop();
                 }
             }
-            Action::CharSlash
-            | Action::CharQ
-            | Action::CharN
-            | Action::ShiftN
-            | Action::CharJ
-            | Action::CharK
-            | Action::CharG
-            | Action::ShiftG
-            | Action::CharH
-            | Action::CharY
-            | Action::CharO
-            | Action::CharL
-            | Action::CharB
-            | Action::CharC
-            | Action::CharD
-            | Action::CharR
-            | Action::ShiftR
-            | Action::CharP
-            | Action::CharM
-            | Action::CharF => {
-                state.tab_complete_base = None;
-                state.tab_complete_index = 0;
-                let c = match self {
-                    Action::CharSlash => '/',
-                    Action::CharQ => 'q',
-                    Action::CharN => 'n',
-                    Action::ShiftN => 'N',
-                    Action::CharJ => 'j',
-                    Action::CharK => 'k',
-                    Action::CharG => 'g',
-                    Action::ShiftG => 'G',
-                    Action::CharH => 'h',
-                    Action::CharY => 'y',
-                    Action::CharO => 'o',
-                    Action::CharL => 'l',
-                    Action::CharB => 'b',
-                    Action::CharC => 'c',
-                    Action::CharD => 'd',
-                    Action::CharR => 'r',
-                    Action::ShiftR => 'R',
-                    Action::CharP => 'p',
-                    Action::CharM => 'm',
-                    Action::CharF => 'f',
-                    _ => unreachable!(),
-                };
-                state.delete_branch_name.push(c);
+            _ => {
+                if let Some(character) = self.typed_char() {
+                    state.tab_complete_base = None;
+                    state.tab_complete_index = 0;
+                    state.delete_branch_name.push(character);
+                }
             }
-            Action::Digit(c) | Action::Char(c) => {
-                state.tab_complete_base = None;
-                state.tab_complete_index = 0;
-                state.delete_branch_name.push(*c);
-            }
-            Action::Space => {
-                state.tab_complete_base = None;
-                state.tab_complete_index = 0;
-                state.delete_branch_name.push(' ');
-            }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::CtrlH | Action::CtrlL | Action::CtrlJ | Action::CtrlK | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
     }
 
@@ -1632,64 +1501,13 @@ impl Action {
                     state.checkout_branch_name.pop();
                 }
             }
-            Action::CharSlash
-            | Action::CharQ
-            | Action::CharN
-            | Action::ShiftN
-            | Action::CharJ
-            | Action::CharK
-            | Action::CharG
-            | Action::ShiftG
-            | Action::CharH
-            | Action::CharY
-            | Action::CharO
-            | Action::CharL
-            | Action::CharB
-            | Action::CharC
-            | Action::CharD
-            | Action::CharR
-            | Action::ShiftR
-            | Action::CharP
-            | Action::CharM
-            | Action::CharF => {
-                state.tab_complete_base = None;
-                state.tab_complete_index = 0;
-                let c = match self {
-                    Action::CharSlash => '/',
-                    Action::CharQ => 'q',
-                    Action::CharN => 'n',
-                    Action::ShiftN => 'N',
-                    Action::CharJ => 'j',
-                    Action::CharK => 'k',
-                    Action::CharG => 'g',
-                    Action::ShiftG => 'G',
-                    Action::CharH => 'h',
-                    Action::CharY => 'y',
-                    Action::CharO => 'o',
-                    Action::CharL => 'l',
-                    Action::CharB => 'b',
-                    Action::CharC => 'c',
-                    Action::CharD => 'd',
-                    Action::CharR => 'r',
-                    Action::ShiftR => 'R',
-                    Action::CharP => 'p',
-                    Action::CharM => 'm',
-                    Action::CharF => 'f',
-                    _ => unreachable!(),
-                };
-                state.checkout_branch_name.push(c);
+            _ => {
+                if let Some(character) = self.typed_char() {
+                    state.tab_complete_base = None;
+                    state.tab_complete_index = 0;
+                    state.checkout_branch_name.push(character);
+                }
             }
-            Action::Digit(c) | Action::Char(c) => {
-                state.tab_complete_base = None;
-                state.tab_complete_index = 0;
-                state.checkout_branch_name.push(*c);
-            }
-            Action::Space => {
-                state.tab_complete_base = None;
-                state.tab_complete_index = 0;
-                state.checkout_branch_name.push(' ');
-            }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::CtrlH | Action::CtrlL | Action::CtrlJ | Action::CtrlK | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
     }
 
@@ -1769,64 +1587,13 @@ impl Action {
                     state.rebase_target.pop();
                 }
             }
-            Action::CharSlash
-            | Action::CharQ
-            | Action::CharN
-            | Action::ShiftN
-            | Action::CharJ
-            | Action::CharK
-            | Action::CharG
-            | Action::ShiftG
-            | Action::CharH
-            | Action::CharY
-            | Action::CharO
-            | Action::CharL
-            | Action::CharB
-            | Action::CharC
-            | Action::CharD
-            | Action::CharR
-            | Action::ShiftR
-            | Action::CharP
-            | Action::CharM
-            | Action::CharF => {
-                state.tab_complete_base = None;
-                state.tab_complete_index = 0;
-                let c = match self {
-                    Action::CharSlash => '/',
-                    Action::CharQ => 'q',
-                    Action::CharN => 'n',
-                    Action::ShiftN => 'N',
-                    Action::CharJ => 'j',
-                    Action::CharK => 'k',
-                    Action::CharG => 'g',
-                    Action::ShiftG => 'G',
-                    Action::CharH => 'h',
-                    Action::CharY => 'y',
-                    Action::CharO => 'o',
-                    Action::CharL => 'l',
-                    Action::CharB => 'b',
-                    Action::CharC => 'c',
-                    Action::CharD => 'd',
-                    Action::CharR => 'r',
-                    Action::ShiftR => 'R',
-                    Action::CharP => 'p',
-                    Action::CharM => 'm',
-                    Action::CharF => 'f',
-                    _ => unreachable!(),
-                };
-                state.rebase_target.push(c);
+            _ => {
+                if let Some(character) = self.typed_char() {
+                    state.tab_complete_base = None;
+                    state.tab_complete_index = 0;
+                    state.rebase_target.push(character);
+                }
             }
-            Action::Digit(c) | Action::Char(c) => {
-                state.tab_complete_base = None;
-                state.tab_complete_index = 0;
-                state.rebase_target.push(*c);
-            }
-            Action::Space => {
-                state.tab_complete_base = None;
-                state.tab_complete_index = 0;
-                state.rebase_target.push(' ');
-            }
-            Action::Up | Action::Down | Action::CtrlD | Action::CtrlU | Action::CtrlH | Action::CtrlL | Action::CtrlJ | Action::CtrlK | Action::ShiftJ | Action::ShiftK | Action::ShiftS | Action::ShiftU | Action::None => {}
         }
     }
 
@@ -1971,76 +1738,13 @@ impl Action {
                     state.push_branch_name.pop();
                 }
             }
-            Action::CharSlash
-            | Action::CharQ
-            | Action::CharN
-            | Action::ShiftN
-            | Action::CharJ
-            | Action::CharK
-            | Action::CharG
-            | Action::ShiftG
-            | Action::CharH
-            | Action::CharY
-            | Action::CharO
-            | Action::CharL
-            | Action::CharB
-            | Action::CharC
-            | Action::CharD
-            | Action::CharR
-            | Action::ShiftR
-            | Action::CharP
-            | Action::CharM
-            | Action::CharF => {
-                state.tab_complete_base = None;
-                state.tab_complete_index = 0;
-                let c = match self {
-                    Action::CharSlash => '/',
-                    Action::CharQ => 'q',
-                    Action::CharN => 'n',
-                    Action::ShiftN => 'N',
-                    Action::CharJ => 'j',
-                    Action::CharK => 'k',
-                    Action::CharG => 'g',
-                    Action::ShiftG => 'G',
-                    Action::CharH => 'h',
-                    Action::CharY => 'y',
-                    Action::CharO => 'o',
-                    Action::CharL => 'l',
-                    Action::CharB => 'b',
-                    Action::CharC => 'c',
-                    Action::CharD => 'd',
-                    Action::CharR => 'r',
-                    Action::ShiftR => 'R',
-                    Action::CharP => 'p',
-                    Action::CharM => 'm',
-                    Action::CharF => 'f',
-                    _ => unreachable!(),
-                };
-                state.push_branch_name.push(c);
+            _ => {
+                if let Some(character) = self.typed_char() {
+                    state.tab_complete_base = None;
+                    state.tab_complete_index = 0;
+                    state.push_branch_name.push(character);
+                }
             }
-            Action::Digit(c) | Action::Char(c) => {
-                state.tab_complete_base = None;
-                state.tab_complete_index = 0;
-                state.push_branch_name.push(*c);
-            }
-            Action::Space => {
-                state.tab_complete_base = None;
-                state.tab_complete_index = 0;
-                state.push_branch_name.push(' ');
-            }
-            Action::Up
-            | Action::Down
-            | Action::CtrlD
-            | Action::CtrlU
-            | Action::CtrlH
-            | Action::CtrlL
-            | Action::CtrlJ
-            | Action::CtrlK
-            | Action::ShiftJ
-            | Action::ShiftK
-            | Action::ShiftS
-            | Action::ShiftU
-            | Action::None => {}
         }
     }
 
