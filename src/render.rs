@@ -1513,13 +1513,13 @@ fn syntect_to_ratatui_style(syntect_style: &two_face::re_exports::syntect::highl
 }
 
 // A green channel carries about three and a half times the luminance of
-// the same value in red, so an added line tinted Rgb(0, 35, 0) would
-// glare next to a removed line tinted Rgb(35, 0, 0). These two are
-// matched by eye instead: near enough in lightness that neither side of
-// a diff pulls the eye first.
-const ADDED_LINE_BACKGROUND: Color = Color::Rgb(0, 20, 0);
-const REMOVED_LINE_BACKGROUND: Color = Color::Rgb(35, 0, 0);
-const CONFLICT_LINE_BACKGROUND: Color = Color::Rgb(30, 0, 30);
+// the same value in red, so matching these two by raw channel value would
+// leave the green glaring and the red muddy. They are matched by perceived
+// lightness instead — the red carries the higher channel value to keep
+// pace with the green — so neither side of a diff pulls the eye first.
+const ADDED_LINE_BACKGROUND: Color = Color::Rgb(27, 71, 33);
+const REMOVED_LINE_BACKGROUND: Color = Color::Rgb(120, 25, 27);
+const CONFLICT_LINE_BACKGROUND: Color = Color::Rgb(90, 25, 90);
 
 /// How a diff line reads: the colour of its `+`/`-` gutter, and the
 /// background the line sits on. The staging view and the commit details
