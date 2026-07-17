@@ -70,6 +70,7 @@ impl Commit {
 pub struct DiffLine {
     pub origin: char,             // '+', '-', ' ' (context)
     pub content: String,
+    pub old_line_no: Option<u32>, // Line number in old file (for '-' and ' ' lines)
     pub new_line_no: Option<u32>, // Line number in new file (for '+' and ' ' lines)
 }
 
@@ -505,6 +506,7 @@ impl Repo {
                                             hunk.lines.push(DiffLine {
                                                 origin,
                                                 content: content.trim_end_matches('\n').to_string(),
+                                                old_line_no: line.old_lineno(),
                                                 new_line_no: line.new_lineno(),
                                             });
                                         }
@@ -985,6 +987,7 @@ impl Repo {
             .map(|(i, line)| DiffLine {
                 origin: '+',
                 content: line.to_string(),
+                old_line_no: None,
                 new_line_no: Some((i + 1) as u32),
             })
             .collect();
@@ -1171,6 +1174,7 @@ impl Repo {
                                         hunk.lines.push(DiffLine {
                                             origin,
                                             content: content.trim_end_matches('\n').to_string(),
+                                            old_line_no: line.old_lineno(),
                                             new_line_no: line.new_lineno(),
                                         });
                                     }
@@ -1627,7 +1631,8 @@ fn reverse_hunk(hunk: &Hunk) -> Hunk {
                     c => c,
                 },
                 content: line.content.clone(),
-                new_line_no: line.new_line_no,
+                old_line_no: line.new_line_no,
+                new_line_no: line.old_line_no,
             })
             .collect(),
     }

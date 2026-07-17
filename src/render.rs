@@ -1260,20 +1260,15 @@ fn details_lines(
                 lines.push(Line::from(""));
             }
 
-            // Diff lines with syntax highlighting and line numbers
-            let prefix_width: usize = 6; // "{origin}{4-char num} "
-            let content_width = width.saturating_sub(prefix_width as u16) as usize;
+            // Diff lines: a numbered gutter, the +/- marker, then syntax-
+            // highlighted code, all riding on a full-width diff band.
+            let gutter_width = diff_gutter_width(&file.hunks);
+            let prefix_width = gutter_width + 2; // "{num} {marker}"
+            let panel_width = width as usize;
+            let content_width = panel_width.saturating_sub(prefix_width);
 
             for diff_line in &hunk.lines {
-                let (prefix_style, line_bg) = diff_line_style(diff_line.origin);
-
-                // Format: "{origin}{line_num} " - origin on left, then 4-char line num
-                let line_num = diff_line
-                    .new_line_no
-                    .map(|n| format!("{:>4}", n))
-                    .unwrap_or_else(|| "    ".to_string());
-                let prefix = format!("{}{} ", diff_line.origin, line_num);
-                let continuation_prefix = "      "; // 6 spaces for wrapped lines
+                let (_, line_bg) = diff_line_style(diff_line.origin);
 
                 // Get highlighted content from cache (or fallback to plain text)
                 let empty_highlight: Vec<(two_face::re_exports::syntect::highlighting::Style, String)> = vec![];
@@ -1289,7 +1284,7 @@ fn details_lines(
 
                 if content_width == 0 || total_len <= content_width {
                     // Content fits on one line
-                    let mut spans = vec![Span::styled(prefix, prefix_style)];
+                    let mut spans = diff_prefix_spans(diff_line, gutter_width, line_bg);
                     for (style, text) in highlighted {
                         let mut ratatui_style = syntect_to_ratatui_style(style);
                         if has_match && text.to_lowercase().contains(&search_term.to_lowercase()) {
@@ -1300,12 +1295,12 @@ fn details_lines(
                         }
                         spans.push(Span::styled(text.clone(), ratatui_style));
                     }
+                    fill_diff_background(&mut spans, line_bg, panel_width);
                     lines.push(Line::from(spans));
                 } else {
                     // Need to wrap - split spans across multiple lines
-                    let mut current_line_spans: Vec<Span> = vec![Span::styled(prefix, prefix_style)];
+                    let mut current_line_spans = diff_prefix_spans(diff_line, gutter_width, line_bg);
                     let mut current_line_len: usize = 0;
-                    let mut is_first_line = true;
 
                     for (style, text) in highlighted {
                         let mut ratatui_style = syntect_to_ratatui_style(style);
@@ -1320,13 +1315,10 @@ fn details_lines(
                             let available = content_width.saturating_sub(current_line_len);
                             if available == 0 {
                                 // Line is full, push it and start new line
-                                lines.push(Line::from(current_line_spans));
-                                current_line_spans = vec![Span::styled(
-                                    continuation_prefix,
-                                    prefix_style,
-                                )];
+                                fill_diff_background(&mut current_line_spans, line_bg, panel_width);
+                                lines.push(Line::from(std::mem::take(&mut current_line_spans)));
+                                current_line_spans.push(diff_continuation_prefix(gutter_width, line_bg));
                                 current_line_len = 0;
-                                is_first_line = false;
                                 continue;
                             }
 
@@ -1348,19 +1340,17 @@ fn details_lines(
                                 remaining = rest;
 
                                 // Push current line and start new one
-                                lines.push(Line::from(current_line_spans));
-                                current_line_spans = vec![Span::styled(
-                                    continuation_prefix,
-                                    prefix_style,
-                                )];
+                                fill_diff_background(&mut current_line_spans, line_bg, panel_width);
+                                lines.push(Line::from(std::mem::take(&mut current_line_spans)));
+                                current_line_spans.push(diff_continuation_prefix(gutter_width, line_bg));
                                 current_line_len = 0;
-                                is_first_line = false;
                             }
                         }
                     }
 
-                    // Push any remaining content
-                    if current_line_spans.len() > 1 || (current_line_spans.len() == 1 && !is_first_line) {
+                    // Push any remaining content (skip a lone continuation gutter)
+                    if current_line_spans.len() > 1 {
+                        fill_diff_background(&mut current_line_spans, line_bg, panel_width);
                         lines.push(Line::from(current_line_spans));
                     }
                 }
@@ -1540,6 +1530,84 @@ fn diff_line_style(origin: char) -> (Style, Option<Color>) {
             Some(CONFLICT_LINE_BACKGROUND),
         ),
         _ => (Style::default().fg(Color::DarkGray), None),
+    }
+}
+
+/// The line number this row carries: a removed line shows where it lived in
+/// the old file, everything else shows its place in the new file — so each
+/// side of the diff is numbered against its own version, the way git reads.
+fn diff_gutter_number(diff_line: &crate::repo::DiffLine) -> Option<u32> {
+    match diff_line.origin {
+        '-' => diff_line.old_line_no,
+        _ => diff_line.new_line_no,
+    }
+}
+
+/// How wide the number gutter must be to hold the largest line number in
+/// these hunks, so every row's code starts at the same column. Never
+/// narrower than two digits, which keeps a small diff from looking cramped.
+fn diff_gutter_width(hunks: &[crate::repo::Hunk]) -> usize {
+    let widest = hunks
+        .iter()
+        .flat_map(|hunk| hunk.lines.iter())
+        .flat_map(|line| [line.old_line_no, line.new_line_no].into_iter().flatten())
+        .max()
+        .unwrap_or(0);
+    widest.to_string().len().max(2)
+}
+
+/// The leading spans of a diff row: the right-aligned line number, then the
+/// `+`/`-`/` ` marker. Both sit on the line's diff background so the coloured
+/// band starts at the very left edge, not partway across the code.
+fn diff_prefix_spans(
+    diff_line: &crate::repo::DiffLine,
+    gutter_width: usize,
+    line_bg: Option<Color>,
+) -> Vec<Span<'static>> {
+    let (marker_style, _) = diff_line_style(diff_line.origin);
+    let number = diff_gutter_number(diff_line)
+        .map(|n| format!("{:>width$}", n, width = gutter_width))
+        .unwrap_or_else(|| " ".repeat(gutter_width));
+
+    let number_fg = if line_bg.is_some() {
+        Color::Rgb(191, 197, 210)
+    } else {
+        Color::DarkGray
+    };
+    let mut number_style = Style::default().fg(number_fg);
+    let mut marker_style = marker_style;
+    if let Some(bg) = line_bg {
+        number_style = number_style.bg(bg);
+        marker_style = marker_style.bg(bg);
+    }
+
+    vec![
+        Span::styled(format!("{number} "), number_style),
+        Span::styled(diff_line.origin.to_string(), marker_style),
+    ]
+}
+
+/// A blank gutter for a wrapped continuation row, kept on the diff background
+/// so a long changed line reads as one unbroken band across every visual row.
+fn diff_continuation_prefix(gutter_width: usize, line_bg: Option<Color>) -> Span<'static> {
+    let mut style = Style::default();
+    if let Some(bg) = line_bg {
+        style = style.bg(bg);
+    }
+    Span::styled(" ".repeat(gutter_width + 2), style)
+}
+
+/// Extend a diff row's background to the full panel width. A `Line` only
+/// paints the cells its text occupies, so without this trailing blank span
+/// the band would stop at the end of the code instead of filling the row.
+fn fill_diff_background(spans: &mut Vec<Span<'static>>, line_bg: Option<Color>, total_width: usize) {
+    let Some(bg) = line_bg else { return };
+    let used: usize = spans.iter().map(|span| span.content.chars().count()).sum();
+    if used < total_width {
+        spans.push(Span::styled(
+            " ".repeat(total_width - used),
+            Style::default().bg(bg),
+        ));
     }
 }
 
@@ -2000,31 +2068,26 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
     // Build lines with line numbers and "stage"/"unstage" labels
     let mut lines: Vec<Line> = Vec::new();
     let width = inner.width as usize;
+    let gutter_width = diff_gutter_width(hunks);
     let mut highlight_idx = 0;
 
     for (hunk_idx, hunk) in hunks.iter().enumerate() {
         let is_active_hunk = hunk_idx == current_hunk_idx;
 
         for (line_idx, diff_line) in hunk.lines.iter().enumerate() {
-            let (prefix_style, line_bg) = diff_line_style(diff_line.origin);
-
-            // Line number: "{origin}{4-char num} " format like commit details
-            let line_num = diff_line.new_line_no
-                .map(|n| format!("{:>4}", n))
-                .unwrap_or_else(|| "    ".to_string());
-            let prefix = format!("{}{} ", diff_line.origin, line_num);
+            let (_, line_bg) = diff_line_style(diff_line.origin);
 
             // Get highlighted content from cache (or fallback to plain text)
             let empty_highlight: Vec<(two_face::re_exports::syntect::highlighting::Style, String)> = vec![];
             let highlighted = cached_lines.get(highlight_idx).unwrap_or(&empty_highlight);
             highlight_idx += 1;
 
-            // Build spans with syntax highlighting
-            let mut spans = vec![Span::styled(prefix.clone(), prefix_style)];
+            // Build spans: numbered gutter + marker, then syntax-highlighted code
+            let mut spans = diff_prefix_spans(diff_line, gutter_width, line_bg);
 
             if highlighted.is_empty() {
                 // No highlighting available, use plain text
-                let mut content_style = prefix_style;
+                let mut content_style = Style::default();
                 if let Some(bg) = line_bg {
                     content_style = content_style.bg(bg);
                 }
@@ -2047,7 +2110,12 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
                     + discard_label.map(|d| d.len() + 2).unwrap_or(0); // +2 for "  " separator
                 let padding = width.saturating_sub(content_len + total_label_len + 1);
 
-                spans.push(Span::raw(" ".repeat(padding)));
+                // Keep the diff band running under the padding up to the labels
+                let mut padding_style = Style::default();
+                if let Some(bg) = line_bg {
+                    padding_style = padding_style.bg(bg);
+                }
+                spans.push(Span::styled(" ".repeat(padding), padding_style));
 
                 // Active hunk gets underlined to show it's the one that will be acted on
                 let action_style = if is_active_hunk {
@@ -2067,6 +2135,9 @@ fn render_commit_diff_panel(frame: &mut Frame, area: ratatui::layout::Rect, comm
                     };
                     spans.push(Span::styled(discard, discard_style));
                 }
+            } else {
+                // Extend the diff band to the full panel width
+                fill_diff_background(&mut spans, line_bg, width);
             }
 
             lines.push(Line::from(spans));
