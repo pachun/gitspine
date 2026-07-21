@@ -11,7 +11,6 @@ use crate::state::State;
 // the bottom row of the commit list overlaps with (and is hidden by)
 // the help panel when scrolled to the end.
 pub const HELP_PANEL_HEIGHT: u16 = 5;
-pub const DETAILS_COMMIT_LIST_HEIGHT: u16 = 5;
 pub const FILE_HEADER_HEIGHT: usize = 1;
 pub const DETAILS_HORIZONTAL_PADDING: u16 = 2;
 
@@ -24,11 +23,11 @@ pub fn git_graph_height(state: &State, terminal: &Terminal<CrosstermBackend<Stdo
     height as usize
 }
 
-/// Height of the details panel when showing commit details
+/// Height of the details panel when showing commit details. The diff fills
+/// the whole main area now, with no commit list above it and no border to
+/// fence it off, so the panel is as tall as the main area itself.
 pub fn details_panel_height(state: &State, terminal: &Terminal<CrosstermBackend<Stdout>>) -> usize {
-    let total = git_graph_height(state, terminal);
-    // Subtract commit list height + 1 for border
-    total.saturating_sub(DETAILS_COMMIT_LIST_HEIGHT as usize + 1)
+    git_graph_height(state, terminal)
 }
 
 /// Width of the details panel when showing commit details. Diff lines

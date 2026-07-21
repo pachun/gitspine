@@ -9,7 +9,7 @@ use ratatui::Frame;
 use crate::repo::{BranchName, CommitDetails, Repo, Sha, WorktreeFile, FileStatus};
 use crate::state::{CommitViewPanel, CommitViewState, State};
 use crate::utils::{format_date, format_time, has_mixed_case};
-use crate::viewport::{DETAILS_COMMIT_LIST_HEIGHT, DETAILS_HORIZONTAL_PADDING, FILE_HEADER_HEIGHT};
+use crate::viewport::{DETAILS_HORIZONTAL_PADDING, FILE_HEADER_HEIGHT};
 
 /// Build reverse index: commit sha -> list of branch names pointing to it
 fn branches_at_commit(branches: &HashMap<BranchName, Sha>) -> HashMap<Sha, Vec<&BranchName>> {
@@ -134,19 +134,10 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         1
     };
 
-    // Split main area vertically if showing details (commits on top, diff below)
-    let main_chunks = if show_details {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(DETAILS_COMMIT_LIST_HEIGHT), Constraint::Fill(1)])
-            .split(chunks[0])
-    } else {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(100)])
-            .split(chunks[0])
-    };
-    let table_area = main_chunks[0];
+    // The commit list fills the main area — until you open a commit, when the
+    // diff takes the whole screen and the list steps aside. You're reading one
+    // commit then, not choosing between them, so there's nothing to keep up top.
+    let table_area = chunks[0];
     let visible_height = table_area.height as usize;
 
     // Lane colors - lane 0 (main line) is red, others get rotating colors
@@ -377,12 +368,12 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         Constraint::Length(0), // right padding
     ];
 
-    let table = Table::new(rows, widths).column_spacing(1);
-    frame.render_widget(table, table_area);
-
-    // Render details panel if showing
+    // Render details panel fullscreen if showing, otherwise the commit list
     if let Some(details) = &state.commit_details {
-        render_details_panel(frame, main_chunks[1], details, state.highlight_cache.as_ref(), state.details_scroll_offset, &state.details_search_term, state.details_selected_match_line);
+        render_details_panel(frame, chunks[0], details, state.highlight_cache.as_ref(), state.details_scroll_offset, &state.details_search_term, state.details_selected_match_line);
+    } else {
+        let table = Table::new(rows, widths).column_spacing(1);
+        frame.render_widget(table, table_area);
     }
 
     // Render search bar with right-aligned match counter
@@ -1375,18 +1366,14 @@ fn render_details_panel(
 ) {
     // Selected match uses teal/cyan background instead of yellow
     let selected_match_style = Style::default().bg(Color::Cyan).fg(Color::Black);
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::White));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
 
-    // Add horizontal padding
+    // The diff owns the whole screen here, so there's no list to fence off with
+    // a border — just breathing room on the left and the commit reads top-down.
     let inner = ratatui::layout::Rect {
-        x: inner.x + 1,
-        y: inner.y,
-        width: inner.width.saturating_sub(DETAILS_HORIZONTAL_PADDING),
-        height: inner.height,
+        x: area.x + 1,
+        y: area.y,
+        width: area.width.saturating_sub(DETAILS_HORIZONTAL_PADDING),
+        height: area.height,
     };
 
     let (lines, file_sections) = details_lines(details, highlight_cache, search_term, inner.width);
