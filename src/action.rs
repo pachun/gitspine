@@ -1300,6 +1300,8 @@ impl Action {
             Action::Esc | Action::CtrlC => {
                 state.is_creating_branch = false;
                 state.branch_name.clear();
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
             }
             Action::Enter => {
                 if !state.branch_name.is_empty() {
@@ -1321,6 +1323,21 @@ impl Action {
                 }
                 state.is_creating_branch = false;
                 state.branch_name.clear();
+                state.tab_complete_base = None;
+                state.tab_complete_index = 0;
+            }
+            Action::Tab => {
+                let selected_sha = repo.commits[state.index_of_selected_row].sha;
+                let candidates = repo.new_branch_name_candidates_at(selected_sha);
+                let (completed, new_base, new_index) = tab_complete_branch(
+                    &state.branch_name,
+                    &candidates,
+                    &state.tab_complete_base,
+                    state.tab_complete_index,
+                );
+                state.branch_name = completed;
+                state.tab_complete_base = new_base;
+                state.tab_complete_index = new_index;
             }
             Action::Backspace => {
                 state.tab_complete_base = None;

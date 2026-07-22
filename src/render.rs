@@ -436,7 +436,7 @@ pub fn render(frame: &mut Frame, state: &State, repo: &Repo) {
         frame.render_widget(branch_input, search_inner);
 
         let hint = Paragraph::new(Line::from(vec![Span::styled(
-            "enter → create   esc → cancel",
+            "tab → complete   enter → create   esc → cancel",
             Style::default().fg(Color::DarkGray),
         )]))
         .alignment(ratatui::layout::Alignment::Right);
